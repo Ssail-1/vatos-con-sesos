@@ -1,0 +1,153 @@
+<section>
+    <h1>Tablas</h1>
+
+    <p>
+        Las tablas en HTML se utilizan para representar información organizada en filas y columnas. Son útiles cuando los datos tienen una relación tabular, como horarios, precios,
+        registros o comparaciones.
+    </p>
+</section>
+
+<hr />
+
+<section>
+    <h2>Etiquetas principales</h2>
+
+    <ul>
+        <li><code>&lt;table&gt;</code>: Contiene toda la tabla.</li>
+        <li><code>&lt;thead&gt;</code>: Agrupa el encabezado de la tabla.</li>
+        <li><code>&lt;tbody&gt;</code>: Agrupa el contenido principal de la tabla.</li>
+        <li><code>&lt;tfoot&gt;</code>: Agrupa el pie de la tabla, normalmente usado para totales o resultados.</li>
+        <li><code>&lt;tr&gt;</code>: Representa una fila. Viene de <em>table row</em>.</li>
+        <li><code>&lt;th&gt;</code>: Representa una celda de encabezado.</li>
+        <li><code>&lt;td&gt;</code>: Representa una celda de datos.</li>
+        <li><code>colspan</code>: Permite que una celda ocupe varias columnas.</li>
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h2>Estructura básica</h2>
+
+    <pre><code>
+&lt;table&gt;
+    &lt;thead&gt;
+        &lt;tr&gt;
+            &lt;th&gt;Producto&lt;/th&gt;
+            &lt;th&gt;Precio&lt;/th&gt;
+            &lt;th&gt;Cantidad&lt;/th&gt;
+        &lt;/tr&gt;
+    &lt;/thead&gt;
+
+    &lt;tbody&gt;
+        &lt;tr&gt;
+            &lt;td&gt;Teclado&lt;/td&gt;
+            &lt;td&gt;$500&lt;/td&gt;
+            &lt;td&gt;1&lt;/td&gt;
+        &lt;/tr&gt;
+
+        &lt;tr&gt;
+            &lt;td&gt;Mouse&lt;/td&gt;
+            &lt;td&gt;$300&lt;/td&gt;
+            &lt;td&gt;2&lt;/td&gt;
+        &lt;/tr&gt;
+    &lt;/tbody&gt;
+
+    &lt;tfoot&gt;
+        &lt;tr&gt;
+            &lt;th&gt;Total&lt;/th&gt;
+            &lt;td colspan="2"&gt;$1100&lt;/td&gt;
+        &lt;/tr&gt;
+    &lt;/tfoot&gt;
+&lt;/table&gt;
+        </code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2>Ejemplo visual</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Producto</th>
+                <th>Precio</th>
+                <th>Cantidad</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            <tr>
+                <td>Teclado</td>
+                <td>$500</td>
+                <td>1</td>
+            </tr>
+
+            <tr>
+                <td>Mouse</td>
+                <td>$300</td>
+                <td>2</td>
+            </tr>
+        </tbody>
+
+        <tfoot>
+            <tr>
+                <th>Total</th>
+                <td colspan="2">$1100</td>
+            </tr>
+        </tfoot>
+    </table>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>colspan</code></h2>
+
+    <p>
+        El atributo <code>colspan</code> indica cuántas columnas debe ocupar una celda. En el ejemplo anterior, la celda del total usa <code>colspan="2"</code>, por eso ocupa el
+        espacio de las columnas <strong>Precio</strong> y <strong>Cantidad</strong>.
+    </p>
+
+    <pre><code>
+&lt;td colspan="2"&gt;$1100&lt;/td&gt;
+        </code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2>Alineación de contenido</h2>
+
+    <p>
+        Históricamente HTML permitía alinear el contenido mediante atributos como
+        <code>align</code> y <code>valign</code>. Actualmente esta tarea se realiza con CSS.
+    </p>
+
+    <h3><code>align</code></h3>
+
+    <pre><code>
+        &lt;th align="left"&gt;
+        
+        &lt;th align="center"&gt;
+        
+        &lt;th align="right"&gt;
+        </code></pre>
+
+    <h3><code>valign</code></h3>
+
+    <pre><code>
+        &lt;td valign="top"&gt;
+        
+        &lt;td valign="middle"&gt;
+        
+        &lt;td valign="bottom"&gt;
+        </code></pre>
+
+    <blockquote>
+        <strong>💡 Nota:</strong>
+
+        Actualmente se recomienda utilizar CSS para controlar la alineación del contenido de una tabla.
+    </blockquote>
+</section>

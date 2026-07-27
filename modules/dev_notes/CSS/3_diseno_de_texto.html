@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Documen</title>
+        <style>
+            .tamaño_char {
+                font-size: 25px;
+            }
+            .center {
+                text-align: center;
+            }
+            .italic {
+                font-style: italic;
+            }
+            .oblique {
+                font-style: oblique;
+            }
+            .oblique_deg {
+                font-style: oblique 20deg;
+            }
+            .underline {
+                text-decoration: underline;
+            }
+            .line-throught {
+                text-decoration: line-through;
+            }
+            .overline {
+                text-decoration: overline;
+            }
+            .tachado_x3{
+                text-decoration: underline overline line-through;
+            }
+            .red_solid_line {
+                text-decoration: red solid line-through;
+            }
+            .green_dotted_underline {
+                text-decoration: green dotted underline;
+            }
+            .blue_dashed_overline_underline {
+                text-decoration: blue dashed overline underline;
+            }
+            .interlineado {
+                line-height: 3;
+            }
+            .espaciado {
+                letter-spacing: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Diseño de Texto</h1>
+        <hr />
+        <section>
+            <h2>Color</h2>
+            <p>Se define con:</p>
+            <ul>
+                <li>Con nombre</li>
+                <ul>
+                    <li>color: red;</li>
+                    <li>color: green;</li>
+                    <li>color: color_name;</li>
+                </ul>
+                <li>RGB</li>
+                <ul>
+                    <li>color: rgb(red(0-255), green(0-255), blue(0-255));</li>
+                </ul>
+                <li>Hexadecimal</li>
+                <ul>
+                    <li>Intensidad: de 00 a FF</li>
+                    <li>Primeras 2 cifras: Rojo</li>
+                    <li>Siguientes 2 cifras: Verde</li>
+                    <li>Siguientes: Azul</li>
+                    <li>Ultimos: Alfa (Opacidad o transparencia)</li>
+                    <li>color: #_ _ _ _ _ _ _ _</li>
+                </ul>
+                <li>HSL (Hue, Saturation, lightness, alpha)</li>
+                <ul>
+                    <li>color: grados, porcentaje, porcentaje, porcentaje</li>
+                    <li>Aun no entiendo este... 12/07/2026</li>
+                </ul>
+            </ul>
+        </section>
+        <hr />
+        <section>
+            <h2>Alineación de texto</h2>
+            <p>El valor puede ser:</p>
+            <ul>
+                <li>center</li>
+                <p class="center">Ejemplo: texto centrado</p>
+                <li>right</li>
+                <li>left</li>
+                <li>justify</li>
+            </ul>
+            <code>text-align: valor;</code>
+            <p>Tambien se puede alinear el ultimo parrafo.</p>
+            <pre><code>
+    p.name_class{
+        text-align-last: valor;
+    }
+</code></pre>
+        </section>
+        <hr />
+        <section>
+            <h2>Tipografia</h2>
+            <code>font-family: Tipografia;</code>
+        </section>
+        <hr />
+        <section>
+            <h2>Tamaño</h2>
+            <code
+                >font-size: #px; donde <span class="tamaño_char">#</span> es un
+                numero</code
+            >
+        </section>
+        <hr />
+        <section>
+            <h2>Texto en negrita</h2>
+            <p>El valor puede ser:</p>
+            <ul>
+                <li>normal (400)</li>
+                <li>bold (700)</li>
+                <li>bolder</li>
+                <li>lighter</li>
+                <li>100 - 900</li>
+            </ul>
+            <code>font-weight: valor;</code>
+        </section>
+        <hr />
+        <section>
+            <h2>Inclinación de Texto</h2>
+            <p>Los valores pueden ser:</p>
+            <ul>
+                <li>
+                    <span class="italic">italic -> (varia entre 8° y 16°)</span>
+                </li>
+                <li><span class="oblique">oblique -> (14°)</span></li>
+                <li>Angulo personalizado:</li>
+                <ul>
+                    <li>
+                        <span class="oblique_deg">oblique <b>#</b>deg</span>
+                    </li>
+                </ul>
+            </ul>
+            <code>font-style: valor;</code>
+        </section>
+        <hr />
+        <section>
+            <h2>Subrayado y tachado</h2>
+            <p>Los valores son:</p>
+            <ul>
+                <li><span class="underline">underline</span></li>
+                <li><span class="line-throught">line-throught</span></li>
+                <li><span class="overline">overline</span></li>
+                <li>text-decoration: underline overline line-through;</li>
+                <p>
+                    <span class="tachado_x3">
+                        Se pueden los tres anteriores al mismo tiempo.
+                    </span>
+                </p>
+                <li>
+                    <span class="red_solid_line">red solid line-trought</span>
+                </li>
+                <li>
+                    <span class="green_dotted_underline"
+                        >green dotted underline</span
+                    >
+                </li>
+                <li>
+                    <span class="blue_dashed_overline_underline"
+                        >blue dashed overline underline</span
+                    >
+                </li>
+            </ul>
+            <p>text-decoration: valor;</p>
+        </section>
+        <hr />
+        <section>
+            <h2>Interlineado</h2>
+            <p>Distancia de interlineado</p>
+            <code><span class="interlineado">line-height: 3</span></code>
+        </section>
+        <hr />
+        <section>
+            <h2>Espaciado de letras</h2>
+            <p class="espaciado">Distancia entre letras</p>
+            <code>letter-spacing: 4px;</code>
+        </section>
+
+        <hr />
+
+        <section>
+            <h2>Transformaciones</h2>
+            <p>
+                Podemos modificar el texto. Ponerlo en mayusculas, minusculas y
+                cada palabra con la primera en mayuscula.
+            </p>
+            <code>text-transform: valor;</code>
+            <p>Valores:</p>
+            <ul>
+                <li>uppercase</li>
+                <li>lowercase</li>
+                <li>capitalize</li>
+            </ul>
+        </section>
+        <hr />
+        <aside>
+            <p>
+                Existen mas propiedades pero hay que confiar en que
+                encontraremos lo que necesitemos...
+            </p>
+        </aside>
+    </body>
+</html>

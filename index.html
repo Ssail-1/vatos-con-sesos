@@ -1,0 +1,155 @@
+<!doctype html>
+<!-- DOCTYPE html
+- Declara el tipo de documento y la versión de HTML -->
+
+<html lang="es">
+    <!-- Etiqueta raíz
+    - Envuelve todo el contenido de la página -->
+
+    <head>
+        <!-- Cabecera
+        Contiene los metadatos sobre el documento -->
+
+        <meta charset="UTF-8" />
+        <!-- Indica la codificación de la página -->
+
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- Contiene la configuración de la vista -->
+
+        <meta name="description" content="Registro y documentación de mi desarrollo" />
+
+        <title>Vatos con Sesos</title>
+        <!-- Es el título de la página -->
+
+        <link rel="stylesheet" href="./css/styles.css" />
+        <!--Enlazamos la hoja o documento de estilos-->
+
+        <script src="./js/script.js" defer></script>
+    </head>
+
+    <body>
+        <!-- Contiene el contenido visible de la página -->
+
+        <header>
+            <button id="navigationButton" class="navigation-Button" type="button" aria-label="Mostrar u ocultar menú de navegación">☰</button>
+
+            <a class="brand" href="./index.html">Vatos con Sesos</a>
+
+            <div class="header-actions">
+                <button class="header-button" type="button">Buscar</button>
+                <button class="header-button" type="button">Usuario</button>
+            </div>
+        </header>
+
+        <div class="layout">
+            <aside id="sidebar" class="navigation-panel">
+
+                <details open>
+                    <summary><a class="note-link" href="">Gestor de abitos</a></summary>
+                </details>
+                
+                <details open>
+                    <summary>Dev Notes</summary>
+
+                    <nav aria-label="Navegación principal">
+                        <ul>
+                            <li>
+                                <a class="note-link" href="/modules/dev_notes/html/index.html">HTML</a>
+
+                                <ul>
+                                    <li>
+                                        <a target="_blank" href="/modules/dev_notes/html/practica/practica_etiquetas_semanticas_hybridge.html"> Práctica final </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/index.html">README</a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/1_dom.html">DOM</a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/2_razon_de_ser_de_index.html"> Razón de ser de index </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/3_atributos.html"> Atributos </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/4_listas.html"> Listas </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/5_tablas.html"> Tablas </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/6_etiquetas_semanticas.html"> Etiquetas semánticas </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/html/7_div_y_span.html"> Div y span </a>
+                                    </li>
+                                </ul>
+                            </li>
+
+                            <li>
+                                <a class="note-link" href="/modules/dev_notes/CSS/index.html">CSS</a>
+
+                                <ul>
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/CSS/index.html">README</a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/CSS/1_selectores.html"> Selectores </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/CSS/2_box_model.html"> Box Model </a>
+                                    </li>
+
+                                    <li>
+                                        <a class="note-link" href="/modules/dev_notes/CSS/3_diseno_de_texto.html"> Diseño de texto </a>
+                                    </li>
+                                </ul>
+                            </li>
+
+                            <li>
+                                <a class="note-link" href="/modules/dev_notes/javascript/index.html">javascript</a>
+
+                                <ul>
+                                    <li><a class="note-link" href="/modules/dev_notes/javascript/primeros_ejemplos.html">Primeros ejemplos</a></li>
+                                    <li><a class="note-link" href="/modules/dev_notes/javascript/eventos-comunes.html">Eventos comunes</a></li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </nav>
+                </details>
+
+            </aside>
+
+            <!--OVERLAY-->
+            <div id="panelOverlay" class="panel-overlay" aria-hidden="true"></div>
+
+            <div class="content-column">
+                <main id="mainContent">
+                    <p>Selecciona una nota del panel de navegación.</p>
+                </main>
+
+                <footer>
+                    <p>Conoce más en:</p>
+
+                    <a class="note-link" href="./acerca_de_dev_notes.html"> Acerca de Dev Notes </a>
+
+                    <p>
+                        Contacta conmigo:
+                        <a href="https://github.com/Ssail-1" target="_blank" rel="noopener noreferrer"> Ssail </a>
+                    </p>
+                </footer>
+            </div>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,272 @@
+<section>
+    <h1>🌳 DOM (Document Object Model)</h1>
+
+    <p>
+        Antes de entender qué es el DOM, es importante saber que los navegadores
+        <strong>no trabajan directamente con el archivo HTML</strong>.
+    </p>
+
+    <p>Supongamos que tenemos el siguiente documento:</p>
+
+    <pre><code>
+&lt;html&gt;
+    &lt;body&gt;
+        &lt;h1&gt;Hola Yo&lt;/h1&gt;
+
+        &lt;p&gt;Aprendiendo desarrollo web&lt;/p&gt;
+
+        &lt;button&gt;Saludar&lt;/button&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+        </code></pre>
+
+    <p>
+        Cuando el navegador abre este archivo,
+        <strong>no manipula el HTML como texto</strong>.
+    </p>
+
+    <p>En su lugar, interpreta el documento y construye una representación interna de toda la página con una estructura jerárquica.</p>
+
+    <p>Visualmente sería algo parecido a esto:</p>
+
+    <pre><code>
+Documento
+│
+└── html
+      │
+      └── body
+             │
+             ├── h1
+             │      └── "Hola Yo"
+             │
+             ├── p
+             │      └── "Aprendiendo desarrollo web"
+             │
+             └── button
+                    └── "Saludar"
+        </code></pre>
+
+    <p>
+        Podemos observar que esta representación tiene forma de un
+        <strong>árbol</strong>, donde cada elemento HTML se convierte en un <strong>nodo</strong>.
+    </p>
+</section>
+
+<hr />
+
+<section>
+    <h2>🌳 Ese árbol se llama DOM</h2>
+
+    <p><strong>DOM</strong> significa:</p>
+
+    <blockquote>
+        <p><strong>Document Object Model</strong></p>
+        <p><strong>Modelo de Objetos del Documento</strong></p>
+    </blockquote>
+
+    <p>Es la representación que el navegador crea del documento HTML para poder comprender la página y permitir que JavaScript interactúe con ella.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>¿Por qué se llama "Modelo"?</h2>
+
+    <p>Porque <strong>no es el archivo HTML</strong>, sino una representación del mismo.</p>
+
+    <p>El navegador crea este modelo en memoria para poder trabajar con la página de forma rápida y eficiente.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>¿Por qué "Objeto"?</h2>
+
+    <p>Porque cada etiqueta HTML deja de ser únicamente texto y se convierte en un <strong>objeto</strong>.</p>
+
+    <p>Por ejemplo:</p>
+
+    <pre><code>
+&lt;h1&gt;Hola&lt;/h1&gt;
+        </code></pre>
+
+    <p>El navegador transforma esa etiqueta en un objeto con propiedades y métodos.</p>
+
+    <p>Podemos imaginarlo como si fuera un objeto de Python:</p>
+
+    <pre><code>
+titulo.texto
+titulo.color
+titulo.tamaño
+        </code></pre>
+
+    <p>En JavaScript ocurre exactamente lo mismo.</p>
+
+    <pre><code>
+const titulo = document.querySelector("h1");
+        </code></pre>
+
+    <p>Ahora <code>titulo</code> es un objeto sobre el que podemos trabajar.</p>
+
+    <p>Podemos leer o modificar sus propiedades:</p>
+
+    <pre><code>
+titulo.textContent = "Hola Luis";
+
+titulo.style.color = "blue";
+        </code></pre>
+
+    <p>Incluso podemos eliminarlo completamente:</p>
+
+    <pre><code>
+titulo.remove();
+        </code></pre>
+
+    <p>Todo esto es posible porque el navegador convirtió el HTML en una colección de objetos.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>¿Por qué "Documento"?</h2>
+
+    <p>Porque representa <strong>todo el documento HTML</strong>, es decir, toda la página web.</p>
+
+    <p>Cada etiqueta forma parte de un único árbol que representa el documento completo.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>HTML vs DOM</h2>
+
+    <p>Es muy importante entender esta diferencia.</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>HTML</th>
+                <th>DOM</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            <tr>
+                <td>Es un archivo de texto.</td>
+                <td>Es un árbol de objetos creado por el navegador.</td>
+            </tr>
+
+            <tr>
+                <td>Lo escribe el desarrollador.</td>
+                <td>Lo construye el navegador automáticamente.</td>
+            </tr>
+
+            <tr>
+                <td>Se almacena en un archivo <code>.html</code>.</td>
+                <td>Existe únicamente en memoria mientras la página está abierta.</td>
+            </tr>
+
+            <tr>
+                <td>No cambia por sí solo.</td>
+                <td>JavaScript puede modificarlo en cualquier momento.</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<hr />
+
+<section>
+    <h2>El trabajo de JavaScript</h2>
+
+    <p>Sin JavaScript, la página permanece prácticamente igual que el HTML original.</p>
+
+    <p>Pero cuando JavaScript modifica el DOM...</p>
+
+    <pre><code>
+document.querySelector("h1").textContent = "Hola Luis";
+        </code></pre>
+
+    <p>El contenido cambia inmediatamente.</p>
+
+    <p>
+        Lo interesante es que
+        <strong>el archivo HTML nunca cambió</strong>.
+    </p>
+
+    <p>Lo único que cambió fue el DOM que vive dentro del navegador.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>Relación con las herramientas del desarrollador</h2>
+
+    <p>Cuando presionamos:</p>
+
+    <pre><code>
+F12
+        </code></pre>
+
+    <p>y abrimos la pestaña <strong>Elements</strong> o <strong>Inspector</strong>, realmente estamos viendo el <strong>DOM</strong>, no el archivo HTML original.</p>
+
+    <p>Por eso podemos expandir y contraer elementos como si fueran ramas de un árbol.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>Analogía</h2>
+
+    <p>Podemos imaginar el HTML como el plano de una casa.</p>
+
+    <pre><code>
+Plano
+        </code></pre>
+
+    <p>El navegador toma ese plano y construye la casa.</p>
+
+    <pre><code>
+Plano
+      ↓
+Casa construida
+        </code></pre>
+
+    <p>En esta analogía:</p>
+
+    <ul>
+        <li>El <strong>HTML</strong> es el plano.</li>
+        <li>El <strong>DOM</strong> es la casa ya construida.</li>
+    </ul>
+
+    <p>JavaScript no modifica el plano.</p>
+
+    <p>JavaScript trabaja directamente sobre la casa.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>Definición</h2>
+
+    <blockquote>
+        <p>
+            El <strong>DOM (Document Object Model)</strong> es la representación en forma de árbol que el navegador crea a partir del documento HTML. Cada elemento se convierte en
+            un objeto que JavaScript puede leer, modificar, agregar o eliminar, permitiendo que el contenido de la página cambie dinámicamente sin necesidad de recargarla.
+        </p>
+    </blockquote>
+</section>
+
+<hr />
+
+<aside>
+    <h2>💡 Idea clave</h2>
+
+    <blockquote>
+        <p>
+            <strong>El navegador no manipula el HTML directamente.</strong>
+        </p>
+
+        <p>Primero construye el <strong>DOM</strong>, y es sobre ese árbol de objetos donde JavaScript realiza todas sus modificaciones.</p>
+    </blockquote>
+</aside>

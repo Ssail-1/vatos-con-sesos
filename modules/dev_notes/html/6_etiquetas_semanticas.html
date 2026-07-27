@@ -1,0 +1,152 @@
+<section>
+    <h1>Etiquetas semánticas</h1>
+
+    <aside>
+        <a href="./practica_etiquetas_semanticas_hybridge.html">Practica por mi uni Hybridge Education</a>
+    </aside>
+
+    <p>Las etiquetas semánticas describen el propósito del contenido, haciendo que el HTML sea más legible tanto para los desarrolladores como para los navegadores.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;main&gt;</code></h2>
+
+    <ul>
+        <li>Representa el contenido principal de la página.</li>
+        <li>Solo debe existir un <code>&lt;main&gt;</code> por documento.</li>
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;section&gt;</code></h2>
+
+    <ul>
+        <li>Agrupa contenido relacionado bajo un mismo tema.</li>
+        <li>Normalmente contiene un encabezado (<code>&lt;h2&gt;</code>, <code>&lt;h3&gt;</code>, etc.).</li>
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;article&gt;</code></h2>
+
+    <p>Representa contenido independiente que podría existir por sí solo, como una noticia, una publicación de blog o un comentario.</p>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;header&gt;</code></h2>
+
+    <p>Define el encabezado de una página o de una sección. Puede contener el título, el logotipo o un menú de navegación.</p>
+    <pre><code>
+    &lt;header&gt;
+        &lt;h1&gt;Dev notes&lt;/h1&gt;
+        &lt;nav&gt;
+            &lt;a href="#inicio"&gt;Inicio&lt;/a&gt;
+            &lt;a href="#nosotros"&gt;nosotros&lt;/a&gt;
+            &lt;a href="#contactanos"&gt;contactanos&lt;/a&gt;
+        &lt;/nav&gt;
+    &lt;/header&gt;
+</code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;footer&gt;</code></h2>
+
+    <p>Representa el pie de una página o de una sección. Generalmente contiene información de contacto, derechos de autor o enlaces adicionales.</p>
+
+    <pre><code>
+&lt;footer&gt;
+
+    &lt;p&gt;
+        © 2026 Dev Notes
+    &lt;/p&gt;
+
+&lt;/footer&gt;
+</code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;nav&gt;</code></h2>
+
+    <p>Agrupa enlaces cuya función es permitir la navegación dentro del sitio.</p>
+    <pre><code>
+    &lt;nav&gt;
+        &lt;ul&gt;
+            &lt;li&gt;&lt;a href="#inicio"&gt;Inicio&lt;/a&gt;&lt;/li&gt;
+            &lt;li&gt;&lt;a href="#nosotros"&gt;nosotros&lt;/a&gt;&lt;/li&gt;
+            &lt;li&gt;&lt;a href="#contactanos"&gt;contactanos&lt;/a&gt;&lt;/li&gt;
+        &lt;ul&gt;
+    &lt;/nav&gt;
+</code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;aside&gt;</code></h2>
+
+    <p>Representa contenido complementario al tema principal.</p>
+
+    <blockquote>
+        Piensa en un <strong>"¿Sabías que...?"</strong>, una nota, una curiosidad o una barra lateral. No es el tema principal, pero ayuda al lector. O las alertas de GitHub como
+        Note, Tip, Important, Warning y Caution.
+    </blockquote>
+
+    <p>
+        Son información adicional, ayudan a digerir el contenido pero no forman parte del flujo principal del documento, si las quitaramos el contenido seguiría entendiendose pero
+        ayudan mucho. <br />
+        <br />
+        Esa es la filosofia de <b><code>&lt;aside&gt;</code></b>
+    </p>
+
+    <pre><code>&lt;aside&gt;
+
+    &lt;h3&gt;¿Sabías que...?&lt;/h3&gt;
+
+    &lt;p&gt;
+        El DOM se representa como un árbol.
+    &lt;/p&gt;
+
+&lt;/aside&gt;
+</code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2><code>&lt;figure&gt;</code> y <code>&lt;figcaption&gt;</code></h2>
+
+    <p><code>&lt;figure&gt;</code> agrupa contenido independiente relacionado con el tema principal, como imágenes, diagramas, capturas de pantalla o gráficos.</p>
+
+    <p><code>&lt;figcaption&gt;</code> agrega una descripción o pie para ese contenido.</p>
+
+    <pre><code>
+&lt;figure&gt;
+
+    &lt;img src="dom.png"
+         alt="Árbol DOM"&gt;
+
+    &lt;figcaption&gt;
+
+        Representación del árbol DOM.
+
+    &lt;/figcaption&gt;
+
+&lt;/figure&gt;
+</code></pre>
+
+    <blockquote>
+        Una imagen dentro de un artículo puede entenderse sin el texto, pero el <code>&lt;figcaption&gt;</code> ayuda al lector a comprender exactamente qué representa.
+    </blockquote>
+</section>

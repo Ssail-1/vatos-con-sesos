@@ -1,0 +1,142 @@
+<section>
+    <h1>Atributos</h1>
+    <p>
+        Los atributos proporcionan información sobre las etiquetas en la apertura. <br />
+        <br />
+        Van en pares <b><code>nombre = "valor"</code></b
+        >. Ejemplo:
+    </p>
+    <ul>
+        <li><code>&lt;a href="https://www.ejemplo.com"&gt;Visita ejemplo&lt;/a&gt;</code></li>
+    </ul>
+    <p>
+        En este caso <b><code>href</code></b> es el atributo y <b><code>"https://www.ejemplo.com"</code></b> es el valor.
+    </p>
+    <hr />
+</section>
+
+<section>
+    <h2>Atributos para enlaces</h2>
+
+    <h3>A un lugar dentro de la pagina</h3>
+    <p>
+        Hacemos referencia hacia un id declarado en alguna etiqueta. <br />
+        Por ejemplo, referenciaremos a un <b>h2</b> a continuación.
+    </p>
+    <pre><code>
+        &lt; a href = "#nombre_de_id"&gt;Proceso de compra &lt;/a&gt
+        &lt;h2 id="nombre_de_id"&gt;"Politica de proceso de compra"&lt;/h2&gt;</code></pre>
+
+    <h3><code>href</code></h3>
+    <p>
+        Especifica la URL del enlace: <br />
+        <code>&lt;a href="https://www.ejemplo.com"&gt;&lt;/a&gt;</code>
+    </p>
+
+    <h3><code>target</code></h3>
+    <p>
+        <b>target</b> Es el atributo y especifica donde se abrira un documento vinculado. <br />
+        Los valores determinan como se redirigue el usuario al vinculo:
+    </p>
+    <ul>
+        <li>
+            <b><code>_blank</code></b
+            >: Se abre en una nueva pestaña
+        </li>
+        <li>
+            <b><code>_self</code></b
+            >: Se abre en la misma pesataña y es el valor predeterminado.
+        </li>
+    </ul>
+
+    <h3>Descargas</h3>
+    <code>&lt;a href="documento_para_descargar" download=""&gt;Descarga los terminos y condiciones&lt;/a&gt;</code>
+
+    <h3>Enlazar a un email</h3>
+    <p><code>&lt;a href="mailto:tu-email@ejemplo.com"&gt;Contactanos por correo&gt;&lt;/a&gt;</code></p>
+
+    <h3>Enlaze por telefono</h3>
+    <p><code>&lt;a href="tel:+521234567890"&gt;Contacta a atención a cliente&gt;&lt;/a&gt;</code></p>
+    <hr />
+</section>
+
+<section>
+    <h2>Buenas prácticas de seguridad para enlaces</h2>
+
+    <p>La interacción con paginas externas deben ser protegidas y supervisadas</p>
+
+    <p>
+        Es una buena practica usar <b><code>target="_blank"</code></b> para redirigir de manera segura al usuario cuando colocamos vinculos a paginas de terceros.
+    </p>
+
+    <p>Restringe el acceso a <code>windows.opener</code> al abrir un enlace en nuestra página, evitando que no redirija nuestra pagina actual a una pagina maliciosa</p>
+
+    <h3><code>rel="noopener"</code></h3>
+    <p>Se restringe el acceso a nuestro windows.opener</p>
+
+    <h3><code>rel="noreferer"</code></h3>
+    <p>Con ello evitamos que la página a la que se enlazo no sepa de que página proviene y tampoco tiene acceso al windows.opener</p>
+
+    <h3><code>rel="nofollow"</code></h3>
+    <p>Le indica al motor que no indexee esa pagina, de esta manera de deslinda el propietario de la web de que ese enlace no le robe posicionamiento a la pagina actual.</p>
+    <hr />
+</section>
+
+<section>
+    <h2>Atributos para imagenes</h2>
+    <b><code>src</code></b>
+    <p>Especifica la ruta de la imagen</p>
+    <p><code>&lt;img src="ruta_de_la_imagen" alt="descripcion de la imagen"&gt;</code></p>
+    <b><code>alt</code></b>
+    <p>Si la imatgen no se puede cargar proporciona un texto alternativo para la imagen.</p>
+    <b><code> width y height</code></b>
+    <p>Especifica el ancho y alto de la imagen</p>
+    <p><code>&lt;img src="imagen.jpg" alt="Descripción de la Imagen" width="300" height="200"&gt;</code></p>
+    <hr />
+</section>
+
+<section>
+    <h2>Atributos globales</h2>
+    <blockquote>Estos atributos se usan en conjunto con CSS y JavaScript.</blockquote>
+
+    <h3><code>id</code></h3>
+    <p>
+        Define un identificador único para un elemento HTML. <br />
+        Ejemplo:
+    </p>
+    <pre><code>
+            &lt;id="introduccion"&gt;Este es un párrafo con un ID único.&lt;/p&gt; <br>
+            &lt;img src="mi_imagen.jpeg" id="imagen_perfil" alt="user avatar" /&gt;
+        </code></pre>
+    <p>Este atributo es muy util para aplicar estilos CSS a elementos especificos o bien seleccionarlo con JavaScript para hacer alguna operación con el elemento.</p>
+
+    <h3><code>class</code></h3>
+    <p>
+        Al crear una clase esta la podemos usar en diferentes elementos que representen una caracteristica compartida. <br />
+        Por ejemplo:
+    </p>
+    <pre><code>
+            &lt;p class="texto-importante">
+                Este es un párrafo.
+            &lt;/p>
+
+            &lt;span class="texto-importante">
+                Esto también es importante.
+            &lt;/span>
+
+            &lt;li class="texto-importante">
+                Este elemento también.
+            &lt;/li></code></pre>
+    <p>Y cuando sea necesario podemos seleccionar los elemtos con esta clase y todos ellos van a modificarse.</p>
+    <pre><code>
+            .texto-importante{
+                color:red;
+                font-weight:bold;
+            }</code></pre>
+    <p>Entonces todos los elementos estaran en rojo.</p>
+
+    <h3><code>style</code></h3>
+    <p>Permite aplicar estilos CSS directamente al elemento</p>
+    <code>&lt;p style="color: red;"&gt;Este párrafo es de color rojo.&lt;/p&gt;</code>
+    <p>A esto se le llama <b>"estilos inline"</b>.</p>
+</section>

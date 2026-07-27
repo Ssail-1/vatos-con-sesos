@@ -1,0 +1,30 @@
+
+:root{
+    --fondo-general: #13161c;
+    --fondo-code: #0f0f0f;
+    --texto: #f5ebeb;
+    --enlace: #47cdee;
+}
+
+body{
+    background-color: var(--fondo-general);
+    color: var(--texto);
+}
+
+pre{
+    max-width: 100%;
+    overflow-x: auto;
+    background-color: var(--fondo-code);
+    border-radius: 12px;
+}
+
+code{
+    font-family: monospace;
+}
+
+p code,
+li code{
+    padding: 2px 6px;
+    background-color: var(--fondo-code);
+    border-radius: 4px;
+}

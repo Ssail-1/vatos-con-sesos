@@ -1,0 +1,98 @@
+<section>
+    <h1>Listas</h1>
+
+    <p>HTML permite organizar información mediante listas. Existen dos tipos principales:</p>
+</section>
+
+<hr />
+
+<section>
+    <h2>Lista desordenada (<code>&lt;ul&gt;</code>)</h2>
+
+    <p>Se utiliza cuando el orden de los elementos no es importante. Por defecto utiliza viñetas.</p>
+
+    <pre><code>
+        &lt;ul&gt;
+            &lt;li&gt;HTML&lt;/li&gt;
+            &lt;li&gt;CSS&lt;/li&gt;
+            &lt;li&gt;JavaScript&lt;/li&gt;
+        &lt;/ul&gt;
+        </code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2>Lista ordenada (<code>&lt;ol&gt;</code>)</h2>
+
+    <p>Se utiliza cuando el orden de los elementos sí tiene importancia o existe una jerarquía. Por defecto utiliza números.</p>
+
+    <pre><code>
+        &lt;ol&gt;
+            &lt;li&gt;Instalar VS Code&lt;/li&gt;
+            &lt;li&gt;Crear el proyecto&lt;/li&gt;
+            &lt;li&gt;Escribir el código&lt;/li&gt;
+        &lt;/ol&gt;
+        </code></pre>
+</section>
+
+<hr />
+
+<section>
+    <h2>Personalizar las listas</h2>
+
+    <p>
+        HTML permite modificar el estilo de las listas mediante algunos atributos. Aunque siguen siendo válidos, actualmente es más común realizar estas personalizaciones
+        utilizando CSS.
+    </p>
+
+    <h3><code>type</code></h3>
+
+    <p>Permite cambiar el tipo de viñeta o numeración de una lista.</p>
+
+    <h4>Listas desordenadas (<code>&lt;ul&gt;</code>)</h4>
+
+    <pre><code>
+    &lt;ul type="disc"&gt;      &lt;!-- ● Predeterminado --&gt;
+    &lt;ul type="circle"&gt;    &lt;!-- ○ Círculo --&gt;
+    &lt;ul type="square"&gt;    &lt;!-- ■ Cuadrado --&gt;
+    </code></pre>
+
+    <h4>Listas ordenadas (<code>&lt;ol&gt;</code>)</h4>
+
+    <pre><code>
+    &lt;ol type="1"&gt;   &lt;!-- 1, 2, 3... (Predeterminado) --&gt;
+    &lt;ol type="A"&gt;   &lt;!-- A, B, C... --&gt;
+    &lt;ol type="a"&gt;   &lt;!-- a, b, c... --&gt;
+    &lt;ol type="I"&gt;   &lt;!-- I, II, III... --&gt;
+    &lt;ol type="i"&gt;   &lt;!-- i, ii, iii... --&gt;
+    </code></pre>
+
+    <h3><code>start</code></h3>
+
+    <p>Permite indicar el número con el que comenzará una lista ordenada.</p>
+
+    <pre><code>
+    &lt;ol start="5"&gt;
+        &lt;li&gt;Paso&lt;/li&gt;
+        &lt;li&gt;Paso&lt;/li&gt;
+    &lt;/ol&gt;
+    </code></pre>
+
+    <h3><code>reversed</code></h3>
+
+    <p>Invierte el orden de la numeración.</p>
+
+    <pre><code>
+    &lt;ol reversed&gt;
+        &lt;li&gt;Tres&lt;/li&gt;
+        &lt;li&gt;Dos&lt;/li&gt;
+        &lt;li&gt;Uno&lt;/li&gt;
+    &lt;/ol&gt;
+    </code></pre>
+
+    <blockquote>
+        <strong>💡 Nota:</strong> Aunque los atributos <code>type</code>, <code>start</code> y <code>reversed</code> siguen siendo válidos en HTML, actualmente es una mejor
+        práctica personalizar la apariencia de las listas utilizando CSS.
+    </blockquote>
+</section>

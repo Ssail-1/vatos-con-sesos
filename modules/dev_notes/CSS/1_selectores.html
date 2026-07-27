@@ -1,0 +1,166 @@
+<body>
+    <section>
+        <h1>Selectores</h1>
+    </section>
+
+    <hr />
+
+    <section>
+        <h2>Selector por <b>elemento</b></h2>
+
+        <p>Selecciona todas las etiquetas del mismo tipo. Los cambios se aplican a todos los elementos que coincidan con ese selector.</p>
+
+        <pre><code>
+/* CSS */
+
+p{
+    color: royalblue;
+}
+</code></pre>
+
+        <pre><code>
+&lt;p&gt;Primer párrafo&lt;/p&gt;
+&lt;p&gt;Segundo párrafo&lt;/p&gt;
+&lt;p&gt;Tercer párrafo&lt;/p&gt;
+</code></pre>
+
+        <h3>Resultado</h3>
+
+        <p style="color: royalblue">Primer párrafo</p>
+        <p style="color: royalblue">Segundo párrafo</p>
+        <p style="color: royalblue">Tercer párrafo</p>
+    </section>
+
+    <hr />
+
+    <section>
+        <h2>Selector por <b>ID</b></h2>
+
+        <p>Selecciona un único elemento mediante su atributo <code>id</code>. Para seleccionarlo en CSS se utiliza el símbolo <code>#</code>.</p>
+
+        <pre><code>
+/* CSS */
+
+#titulo{
+    color: crimson;
+}
+</code></pre>
+
+        <pre><code>
+&lt;h3 id="titulo"&gt;
+Dev Notes
+&lt;/h3&gt;
+</code></pre>
+
+        <h3>Resultado</h3>
+
+        <h3 style="color: crimson">Dev Notes</h3>
+
+        <blockquote>
+            <strong>💡 Idea para recordarlo:</strong>
+
+            Un <code>id</code> es como una CURP: debe ser único dentro del documento.
+        </blockquote>
+    </section>
+
+    <hr />
+
+    <section>
+        <h2>Selector por <b>clase</b></h2>
+
+        <p>Selecciona todos los elementos que contienen una misma clase.</p>
+
+        <ul>
+            <li>Se selecciona utilizando un punto (<code>.</code>) seguido del nombre de la clase.</li>
+        </ul>
+
+        <pre><code>
+/* CSS */
+
+.importante{
+    color: darkgreen;
+    font-weight:bold;
+}
+</code></pre>
+
+        <pre><code>
+&lt;p class="importante"&gt;
+
+Este texto es importante.
+
+&lt;/p&gt;
+</code></pre>
+
+        <h3>Resultado</h3>
+
+        <p style="color: darkgreen; font-weight: bold">Este texto es importante.</p>
+
+        <hr />
+
+        <h3>Más de una clase</h3>
+
+        <p>Un elemento puede tener varias clases separadas por espacios.</p>
+
+        <pre><code>
+&lt;p class="importante centrado"&gt;
+
+Hola &lt;span class="palabras_clave"&gt;Dev Notes&lt;/span&gt;
+
+&lt;/p&gt;
+</code></pre>
+
+        <pre><code>
+.importante{
+    color:darkgreen;
+}
+
+.palabras_clave{
+    color:red;
+}
+
+.centrado{
+    text-align:center;
+}
+</code></pre>
+
+        <h3>Resultado</h3>
+
+        <p style="color: darkgreen; text-align: center">Hola <span style="color: red">Dev Notes</span></p>
+    </section>
+
+    <hr />
+
+    <section>
+        <h2>Resumen</h2>
+
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>Selector</th>
+                    <th>Símbolo</th>
+                    <th>Selecciona</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                <tr>
+                    <td>Elemento</td>
+                    <td>No utiliza símbolo</td>
+                    <td>Todas las etiquetas del mismo tipo.</td>
+                </tr>
+
+                <tr>
+                    <td>ID</td>
+                    <td><code>#</code></td>
+                    <td>Un único elemento.</td>
+                </tr>
+
+                <tr>
+                    <td>Clase</td>
+                    <td><code>.</code></td>
+                    <td>Todos los elementos que compartan esa clase.</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+</body>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <title>Box Model</title>
+
+        <style>
+            figure{
+                width: 600px;
+            }
+
+            .margin{
+                border: 2px dashed gray;
+                background: #ececec;
+                padding: 25px;
+                text-align: center;
+            }
+
+            .border{
+                background: #32a86d;
+                padding: 25px;
+            }
+
+            .padding{
+                background: white;
+                padding: 25px;
+            }
+
+            .content{
+                border: 2px dashed gray;
+                padding: 25px;
+                background: #d08b8b;
+            }
+        </style>
+    </head>
+
+    <body>
+    
+        <section>
+        <h1>Box Model</h1>
+        <p>
+            Todos los elementos HTML pueden considerarse como cajas. Donde para cada elemento, existe una caja que lo envuelve.
+        </p>
+        </section>
+
+        <section>
+            
+            <figure>
+                <div class="margin">
+                    <strong>Margin</strong>: Despeja un area fuera del borde
+                    <div class="border">
+                        <strong>Border</strong>: Rodea el pading y el content
+                        <div class="padding">
+                            <strong>Padding</strong>: Despeja un area fuera del content
+                            <div class="content">
+                                <strong>CONTENT</strong>: Es donde se encuentra el texto, imagenes, etc.
+                            </div> 
+                        </div>
+                    </div>
+                </div>
+                <figcaption>
+                    Representación de Box Model.
+                </figcaption>
+            </figure>
+            
+        </section>
+    </body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tienda en Línea de Deportes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+
+        header {
+            background-color: #333;
+            color: white;
+            padding: 10px 0;
+            text-align: center;
+        }
+
+        nav ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        nav ul li {
+            display: inline;
+            margin-right: 10px;
+        }
+
+        nav ul li a {
+            color: white;
+            text-decoration: none;
+        }
+
+        section {
+            margin: 20px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Tienda en Línea de Deportes</h1>
+        <nav>
+            <ul>
+                <li><a href="#inicio">Inicio</a></li>
+                <li><a href="#productos">Productos</a></li>
+                <li><a href="#ofertas">Ofertas</a></li>
+                <li><a href="#contacto">Contacto</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section id="inicio">
+            <h2>Bienvenidos a la Tienda en Línea de Deportes</h2>
+            <p>Encuentra los mejores productos deportivos a los mejores precios.</p>
+            <img src="https://via.placeholder.com/800x400" alt="Imagen de productos deportivos">
+        </section>
+
+        <section id="productos">
+            <h2>Nuestros Productos</h2>
+            <article>
+                <h3>Calzado Deportivo</h3>
+                <p>Ofrecemos una amplia variedad de calzado deportivo para todas las disciplinas.</p>
+                <img src="https://via.placeholder.com/150" alt="Calzado Deportivo">
+            </article>
+
+            <article>
+                <h3>Ropa Deportiva</h3>
+                <p>Ropa deportiva cómoda y de alta calidad para mejorar tu rendimiento.</p>
+                <img src="https://via.placeholder.com/150" alt="Ropa Deportiva">
+            </article>
+
+            <article>
+                <h3>Accesorios Deportivos</h3>
+                <p>Encuentra los accesorios que necesitas para tus entrenamientos y competencias.</p>
+                <img src="https://via.placeholder.com/150" alt="Accesorios Deportivos">
+            </article>
+        </section>
+
+        <section id="ofertas">
+            <h2>Ofertas Especiales</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Producto</th>
+                        <th>Precio Regular</th>
+                        <th>Precio en Oferta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Zapatillas de Running</td>
+                        <td>$100</td>
+                        <td>$80</td>
+                    </tr>
+                    <tr>
+                        <td>Camiseta Deportiva</td>
+                        <td>$30</td>
+                        <td>$20</td>
+                    </tr>
+                    <tr>
+                        <td>Gorra</td>
+                        <td>$15</td>
+                        <td>$10</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="contacto">
+            <h2>Contacto</h2>
+            <p>Para más información, visita nuestras redes sociales o contáctanos a través del siguiente enlace:</p>
+            <a href="mailto:info@tiendadeportes.com">Enviar un Correo</a>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 Tienda en Línea de Deportes. Todos los derechos reservados.</p>
+    </footer>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const links = document.querySelectorAll('nav ul li a');
+            links.forEach(link => {
+                link.addEventListener('mouseover', function() {
+                    this.style.color = 'yellow';
+                });
+                link.addEventListener('mouseout', function() {
+                    this.style.color = 'white';
+                });
+            });
+        });
+
+    </script>
+</body>
+</html>

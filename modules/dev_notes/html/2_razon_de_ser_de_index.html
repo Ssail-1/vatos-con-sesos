@@ -1,0 +1,31 @@
+
+<section>
+    <h2>Que calajos con index.html?</h2>
+    <p>
+        Historicamente es el archivo principal, imaginemos que tenemos el siguiente servidor.
+    </p>
+    <pre>
+        📁 sitio-web
+
+            📄 index.html
+            📄 contacto.html
+            📄 acerca.html
+
+        📁 css
+            📁 js
+            📁 images
+    </pre>
+    <p>
+        Y ahora, si alguien entra al sitio <b><code>https://misitio.com/</code></b> no puso ningun archivo, entonces la ruta esta apuntando unicamente a la carpeta <b>📁 sitio-web</b>.
+    </p>
+    <h3>Entonces, ¿Qué archivo abre el servidor?</h3>
+    <p>
+        Pues es aquí donde <strong>Los servidores adoptaron una convención</strong>. <br>
+        <blockquote>
+            Si el usuario solicita únicamente una carpeta, el servidor intentará abrir automaticamente un archivo llamado <code>index.html</code>
+        </blockquote>
+        Entonces al ingresar a una ruta sin apuntar a un archivo, el servidor realmente intenta encontrar <code>https://misitio.com/index.html</code>, si existe lo devuelve, si no generalmente aparece un error. <br>
+        <br>
+        Lo mismo ocurre dentro de cualquier carpeta y cualquier carpeta debería tener su propio <code>index.html</code>
+    </p>
+</section>
