@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="Prototipo de matriz mensual para el Gestor de Hábitos"
+        />
+        <title>Gestor de Hábitos</title>
+        <link rel="stylesheet" href="./css/gestor_habitos.css" />
+        <script src="./js/mock-data.js" defer></script>
+        <script src="./js/status-control.js" defer></script>
+        <script src="./js/app.js" defer></script>
+    </head>
+    <body>
+        <main class="habit-tracker">
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">Organizador personal</p>
+                    <h1>Hábitos</h1>
+                </div>
+
+                <div class="month-heading" aria-live="polite">
+                    <span>Mes actual</span>
+                    <strong id="monthName"></strong>
+                </div>
+            </header>
+
+            <section class="compact-date-navigation" aria-label="Fecha seleccionada">
+                <button id="previousDayButton" class="date-navigation-button" type="button">
+                    <span aria-hidden="true">‹</span>
+                    <span class="visually-hidden">Día anterior</span>
+                </button>
+                <p id="selectedDateLabel" aria-live="polite"></p>
+                <button id="nextDayButton" class="date-navigation-button" type="button">
+                    <span aria-hidden="true">›</span>
+                    <span class="visually-hidden">Día siguiente</span>
+                </button>
+            </section>
+
+            <section class="matrix-panel" aria-labelledby="matrixTitle">
+                <div class="matrix-introduction">
+                    <div>
+                        <p class="section-kicker">Seguimiento mensual</p>
+                        <h2 id="matrixTitle">Plan del día</h2>
+                    </div>
+                    <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
+                </div>
+
+                <div class="matrix-container">
+                    <table class="activity-matrix">
+                        <caption class="visually-hidden">
+                            Actividades del mes actual y estado diario de cada una
+                        </caption>
+                        <thead id="matrixHead"></thead>
+                        <tbody id="matrixBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="status-legend" aria-labelledby="legendTitle">
+                <h2 id="legendTitle">Estados</h2>
+                <ul id="statusLegend"></ul>
+            </section>
+
+            <p class="memory-notice">Los cambios son temporales y se perderán al recargar la página.</p>
+        </main>
+    </body>
+</html>

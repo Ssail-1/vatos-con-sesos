@@ -1,3 +1,6 @@
+# Archivos de construcción
+#/docs/proximas-features/archivos_internos/*
+/docs/proximas-features/archivos_internos
 # Variables privadas
 .env
 .env.*
