@@ -1,5 +1,9 @@
-// Los datos respetan el contrato temporal y no incluyen información de entregas futuras.
-const mockActivities = [
+import { formatDateKey } from "../utils/date-time.js";
+
+const demoDateKey = formatDateKey(new Date());
+
+// Esta definición permanece inmutable; el store crea su propia copia para cada carga.
+export const initialActivities = [
     {
         id: "gym-pecho",
         name: "Gym - Pecho",
@@ -14,7 +18,7 @@ const mockActivities = [
         position: 2,
         plannedStartTime: "07:50",
         plannedEndTime: "07:55",
-        statesByDate: {},
+        statesByDate: { [demoDateKey]: "in_progress" },
     },
     {
         id: "meditar",
@@ -22,7 +26,7 @@ const mockActivities = [
         position: 3,
         plannedStartTime: "08:00",
         plannedEndTime: "08:15",
-        statesByDate: {},
+        statesByDate: { [demoDateKey]: "completed" },
     },
     {
         id: "hybridge-programacion",
@@ -30,7 +34,7 @@ const mockActivities = [
         position: 4,
         plannedStartTime: "08:45",
         plannedEndTime: "09:45",
-        statesByDate: {},
+        statesByDate: { [demoDateKey]: "not_completed" },
     },
     {
         id: "comida",
@@ -38,7 +42,7 @@ const mockActivities = [
         position: 5,
         plannedStartTime: "14:00",
         plannedEndTime: "14:30",
-        statesByDate: {},
+        statesByDate: { [demoDateKey]: "cancelled" },
     },
     {
         id: "ccna-estudio",
@@ -57,16 +61,3 @@ const mockActivities = [
         statesByDate: {},
     },
 ];
-
-// Distribuye los cinco estados en la fecha local actual para hacerlos comprobables al abrir la vista.
-const demoDate = new Date();
-const demoDateKey = [
-    demoDate.getFullYear(),
-    String(demoDate.getMonth() + 1).padStart(2, "0"),
-    String(demoDate.getDate()).padStart(2, "0"),
-].join("-");
-const demoStatuses = ["pending", "in_progress", "completed", "not_completed", "cancelled"];
-
-demoStatuses.forEach(function assignDemoStatus(status, index) {
-    mockActivities[index].statesByDate[demoDateKey] = status;
-});

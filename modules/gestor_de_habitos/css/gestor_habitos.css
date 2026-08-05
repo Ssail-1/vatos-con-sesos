@@ -138,6 +138,31 @@ h1 {
     text-align: right;
 }
 
+.matrix-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 14px;
+}
+
+.add-activity-button,
+.primary-button,
+.secondary-button {
+    min-height: 38px;
+    padding: 8px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: #151515;
+    background: var(--accent);
+    cursor: pointer;
+    font-weight: 750;
+}
+
+.add-activity-button:hover,
+.primary-button:hover {
+    filter: brightness(1.08);
+}
+
 .matrix-container {
     width: 100%;
     overflow: hidden;
@@ -184,6 +209,22 @@ h1 {
     background: rgba(255, 255, 255, 0.045);
 }
 
+.activity-matrix tbody tr {
+    cursor: pointer;
+}
+
+.activity-matrix tbody tr:focus-visible {
+    position: relative;
+    z-index: 2;
+    outline: 3px solid var(--focus);
+    outline-offset: -3px;
+}
+
+.activity-matrix tbody tr.is-selected {
+    background: rgba(228, 183, 76, 0.1);
+    box-shadow: inset 4px 0 var(--accent);
+}
+
 .position-column {
     width: 34px;
 }
@@ -207,6 +248,40 @@ h1 {
     font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.activity-name-content {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+}
+
+.activity-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.context-add-button {
+    display: inline-grid;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 26px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--accent);
+    border-radius: 50%;
+    color: #151515;
+    background: var(--accent);
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.context-add-button:hover {
+    filter: brightness(1.1);
 }
 
 .activity-position,
@@ -340,6 +415,105 @@ thead .today-column {
     display: none;
 }
 
+.activity-dialog {
+    width: min(92vw, 520px);
+    max-height: min(90vh, 680px);
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border: 1px solid var(--border-strong);
+    border-top: 4px solid var(--accent);
+    border-radius: 12px;
+    color: var(--text);
+    background: var(--surface);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+}
+
+.activity-dialog::backdrop {
+    background: rgba(3, 5, 7, 0.78);
+    backdrop-filter: blur(2px);
+}
+
+.activity-form {
+    display: grid;
+    gap: 18px;
+    padding: clamp(18px, 5vw, 30px);
+}
+
+.dialog-heading h2 {
+    margin-bottom: 0;
+    font-size: 1.45rem;
+}
+
+.insertion-reference {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.form-errors {
+    padding: 10px 12px;
+    border: 1px solid var(--not-completed);
+    border-radius: 7px;
+    color: #ffd5d5;
+    background: rgba(239, 107, 107, 0.1);
+    font-size: 0.85rem;
+}
+
+.form-errors ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.form-field {
+    display: grid;
+    gap: 6px;
+}
+
+.form-field label {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.form-field input {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    color: var(--text);
+    background: #111419;
+}
+
+.form-field input[aria-invalid="true"] {
+    border-color: var(--not-completed);
+    box-shadow: 0 0 0 1px var(--not-completed);
+}
+
+.time-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 4px;
+}
+
+.secondary-button {
+    border-color: var(--border-strong);
+    color: var(--text);
+    background: var(--surface-raised);
+}
+
+.secondary-button:hover {
+    background: var(--surface-muted);
+}
+
 .visually-hidden {
     position: absolute !important;
     width: 1px !important;
@@ -447,8 +621,20 @@ thead .today-column {
         padding: 12px;
     }
 
+    .matrix-actions {
+        align-items: flex-end;
+        flex-direction: column;
+        gap: 8px;
+    }
+
     .matrix-help {
         display: none;
+    }
+
+    .add-activity-button {
+        min-height: 36px;
+        padding: 7px 10px;
+        font-size: 0.78rem;
     }
 
     .activity-matrix {
@@ -486,5 +672,14 @@ thead .today-column {
 
     .status-legend ul {
         gap: 7px 12px;
+    }
+
+    .activity-form {
+        gap: 14px;
+    }
+
+    .time-fields {
+        grid-template-columns: 1fr;
+        gap: 12px;
     }
 }

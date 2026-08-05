@@ -8,10 +8,9 @@
             content="Prototipo de matriz mensual para el Gestor de Hábitos"
         />
         <title>Gestor de Hábitos</title>
+        <link rel="icon" href="data:," />
         <link rel="stylesheet" href="./css/gestor_habitos.css" />
-        <script src="./js/mock-data.js" defer></script>
-        <script src="./js/status-control.js" defer></script>
-        <script src="./js/app.js" defer></script>
+        <script type="module" src="./js/app.js"></script>
     </head>
     <body>
         <main class="habit-tracker">
@@ -45,7 +44,12 @@
                         <p class="section-kicker">Seguimiento mensual</p>
                         <h2 id="matrixTitle">Plan del día</h2>
                     </div>
-                    <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
+                    <div class="matrix-actions">
+                        <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
+                        <button id="addActivityButton" class="add-activity-button" type="button">
+                            <span aria-hidden="true">+</span> Agregar actividad
+                        </button>
+                    </div>
                 </div>
 
                 <div class="matrix-container">
@@ -66,5 +70,47 @@
 
             <p class="memory-notice">Los cambios son temporales y se perderán al recargar la página.</p>
         </main>
+
+        <dialog id="activityDialog" class="activity-dialog" aria-labelledby="activityDialogTitle">
+            <form id="activityForm" class="activity-form" novalidate>
+                <div class="dialog-heading">
+                    <p class="section-kicker">Plan del día</p>
+                    <h2 id="activityDialogTitle">Agregar actividad</h2>
+                    <p id="insertionReference" class="insertion-reference" hidden></p>
+                </div>
+
+                <div id="formErrors" class="form-errors" role="alert" aria-live="polite" hidden></div>
+
+                <div class="form-field">
+                    <label for="activityName">Nombre</label>
+                    <input
+                        id="activityName"
+                        name="name"
+                        type="text"
+                        maxlength="80"
+                        autocomplete="off"
+                        required
+                    />
+                </div>
+
+                <div class="time-fields">
+                    <div class="form-field">
+                        <label for="plannedStartTime">Hora de inicio</label>
+                        <input id="plannedStartTime" name="plannedStartTime" type="time" required />
+                    </div>
+                    <div class="form-field">
+                        <label for="plannedEndTime">Hora de finalización</label>
+                        <input id="plannedEndTime" name="plannedEndTime" type="time" required />
+                    </div>
+                </div>
+
+                <div class="dialog-actions">
+                    <button id="cancelActivityButton" class="secondary-button" type="button">
+                        Cancelar
+                    </button>
+                    <button class="primary-button" type="submit">Guardar</button>
+                </div>
+            </form>
+        </dialog>
     </body>
 </html>
