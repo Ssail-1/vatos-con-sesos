@@ -4,39 +4,85 @@
 
 Este repositorio contiene la aplicación **Vatos con Sesos**.
 
-Vatos con Sesos crecerá como un gestor personal compuesto por módulos
-independientes.
+Vatos con Sesos crecerá como un gestor personal compuesto por módulos y submódulos.
 
-Los módulos actuales son:
+Actualmente existen:
 
-- `modules/dev_notes/`
-- `modules/gestor_de_habitos/`
+```text
+Vatos con Sesos
+├── Dev Notes
+└── Gestor de hábitos
+    └── Plan del día
+```
 
-La tarea vigente corresponde exclusivamente al segundo incremento frontend
-del módulo:
+La tarea vigente corresponde exclusivamente al desarrollo del siguiente incremento frontend de:
 
 ```text
 modules/gestor_de_habitos/
 ```
 
+La entrega actual es:
+
+```text
+Frontend MVP 03 — Integridad temporal, registros tipados y acciones contextuales
+```
+
 ---
 
-# Fuentes de instrucciones
+# Fuentes de instrucciones vigentes
 
-Antes de modificar código, debes leer los documentos vigentes en este orden:
+Antes de modificar código, debes leer completamente los documentos vigentes en este orden:
 
 1. `/AGENTS.md`
 2. `/docs/codex/CURRENT_TASK.md`
-3. `/docs/codex/FRONTEND_MVP_02.md`
-4. `/docs/codex/MOCK_DATA_CONTRACT_MVP_02.md`
+3. `/docs/codex/FRONTEND_MVP_03.md`
+4. `/docs/codex/MOCK_DATA_CONTRACT_MVP_03.md`
 5. `/docs/codex/UI_REFERENCE.md`
-6. `/docs/codex/ACCEPTANCE_CRITERIA_MVP_02.md`
+6. `/docs/codex/ACCEPTANCE_CRITERIA_MVP_03.md`
 
-Los documentos correspondientes al Frontend MVP 01 pueden consultarse
-para comprender el comportamiento ya implementado, pero la tarea actual
-está definida por los documentos del Frontend MVP 02.
+También debes consultar las referencias visuales relevantes dentro de:
 
-## Documentos históricos de planeación
+```text
+/docs/codex/assets/
+```
+
+Especialmente:
+
+```text
+/docs/codex/assets/acciones-contextuales-fila.png
+```
+
+para la composición visual de las acciones de una fila seleccionada.
+
+---
+
+# Documentos archivados
+
+La carpeta:
+
+```text
+/docs/codex/archive/
+```
+
+contiene documentación de entregas anteriores.
+
+Puede utilizarse para comprender:
+
+* decisiones pasadas;
+* comportamiento que debe conservarse;
+* evolución del módulo.
+
+Pero sus documentos:
+
+* no son instrucciones vigentes;
+* no deben ampliar el alcance actual;
+* pueden contener decisiones reemplazadas.
+
+Cuando exista contradicción, tienen prioridad los documentos normativos del MVP 03.
+
+---
+
+# Documentos de planeación
 
 La carpeta:
 
@@ -44,38 +90,39 @@ La carpeta:
 /docs/codex/planeacion/
 ```
 
-contiene únicamente:
+contiene:
 
-- contexto histórico;
-- conversaciones de diseño;
-- ideas consideradas;
-- preguntas pendientes;
-- funciones futuras;
-- decisiones que pueden haber sido reemplazadas.
+* razonamiento del proyecto;
+* conversaciones de diseño;
+* ideas;
+* mapas;
+* notas del desarrollador;
+* decisiones en evaluación;
+* funciones futuras.
 
-Los archivos de esa carpeta:
+Estos documentos son exclusivamente contexto.
 
-- no son instrucciones vigentes;
-- pueden contener contradicciones;
-- no deben ampliar automáticamente el alcance;
-- no deben utilizarse para introducir funciones no autorizadas.
+No constituyen instrucciones de implementación.
 
-En caso de contradicción, siempre tienen prioridad los documentos normativos
-enumerados en la sección anterior.
+Pueden contener:
+
+* contradicciones;
+* ideas descartadas;
+* funciones todavía no autorizadas.
+
+No debes implementar algo solamente porque aparezca dentro de `planeacion/`.
 
 ---
 
 # Área autorizada
 
-Puedes crear, modificar, mover o eliminar archivos únicamente dentro de:
+Puedes crear, modificar, mover o eliminar código únicamente dentro de:
 
 ```text
 modules/gestor_de_habitos/
 ```
 
-No debes modificar archivos fuera de esa carpeta.
-
-Esto incluye, entre otros:
+No debes modificar:
 
 ```text
 /index.html
@@ -88,140 +135,104 @@ Esto incluye, entre otros:
 /AGENTS.md
 ```
 
-Puedes leer archivos externos para comprender el proyecto, sus estilos o sus
-decisiones, pero no puedes modificarlos.
+ni ningún otro archivo fuera del módulo autorizado.
 
-## Si consideras necesario un cambio externo
+Puedes leer esos archivos para comprender el proyecto.
 
-Debes:
+---
 
-1. No realizarlo.
-2. Identificar el archivo afectado.
-3. Explicar el cambio propuesto.
-4. Explicar por qué sería necesario.
-5. Esperar autorización explícita.
+# Excepción: navegación a la aplicación principal
+
+El MVP 03 debe crear dentro del propio módulo un enlace hacia:
+
+```text
+../../index.html
+```
+
+Esto no autoriza modificar el `index.html` raíz.
+
+Si el enlace requiere cambios externos para funcionar, debes:
+
+1. No modificar el archivo externo.
+2. Informarlo.
+3. Explicar la causa.
+4. Esperar autorización.
 
 ---
 
 # Estado estable que debe conservarse
 
-El Frontend MVP 01 ya fue implementado y constituye el punto de partida.
+El MVP 02 constituye la base funcional.
 
-La refactorización y las nuevas funciones no deben eliminar ni deteriorar:
+No se debe eliminar ni deteriorar:
 
-- el tema oscuro actual;
-- la paleta actual;
-- el encabezado actual;
-- la matriz mensual;
-- la vista completa de escritorio;
-- la vista compacta;
-- la navegación entre días en vista compacta;
-- el resaltado del día actual;
-- los cinco estados;
-- el ciclo multestado;
-- la leyenda de estados;
-- la navegación mediante teclado;
-- los nombres accesibles;
-- la ausencia de desplazamiento horizontal global;
-- la persistencia temporal exclusivamente en memoria.
+* el tema oscuro;
+* la paleta;
+* los acentos dorados;
+* el encabezado;
+* la matriz mensual;
+* los siete registros iniciales;
+* las duraciones calculadas;
+* el mes actual;
+* todos los días del mes en escritorio;
+* una sola fecha en vista compacta;
+* navegación entre días;
+* resaltado del día actual;
+* resaltado de la fecha seleccionada;
+* selección de filas;
+* botón general para crear;
+* formulario mediante `<dialog>`;
+* creación en memoria;
+* inserción contextual;
+* cinco estados;
+* ciclo multestado;
+* leyenda;
+* foco visible;
+* navegación mediante teclado;
+* ausencia de scroll horizontal global;
+* separación modular del JavaScript.
 
-No se autoriza un rediseño visual.
-
-Pueden realizarse pequeños ajustes de maquetación únicamente cuando sean
-necesarios para integrar las nuevas funciones y no cambien la identidad
-visual del módulo.
-
----
-
-# Tarea actual
-
-La tarea vigente es:
-
-```text
-Frontend MVP 02 — Creación e inserción de actividades con refactor modular
-```
-
-La definición completa se encuentra en:
-
-```text
-/docs/codex/CURRENT_TASK.md
-/docs/codex/FRONTEND_MVP_02.md
-```
-
-La implementación combina dos objetivos:
-
-1. Reorganizar el JavaScript por responsabilidades.
-2. Agregar creación e inserción de actividades en memoria.
-
-No debes realizar una refactorización puramente estética ni ampliar el
-producto más allá de esta entrega.
+No se autoriza un rediseño general.
 
 ---
 
-# Tecnologías autorizadas
+# Tecnologías permitidas
 
 Utiliza únicamente:
 
-- HTML;
-- CSS;
-- JavaScript nativo;
-- módulos ES de JavaScript;
-- datos simulados en memoria;
-- elementos nativos del navegador.
-
-Puedes utilizar el elemento nativo:
-
-```html
-<dialog>
-```
-
-para el formulario de creación.
+* HTML;
+* CSS;
+* JavaScript nativo;
+* módulos ES;
+* APIs nativas del navegador;
+* datos simulados en memoria.
 
 No utilices:
 
-- Flask;
-- Python;
-- PostgreSQL;
-- Supabase;
-- API;
-- `localStorage`;
-- IndexedDB;
-- archivos JSON externos;
-- React;
-- Vue;
-- Angular;
-- frameworks CSS;
-- npm;
-- librerías externas;
-- herramientas de compilación;
-- dependencias remotas.
+* Flask;
+* Python;
+* PostgreSQL;
+* Supabase;
+* backend;
+* API externa;
+* `localStorage`;
+* `sessionStorage`;
+* IndexedDB;
+* JSON externo;
+* React;
+* Vue;
+* Angular;
+* frameworks CSS;
+* npm;
+* librerías externas;
+* servicios remotos;
+* recursos externos.
 
 ---
 
-# Restricción principal de la refactorización
+# Arquitectura actual
 
-La refactorización debe conservar el comportamiento visible existente.
-
-Antes de agregar nuevas funciones debes comprobar que continúan funcionando:
-
-- renderizado del mes;
-- orden de actividades;
-- cálculo de duración;
-- cambio de estados;
-- navegación compacta;
-- resaltado del día seleccionado;
-- accesibilidad de los controles.
-
-No reescribas todo sin necesidad.
-
-Reutiliza la lógica correcta del Frontend MVP 01 y distribúyela por
-responsabilidades.
-
----
-
-# Arquitectura JavaScript esperada
-
-La estructura objetivo es:
+La estructura modular existente debe conservarse conceptualmente:
 
 ```text
 modules/gestor_de_habitos/
@@ -243,472 +254,466 @@ modules/gestor_de_habitos/
     └── app.js
 ```
 
-Puedes realizar un ajuste menor a esta estructura si existe una razón técnica
-clara, pero debes explicarlo y no crear más capas de las necesarias.
+Puedes ampliar alguno de estos módulos cuando sea necesario.
 
-## Responsabilidades
+No debes fragmentar el código creando archivos nuevos sin una responsabilidad clara.
 
-### `data/mock-activities.js`
-
-Contiene únicamente:
-
-- datos iniciales de demostración;
-- estados iniciales de demostración.
-
-No debe manipular el DOM.
-
-### `domain/activity-status.js`
-
-Contiene:
-
-- estados permitidos;
-- símbolos;
-- etiquetas;
-- ciclo de estados;
-- funciones relacionadas con la representación de estados.
-
-No debe almacenar la lista de actividades.
-
-### `state/activity-store.js`
-
-Representa la fuente de datos en memoria.
-
-Debe encargarse de operaciones como:
-
-- obtener actividades;
-- ordenar actividades;
-- agregar una actividad;
-- insertar una actividad antes de otra;
-- cambiar el estado para una fecha;
-- renumerar posiciones cuando sea necesario.
-
-No debe construir elementos HTML.
-
-### `utils/date-time.js`
-
-Contiene:
-
-- formato de claves `YYYY-MM-DD`;
-- comparación de fechas;
-- cálculo de días del mes;
-- formateo de fechas;
-- cálculo de duración;
-- validación de horarios.
-
-No debe manipular el estado global ni el DOM.
-
-### `views/activity-matrix.js`
-
-Contiene:
-
-- creación del encabezado;
-- creación de filas;
-- creación de botones de estado;
-- renderizado de la matriz;
-- resaltado del día actual;
-- resaltado del día seleccionado;
-- selección visual de una fila;
-- botón contextual de inserción.
-
-No debe definir los datos iniciales.
-
-### `views/activity-form.js`
-
-Contiene:
-
-- apertura del diálogo;
-- cierre del diálogo;
-- lectura de campos;
-- mensajes de validación;
-- detección de cambios;
-- reinicio del formulario;
-- coordinación visual del modo de inserción.
-
-No debe insertar directamente actividades dentro del arreglo.
-
-### `app.js`
-
-Debe funcionar como coordinador general.
-
-Sus responsabilidades serán:
-
-- inicializar la aplicación;
-- obtener referencias principales;
-- conectar el store con las vistas;
-- manejar la fecha seleccionada;
-- solicitar renderizados;
-- recibir una actividad validada desde el formulario;
-- enviarla al store;
-- volver a renderizar.
-
-`app.js` debe quedar suficientemente pequeño para que su flujo general pueda
-comprenderse mediante una lectura.
+Si un archivo nuevo resulta necesario, debes justificarlo brevemente.
 
 ---
 
-# Módulos ES
+# Responsabilidades
 
-El punto de entrada debe cargarse mediante:
+## Data
 
-```html
-<script type="module" src="./js/app.js"></script>
+```text
+js/data/
 ```
 
-Los demás archivos deben utilizar:
+Contiene datos iniciales de demostración.
 
-```js
-export
-import
+No manipula DOM.
+
+---
+
+## Domain
+
+```text
+js/domain/
 ```
 
-No deben cargarse todos individualmente desde el HTML.
+Contiene conceptos y reglas estables del dominio frontend.
 
-La aplicación debe probarse mediante Live Server o un servidor local.
+El MVP 03 puede ampliar esta área con reglas relacionadas con:
+
+* tipos;
+* subtipos;
+* estados.
+
+No debe contener el store mutable.
+
+---
+
+## State
+
+```text
+js/state/
+```
+
+Es propietario de la colección mutable de registros.
+
+Debe controlar:
+
+* creación;
+* edición;
+* inserción;
+* estados;
+* orden;
+* posiciones;
+* validaciones defensivas.
+
+Las vistas no modifican directamente los datos.
+
+---
+
+## Utils
+
+```text
+js/utils/
+```
+
+Contiene funciones reutilizables para:
+
+* fechas;
+* horas;
+* duración;
+* comparación temporal;
+* validaciones temporales genéricas.
+
+No manipula DOM ni almacena actividades.
+
+---
+
+## Views
+
+```text
+js/views/
+```
+
+Contiene la representación y las interacciones visuales.
+
+Las vistas comunican intenciones.
+
+No son propietarias del estado persistente en memoria.
+
+---
+
+## App
+
+```text
+js/app.js
+```
+
+Coordina:
+
+```text
+store
+↕
+views
+```
+
+Debe continuar siendo un archivo relativamente pequeño y comprensible.
+
+No debe volver a concentrar toda la lógica del módulo.
+
+---
+
+# Registros del Plan del día
+
+Los registros del submódulo pueden ser:
+
+```text
+activity
+habit
+```
+
+---
+
+# Actividades
+
+Los subtipos permitidos son:
+
+```text
+anchor
+periodic
+unexpected
+```
+
+Representación visible:
+
+```text
+Ancla
+Periódica
+Imprevista
+```
+
+---
+
+# Hábitos
+
+En esta entrega solamente existe:
+
+```text
+scheduled
+```
+
+Representación visible:
+
+```text
+Hábito programado
+```
+
+No implementar otros tipos de hábitos.
+
+---
+
+# Logros diarios
+
+No implementar hábitos de cumplimiento diario sin horario.
+
+Ejemplos fuera de alcance:
+
+* no fumar;
+* no beber;
+* no FAP;
+* cantidad diaria de agua;
+* cantidad de lectura.
+
+Estos pertenecerán a otro submódulo futuro.
+
+---
+
+# Intervalos temporales
+
+Todos los registros mostrados en `Plan del día` tienen:
+
+```text
+plannedStartTime
+plannedEndTime
+```
+
+La hora final debe ser posterior a la inicial.
+
+No se permiten cruces de medianoche en esta entrega.
+
+---
+
+# Superposición
+
+No se permite que dos registros ocupen simultáneamente el mismo intervalo.
+
+Los intervalos contiguos sí se permiten.
+
+Debe aplicarse la regla definida en:
+
+```text
+/docs/codex/CURRENT_TASK.md
+```
+
+y posteriormente en:
+
+```text
+/docs/codex/FRONTEND_MVP_03.md
+```
+
+---
+
+# Validación defensiva
+
+La validación temporal no debe depender únicamente del formulario.
+
+El store debe rechazar:
+
+* actividades inválidas;
+* ediciones inválidas;
+* horarios superpuestos.
+
+Una interfaz defectuosa no debe poder corromper el estado en memoria.
+
+---
+
+# Edición
+
+La entrega debe permitir editar un registro existente.
+
+Debe conservar:
+
+```text
+id
+statesByDate
+```
+
+No debe tratar una edición como creación.
+
+No debe generar un identificador nuevo.
+
+---
+
+# Acciones contextuales
+
+Cuando una fila esté seleccionada deben aparecer:
+
+```text
++
+✎
+🗑
+```
+
+La referencia visual principal es:
+
+```text
+/docs/codex/assets/acciones-contextuales-fila.png
+```
+
+---
+
+# Botón `+`
+
+Su centro debe ubicarse aproximadamente sobre la esquina superior izquierda de la celda del nombre.
+
+Debe ser más pequeño que el control del MVP 02.
+
+Puede desplazar ligeramente el texto del nombre para evitar superposición.
+
+---
+
+# Editar
+
+Debe aparecer dentro de la celda del nombre, hacia la derecha.
+
+Debe abrir el formulario en modo edición.
+
+---
+
+# Eliminar
+
+Debe aparecer visualmente junto a editar.
+
+En esta entrega:
+
+```text
+NO elimina
+```
+
+Debe estar claramente deshabilitado o marcado como función futura.
+
+---
+
+# Navegación principal
+
+El encabezado debe incluir un enlace hacia:
+
+```text
+../../index.html
+```
+
+En escritorio debe mostrar conceptualmente:
+
+```text
+⌂ Vatos con Sesos
+```
+
+En vista compacta:
+
+```text
+⌂ VCS
+```
+
+No modifiques el index principal para implementar este enlace.
+
+---
+
+# Persistencia
+
+Continúa siendo exclusivamente en memoria.
+
+No implementar ningún mecanismo de persistencia.
+
+Al recargar se restaura el estado inicial.
 
 ---
 
 # Estilo de código
 
-## Organización
-
-- Mantener funciones pequeñas.
-- Una función debe tener una responsabilidad principal.
-- Evitar código duplicado.
-- Evitar variables globales innecesarias.
-- No crear clases cuando una función o un objeto sean suficientes.
-- No fragmentar una operación trivial en numerosos archivos.
-- No agregar abstracciones preparadas para funciones todavía inexistentes.
-
-## Nombres
-
-Utilizar nombres técnicos en inglés dentro del código.
-
-Ejemplos:
-
-```js
-selectedDate
-selectedActivityId
-plannedStartTime
-plannedEndTime
-insertActivityBefore
-renderActivityMatrix
-openActivityForm
-```
-
-El contenido visible de la interfaz debe estar en español.
-
-## Comentarios
-
-Comentar por bloques funcionales.
-
-Los comentarios deben explicar:
-
-- propósito;
-- regla de negocio;
-- comportamiento poco evidente;
-- decisión responsive;
-- interacción entre módulos.
-
-Ejemplo correcto:
-
-```js
-// Inserta la actividad antes de la fila seleccionada y renumera posiciones
-```
-
-Evitar:
-
-```js
-// Se crea una constante
-```
+* Utilizar nombres técnicos en inglés.
+* Mantener texto visible en español.
+* Mantener funciones pequeñas.
+* Evitar duplicación.
+* Evitar variables globales innecesarias.
+* Evitar clases si funciones u objetos son suficientes.
+* No introducir abstracciones para funciones futuras.
+* Comentar por bloques funcionales.
+* No comentar sintaxis obvia.
 
 ---
 
-# Creación de actividades
+# Accesibilidad
 
-La entrega debe permitir registrar una nueva actividad con:
+Toda nueva interacción debe:
 
-- nombre;
-- hora planeada de inicio;
-- hora planeada de finalización.
-
-La duración se calculará a partir de las horas.
-
-La actividad nueva:
-
-- existirá únicamente en memoria;
-- tendrá un identificador único generado en el frontend;
-- comenzará con estado `pending`;
-- conservará la estructura del contrato de datos vigente;
-- podrá insertarse al final o antes de una actividad seleccionada.
-
-No se deben agregar todavía:
-
-- tipo de actividad;
-- recurrencia;
-- subactividades;
-- comentarios;
-- tiempos reales;
-- prioridades;
-- categorías;
-- unidades cuantitativas.
-
----
-
-# Inserción contextual
-
-Cada fila puede seleccionarse mediante:
-
-- clic;
-- foco mediante teclado, cuando corresponda.
-
-La fila seleccionada debe distinguirse visualmente sin cambiar la identidad
-general del diseño.
-
-Cuando exista una fila seleccionada debe mostrarse un botón circular `+`
-asociado a esa fila.
-
-El botón:
-
-- debe tener borde visible;
-- debe mantener un fondo claro o contrastante;
-- debe mostrar un símbolo `+`;
-- debe tener nombre accesible;
-- debe poder usarse con teclado;
-- debe abrir el formulario en modo `insert-before`;
-- debe indicar que la nueva actividad se insertará antes de esa fila.
-
-No debe ocultar el nombre, la hora ni los controles de estado.
-
-La posición exacta puede adaptarse a la tabla web, pero debe conservar la
-idea visual de un control contextual ubicado cerca del comienzo superior
-de la fila.
-
----
-
-# Orden de las actividades
-
-La matriz debe mantener orden cronológico:
-
-1. `plannedStartTime`;
-2. `position`.
-
-El botón contextual registra la intención de insertar antes de una fila.
-
-Para mantener coherencia:
-
-- el formulario debe tomar como referencia la actividad seleccionada;
-- puede sugerir inicialmente la hora de la fila seleccionada;
-- la nueva actividad recibe una posición anterior a la referencia;
-- después se renumeran las posiciones;
-- el orden cronológico por hora sigue teniendo prioridad.
-
-Si el usuario introduce una hora posterior, la actividad debe aparecer en
-la posición cronológica correspondiente, aunque haya abierto el formulario
-desde una fila anterior.
-
-No se deben inventar ni recorrer horarios automáticamente.
-
----
-
-# Formulario de actividad
-
-El formulario puede presentarse mediante un `<dialog>` nativo.
-
-Debe incluir:
-
-- campo de nombre;
-- campo de hora inicial;
-- campo de hora final;
-- botón para guardar;
-- botón para cancelar;
-- mensaje de error accesible.
-
-## Validaciones
-
-- El nombre es obligatorio.
-- El nombre no debe quedar compuesto únicamente por espacios.
-- La hora inicial es obligatoria.
-- La hora final es obligatoria.
-- La hora final debe ser posterior a la inicial.
-- No se admiten actividades que crucen la medianoche.
-- No se admite `24:00`.
-- No se debe guardar si existen errores.
-
-## Cancelación
-
-Cancelar o cerrar el diálogo:
-
-- no agrega actividades;
-- no modifica datos;
-- limpia los errores;
-- limpia el modo de inserción anterior.
-
-En esta entrega no se requiere confirmación por cambios sin guardar.
-
----
-
-# Estados de actividad
-
-Los únicos estados continúan siendo:
-
-```text
-pending
-in_progress
-completed
-not_completed
-cancelled
-```
-
-El ciclo obligatorio continúa siendo:
-
-```text
-pending
-→ in_progress
-→ completed
-→ not_completed
-→ cancelled
-→ pending
-```
-
-La refactorización no debe alterar símbolos, colores, etiquetas ni
-accesibilidad actuales.
+* utilizar elementos semánticos;
+* funcionar mediante teclado;
+* tener foco visible;
+* contar con nombre accesible;
+* no depender únicamente del color;
+* respetar el manejo de foco del diálogo;
+* mostrar errores de forma accesible.
 
 ---
 
 # Responsive
 
-## Escritorio amplio
+Debe seguir funcionando correctamente en:
 
-Debe conservar:
+* escritorio amplio;
+* vista compacta.
 
-- todos los días del mes;
-- matriz completa;
-- información temporal;
-- nombre de la actividad;
-- controles de estado;
-- día actual resaltado.
+No debe introducir:
 
-Los nuevos botones no deben deformar la matriz.
-
-## Vista compacta
-
-Debe conservar:
-
-- una sola fecha visible;
-- navegación entre días;
-- posición;
-- hora;
-- duración;
-- nombre;
-- estado de la fecha seleccionada.
-
-El formulario debe caber dentro del viewport.
-
-No debe aparecer scroll horizontal global.
-
-El botón contextual debe ser utilizable sin tapar contenido.
-
----
-
-# Accesibilidad mínima
-
-- Utilizar botones reales para acciones.
-- Utilizar etiquetas asociadas a campos.
-- Mantener foco visible.
-- Gestionar correctamente el foco al abrir y cerrar el diálogo.
-- Proporcionar mensajes de error comprensibles.
-- No depender únicamente del color.
-- Permitir el uso mediante teclado.
-- Dar un nombre accesible al botón contextual `+`.
-- Dar un nombre accesible al botón general de agregar.
+* scroll horizontal global;
+* superposición de texto;
+* controles inaccesibles;
+* deformación severa de columnas.
 
 ---
 
 # Fuera de alcance
 
-No implementar en esta entrega:
+No implementar:
 
-- edición de actividades existentes;
-- eliminación de actividades;
-- seguimiento temporal expandido;
-- horas reales;
-- comentarios;
-- subactividades;
-- recurrencias;
-- hábitos cuantitativos;
-- persistencia;
-- backend;
-- base de datos;
-- API;
-- estadísticas;
-- porcentajes;
-- rachas;
-- reajuste de horarios;
-- autenticación;
-- integración con la aplicación principal;
-- despliegue.
+* eliminación real;
+* hábitos tipo logro;
+* recurrencia;
+* semana ideal;
+* tiempos reales;
+* seguimiento temporal expandido;
+* comentarios;
+* subactividades;
+* estadísticas;
+* rachas;
+* porcentajes;
+* reajuste automático;
+* notificaciones;
+* autenticación;
+* backend;
+* base de datos;
+* integración completa con el shell principal;
+* despliegue.
 
 ---
 
 # Forma de trabajo
 
-Antes de modificar código debes responder con:
+Antes de modificar código debes:
 
-1. Tu comprensión de la entrega.
-2. Los archivos que crearás, moverás o modificarás.
-3. El mapa de responsabilidades después del refactor.
-4. Cómo comprobarás que no cambió el comportamiento del MVP 01.
-5. Cómo implementarás el formulario.
-6. Cómo implementarás el botón contextual.
+1. Leer todos los documentos normativos.
+2. Inspeccionar el estado actual del módulo.
+3. Resumir tu comprensión.
+4. Enumerar los archivos que modificarás.
+5. Explicar cómo implementarás:
 
-Después debes esperar autorización explícita antes de editar, salvo que el
-prompt del usuario indique claramente que ya estás autorizado para comenzar.
+   * conflictos temporales;
+   * edición;
+   * clasificación;
+   * acciones contextuales;
+   * enlace hacia VCS.
+6. Explicar cómo conservarás el MVP 02.
+
+Después espera autorización, salvo que el prompt del usuario indique explícitamente que puedes comenzar inmediatamente.
 
 ---
 
 # Git
 
-No debes:
+No debes ejecutar:
 
-- ejecutar `git commit`;
-- ejecutar `git push`;
-- ejecutar `git merge`;
-- cambiar de rama;
-- modificar `main`;
-- borrar historial;
-- usar comandos destructivos;
-- restaurar archivos sin autorización.
+* `git commit`;
+* `git push`;
+* `git merge`;
+* `git switch`;
+* `git checkout`;
+* `git reset`;
+* `git restore`;
+* `git clean`.
 
-Puedes utilizar comandos no destructivos para inspeccionar y probar.
+No debes modificar historial ni cambiar de rama.
+
+Puedes utilizar comandos de inspección y pruebas no destructivas.
 
 ---
 
 # Seguridad
 
-- No crear credenciales.
-- No usar servicios externos.
-- No introducir datos personales reales.
-- No crear archivos `.env`.
-- No ejecutar comandos destructivos.
+No crear:
+
+* credenciales;
+* secretos;
+* `.env`;
+* accesos remotos;
+* dependencias externas.
+
+No ejecutar comandos destructivos.
 
 ---
 
 # Finalización
 
-La tarea se considera terminada únicamente cuando cumple todos los criterios
-de:
+La entrega solamente se considera terminada cuando cumple:
 
 ```text
-/docs/codex/ACCEPTANCE_CRITERIA_MVP_02.md
+/docs/codex/ACCEPTANCE_CRITERIA_MVP_03.md
 ```
 
-Al finalizar debes informar:
+Codex debe ejecutar pruebas de regresión del MVP 02 además de las pruebas propias del MVP 03.
 
-- archivos creados;
-- archivos movidos;
-- archivos modificados;
-- pruebas realizadas;
-- comportamiento conservado;
-- nueva funcionalidad implementada;
-- limitaciones;
-- criterios que no pudiste verificar.
+No declarar una función terminada si no fue implementada o verificada.
