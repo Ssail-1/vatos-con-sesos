@@ -24,6 +24,10 @@
     box-sizing: border-box;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 html {
     background: var(--background);
 }
@@ -49,6 +53,11 @@ button:focus-visible {
     outline-offset: 2px;
 }
 
+a:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 3px;
+}
+
 .habit-tracker {
     width: min(100%, 1600px);
     margin: 0 auto;
@@ -66,6 +75,35 @@ button:focus-visible {
     border-top: 4px solid var(--accent);
     border-radius: 12px;
     background: linear-gradient(135deg, #1b1e23, #141619);
+}
+
+.page-identity,
+.month-heading {
+    flex: 1 1 0;
+}
+
+.home-link {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 11px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.home-link:hover {
+    border-color: var(--border);
+    color: var(--text);
+    background: var(--surface-raised);
+}
+
+.home-link-compact {
+    display: none;
 }
 
 .eyebrow,
@@ -243,7 +281,8 @@ h1 {
 }
 
 .activity-name {
-    overflow: hidden;
+    position: relative;
+    overflow: visible;
     color: var(--text);
     font-weight: 650;
     text-overflow: ellipsis;
@@ -258,16 +297,53 @@ h1 {
 }
 
 .activity-name-text {
+    min-width: 0;
+    flex: 1 1 auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.context-add-button {
+.row-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+}
+
+.row-action-button {
     display: inline-grid;
-    width: 26px;
-    height: 26px;
-    flex: 0 0 26px;
+    width: 25px;
+    height: 25px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--focus);
+    background: #15181c;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.row-action-button:hover {
+    background: var(--surface-muted);
+}
+
+.row-action-button:disabled {
+    color: var(--cancelled);
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
+.context-add-button {
+    position: absolute;
+    top: -14px;
+    left: -13px;
+    z-index: 4;
+    display: grid;
+    width: 24px;
+    height: 24px;
     padding: 0;
     place-items: center;
     border: 1px solid var(--accent);
@@ -275,9 +351,13 @@ h1 {
     color: #151515;
     background: var(--accent);
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 900;
     line-height: 1;
+}
+
+.is-selected .activity-name-content {
+    padding-left: 8px;
 }
 
 .context-add-button:hover {
@@ -476,7 +556,8 @@ thead .today-column {
     font-weight: 700;
 }
 
-.form-field input {
+.form-field input,
+.form-field select {
     width: 100%;
     min-height: 42px;
     padding: 8px 10px;
@@ -484,6 +565,10 @@ thead .today-column {
     border-radius: 7px;
     color: var(--text);
     background: #111419;
+}
+
+.form-field select {
+    cursor: pointer;
 }
 
 .form-field input[aria-invalid="true"] {
@@ -495,6 +580,31 @@ thead .today-column {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
+}
+
+.classification-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.subtype-summary {
+    align-content: center;
+    min-height: 69px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: rgba(228, 183, 76, 0.08);
+}
+
+.subtype-summary span {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.subtype-summary strong {
+    color: var(--accent);
+    font-size: 0.9rem;
 }
 
 .dialog-actions {
@@ -604,6 +714,19 @@ thead .today-column {
         padding: 14px;
     }
 
+    .home-link {
+        padding: 7px;
+        font-size: 0.78rem;
+    }
+
+    .home-link-full {
+        display: none;
+    }
+
+    .home-link-compact {
+        display: inline;
+    }
+
     .eyebrow,
     .month-heading span {
         display: none;
@@ -681,5 +804,15 @@ thead .today-column {
     .time-fields {
         grid-template-columns: 1fr;
         gap: 12px;
+    }
+
+    .classification-fields {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .row-action-button {
+        width: 23px;
+        height: 23px;
     }
 }

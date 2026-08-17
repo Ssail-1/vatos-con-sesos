@@ -15,10 +15,20 @@
     <body>
         <main class="habit-tracker">
             <header class="page-header">
-                <div>
+                <div class="page-identity">
                     <p class="eyebrow">Organizador personal</p>
                     <h1>Hábitos</h1>
                 </div>
+
+                <a
+                    class="home-link"
+                    href="../../index.html"
+                    aria-label="Volver a la página principal de Vatos con Sesos"
+                >
+                    <span aria-hidden="true">⌂</span>
+                    <span class="home-link-full">Vatos con Sesos</span>
+                    <span class="home-link-compact">VCS</span>
+                </a>
 
                 <div class="month-heading" aria-live="polite">
                     <span>Mes actual</span>
@@ -47,7 +57,7 @@
                     <div class="matrix-actions">
                         <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
                         <button id="addActivityButton" class="add-activity-button" type="button">
-                            <span aria-hidden="true">+</span> Agregar actividad
+                            <span aria-hidden="true">+</span> Agregar registro
                         </button>
                     </div>
                 </div>
@@ -91,6 +101,30 @@
                         autocomplete="off"
                         required
                     />
+                </div>
+
+                <div class="classification-fields">
+                    <div class="form-field">
+                        <label for="recordKind">Tipo de registro</label>
+                        <select id="recordKind" name="recordKind" required>
+                            <option value="activity">Actividad</option>
+                            <option value="habit">Hábito</option>
+                        </select>
+                    </div>
+
+                    <div id="activitySubtypeField" class="form-field">
+                        <label for="recordSubtype">Subtipo de actividad</label>
+                        <select id="recordSubtype" name="recordSubtype" required>
+                            <option value="anchor">Ancla</option>
+                            <option value="periodic" selected>Periódica</option>
+                            <option value="unexpected">Imprevista</option>
+                        </select>
+                    </div>
+
+                    <div id="habitSubtypeField" class="form-field subtype-summary" hidden>
+                        <span>Subtipo</span>
+                        <strong>Hábito programado</strong>
+                    </div>
                 </div>
 
                 <div class="time-fields">

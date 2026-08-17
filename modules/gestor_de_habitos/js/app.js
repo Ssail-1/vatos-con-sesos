@@ -23,6 +23,10 @@ const elements = {
     insertionReference: document.getElementById("insertionReference"),
     formErrors: document.getElementById("formErrors"),
     activityName: document.getElementById("activityName"),
+    recordKind: document.getElementById("recordKind"),
+    recordSubtype: document.getElementById("recordSubtype"),
+    activitySubtypeField: document.getElementById("activitySubtypeField"),
+    habitSubtypeField: document.getElementById("habitSubtypeField"),
     plannedStartTime: document.getElementById("plannedStartTime"),
     plannedEndTime: document.getElementById("plannedEndTime"),
     cancelActivityButton: document.getElementById("cancelActivityButton"),
@@ -61,7 +65,19 @@ const matrixView = createActivityMatrixView({
     },
     onInsertBefore: (activityId, opener) => {
         const referenceActivity = activityStore.getActivityById(activityId);
-        if (referenceActivity) activityFormView.openInsertBefore(referenceActivity, opener);
+        if (!referenceActivity) return;
+        const activities = activityStore.getActivities();
+        const referenceIndex = activities.findIndex((activity) => activity.id === activityId);
+        const previousActivity = referenceIndex > 0 ? activities[referenceIndex - 1] : null;
+        activityFormView.openInsertBefore(
+            referenceActivity,
+            previousActivity?.plannedEndTime || "",
+            opener,
+        );
+    },
+    onEdit: (activityId, opener) => {
+        const activity = activityStore.getActivityById(activityId);
+        if (activity) activityFormView.openEdit(activity, opener);
     },
 });
 
@@ -72,19 +88,44 @@ const activityFormView = createActivityFormView({
     referenceMessage: elements.insertionReference,
     errorsRegion: elements.formErrors,
     nameInput: elements.activityName,
+    recordKindInput: elements.recordKind,
+    recordSubtypeInput: elements.recordSubtype,
+    activitySubtypeField: elements.activitySubtypeField,
+    habitSubtypeField: elements.habitSubtypeField,
     startTimeInput: elements.plannedStartTime,
     endTimeInput: elements.plannedEndTime,
     cancelButton: elements.cancelActivityButton,
     fallbackFocusElement: elements.addActivityButton,
+    onValidate: (activityDraft, context) => {
+        const ignoredActivityId = context.mode === "edit" ? context.activityId : null;
+        const conflict = activityStore.findTimeConflict(
+            activityDraft.plannedStartTime,
+            activityDraft.plannedEndTime,
+            ignoredActivityId,
+        );
+        return conflict
+            ? [
+                  {
+                      field: "plannedStartTime",
+                      message: `El horario se cruza con “${conflict.name}” (${conflict.plannedStartTime}–${conflict.plannedEndTime}).`,
+                  },
+              ]
+            : [];
+    },
     onSubmit: (activityDraft, context) => {
-        if (context.mode === "insert_before") {
+        if (context.mode === "edit") {
+            activityStore.updateActivity(context.activityId, activityDraft);
+            selectedActivityId = context.activityId;
+        } else if (context.mode === "insert_before") {
             activityStore.insertActivityBefore(activityDraft, context.referenceActivityId);
+            selectedActivityId = context.referenceActivityId;
         } else {
             activityStore.addActivity(activityDraft);
+            selectedActivityId = null;
         }
-        selectedActivityId = null;
         renderMatrix();
     },
+    onFallbackFocus: (activityId) => matrixView.focusActivityRow(activityId),
 });
 
 function updateSelectedDatePresentation() {
@@ -110,7 +151,7 @@ function initializeApplication() {
     elements.previousDayButton.addEventListener("click", () => moveSelectedDate(-1));
     elements.nextDayButton.addEventListener("click", () => moveSelectedDate(1));
     elements.addActivityButton.addEventListener("click", () => {
-        activityFormView.openAppend(elements.addActivityButton);
+        activityFormView.openCreate(elements.addActivityButton);
     });
 }
 

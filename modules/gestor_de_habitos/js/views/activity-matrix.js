@@ -10,6 +10,7 @@ import {
     getWeekdayLabels,
     isSameLocalDate,
 } from "../utils/date-time.js";
+import { getClassificationLabel } from "../domain/activity-classification.js";
 
 function createTextCell(tagName, className, text) {
     const cell = document.createElement(tagName);
@@ -93,6 +94,7 @@ function createActivityRow(activity, context) {
     nameContent.className = "activity-name-content";
     nameText.className = "activity-name-text";
     nameText.textContent = activity.name;
+    nameText.title = `${activity.name} — ${getClassificationLabel(activity.recordKind, activity.recordSubtype)}`;
     nameContent.append(nameText);
     nameCell.append(nameContent);
 
@@ -105,16 +107,45 @@ function createActivityRow(activity, context) {
         insertButton.type = "button";
         insertButton.className = "context-add-button";
         insertButton.textContent = "+";
-        insertButton.setAttribute("aria-label", `Agregar una actividad antes de ${activity.name}`);
-        insertButton.title = `Agregar una actividad antes de ${activity.name}`;
+        insertButton.setAttribute("aria-label", `Agregar un registro antes de ${activity.name}`);
+        insertButton.title = `Agregar un registro antes de ${activity.name}`;
         insertButton.addEventListener("click", (event) => {
             event.stopPropagation();
             context.onInsertBefore(activity.id, insertButton);
         });
+
+        const actions = document.createElement("span");
+        const editButton = document.createElement("button");
+        const deleteButton = document.createElement("button");
+        actions.className = "row-actions";
+        editButton.type = "button";
+        editButton.className = "row-action-button edit-activity-button";
+        editButton.textContent = "✎";
+        editButton.setAttribute("aria-label", `Editar ${activity.name}`);
+        editButton.title = `Editar ${activity.name}`;
+        editButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            context.onEdit(activity.id, editButton);
+        });
+
+        deleteButton.type = "button";
+        deleteButton.className = "row-action-button delete-activity-button";
+        deleteButton.textContent = "🗑";
+        deleteButton.disabled = true;
+        deleteButton.setAttribute(
+            "aria-label",
+            `Eliminar ${activity.name} — disponible próximamente`,
+        );
+        deleteButton.title = `Eliminar ${activity.name} — disponible próximamente`;
+        actions.append(editButton, deleteButton);
         nameContent.prepend(insertButton);
+        nameContent.append(actions);
     }
 
-    row.addEventListener("click", () => context.onRowSelect(activity.id, false));
+    row.addEventListener("click", (event) => {
+        if (event.target.closest("button, a, input, select")) return;
+        context.onRowSelect(activity.id, false);
+    });
     row.addEventListener("keydown", (event) => {
         if (event.target !== row) return;
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -172,6 +203,7 @@ export function createActivityMatrixView({
     onStatusChange,
     onRowSelect,
     onInsertBefore,
+    onEdit,
 }) {
     return {
         render({ activities, monthDates, currentDate, selectedDate, selectedActivityId }) {
@@ -187,6 +219,7 @@ export function createActivityMatrixView({
                         onStatusChange,
                         onRowSelect,
                         onInsertBefore,
+                        onEdit,
                     }),
                 );
             });

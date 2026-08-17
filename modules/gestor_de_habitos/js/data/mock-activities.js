@@ -7,6 +7,8 @@ export const initialActivities = [
     {
         id: "gym-pecho",
         name: "Gym - Pecho",
+        recordKind: "activity",
+        recordSubtype: "periodic",
         position: 1,
         plannedStartTime: "05:30",
         plannedEndTime: "07:15",
@@ -15,6 +17,8 @@ export const initialActivities = [
     {
         id: "cepillado-dientes",
         name: "Cepillado de dientes",
+        recordKind: "habit",
+        recordSubtype: "scheduled",
         position: 2,
         plannedStartTime: "07:50",
         plannedEndTime: "07:55",
@@ -23,6 +27,8 @@ export const initialActivities = [
     {
         id: "meditar",
         name: "Meditar",
+        recordKind: "habit",
+        recordSubtype: "scheduled",
         position: 3,
         plannedStartTime: "08:00",
         plannedEndTime: "08:15",
@@ -31,6 +37,8 @@ export const initialActivities = [
     {
         id: "hybridge-programacion",
         name: "Hybridge - Programación",
+        recordKind: "activity",
+        recordSubtype: "anchor",
         position: 4,
         plannedStartTime: "08:45",
         plannedEndTime: "09:45",
@@ -39,6 +47,8 @@ export const initialActivities = [
     {
         id: "comida",
         name: "Comida",
+        recordKind: "habit",
+        recordSubtype: "scheduled",
         position: 5,
         plannedStartTime: "14:00",
         plannedEndTime: "14:30",
@@ -47,6 +57,8 @@ export const initialActivities = [
     {
         id: "ccna-estudio",
         name: "CCNA / Estudio",
+        recordKind: "activity",
+        recordSubtype: "periodic",
         position: 6,
         plannedStartTime: "19:15",
         plannedEndTime: "20:15",
@@ -55,6 +67,8 @@ export const initialActivities = [
     {
         id: "preparacion-dia-siguiente",
         name: "Preparación del día siguiente",
+        recordKind: "habit",
+        recordSubtype: "scheduled",
         position: 7,
         plannedStartTime: "21:15",
         plannedEndTime: "21:45",

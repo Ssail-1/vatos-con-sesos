@@ -57,6 +57,20 @@ export function isValidTimeRange(startTime, endTime) {
     return startMinutes !== null && endMinutes !== null && endMinutes > startMinutes;
 }
 
+// Los intervalos semiabiertos permiten que uno termine justo cuando inicia el siguiente.
+export function timeRangesOverlap(firstStart, firstEnd, secondStart, secondEnd) {
+    const firstStartMinutes = timeToMinutes(firstStart);
+    const firstEndMinutes = timeToMinutes(firstEnd);
+    const secondStartMinutes = timeToMinutes(secondStart);
+    const secondEndMinutes = timeToMinutes(secondEnd);
+
+    if ([firstStartMinutes, firstEndMinutes, secondStartMinutes, secondEndMinutes].includes(null)) {
+        return false;
+    }
+
+    return firstStartMinutes < secondEndMinutes && firstEndMinutes > secondStartMinutes;
+}
+
 export function calculateDuration(startTime, endTime) {
     if (!isValidTimeRange(startTime, endTime)) return "—";
 
