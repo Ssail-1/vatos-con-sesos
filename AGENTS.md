@@ -1,719 +1,872 @@
+
 # AGENTS.md
 
-## Proyecto
+# Vatos con Sesos — Reglas para agentes de desarrollo
 
-Este repositorio contiene la aplicación **Vatos con Sesos**.
+Este archivo contiene reglas generales y permanentes para cualquier agente de
+IA que trabaje dentro de este repositorio.
 
-Vatos con Sesos crecerá como un gestor personal compuesto por módulos y submódulos.
+Las instrucciones específicas de una entrega NO deben añadirse aquí.
 
-Actualmente existen:
+El alcance actual siempre debe obtenerse desde:
 
-```text
-Vatos con Sesos
-├── Dev Notes
-└── Gestor de hábitos
-    └── Plan del día
+`/docs/codex/CURRENT_TASK.md`
+
+---
+
+# 1. Antes de modificar código
+
+Antes de realizar cualquier cambio:
+
+1. Leer completamente este archivo.
+2. Leer `/docs/codex/CURRENT_TASK.md`.
+3. Leer todos los documentos normativos que `CURRENT_TASK.md` indique.
+4. Inspeccionar el código existente relacionado con la tarea.
+5. Comprender la implementación actual antes de reemplazarla.
+6. Revisar `git status`.
+7. No comenzar a escribir código hasta entender:
+   - qué debe cambiar;
+   - qué debe conservarse;
+   - qué está fuera de alcance.
+
+No asumir requisitos que no estén definidos.
+
+---
+
+# 2. Fuente de verdad para cada entrega
+
+`CURRENT_TASK.md` define:
+
+- qué se está construyendo;
+- qué parte del repositorio puede modificarse;
+- qué documentación debe leerse;
+- qué funciones están autorizadas;
+- qué funciones están aplazadas.
+
+Las instrucciones específicas del MVP actual prevalecen sobre decisiones
+históricas.
+
+---
+
+# 3. Jerarquía documental
+
+Interpretar la documentación utilizando aproximadamente este orden:
+
+1. `AGENTS.md`
+   - reglas generales del repositorio;
+
+2. `docs/codex/CURRENT_TASK.md`
+   - alcance de la entrega actual;
+
+3. documentos normativos indicados por CURRENT_TASK;
+   por ejemplo:
+   - modelos de dominio;
+   - contratos de datos;
+   - frontend;
+   - criterios de aceptación;
+   - referencias de UI;
+
+4. código actualmente aprobado;
+
+5. documentación histórica o de planificación.
+
+Cuando exista una contradicción real entre documentos normativos:
+
+- no decidir silenciosamente;
+- no inventar una regla de negocio;
+- detener únicamente la parte afectada;
+- informar claramente el conflicto.
+
+---
+
+# 4. Documentación normativa y documentación de contexto
+
+No toda la documentación dentro de `/docs/` representa instrucciones.
+
+Los documentos que `CURRENT_TASK.md` enumera explícitamente como normativos
+sí deben cumplirse.
+
+Carpetas como:
+
+`/docs/codex/planeacion/`
+
+`/docs/codex/proximas-features/`
+
+`/docs/codex/archive/`
+
+contienen principalmente:
+
+- historia;
+- conversación de diseño;
+- ideas;
+- decisiones anteriores;
+- funciones futuras;
+- referencias.
+
+Pueden consultarse para comprender el proyecto.
+
+NO deben utilizarse por sí solas para ampliar el alcance actual.
+
+---
+
+# 5. No implementar funciones futuras por iniciativa propia
+
+Si una idea aparece como:
+
+- futura;
+- pendiente;
+- roadmap;
+- aplazada;
+- fuera de alcance;
+
+NO implementarla durante la entrega actual.
+
+Es válido preparar una arquitectura que no bloquee su incorporación futura.
+
+No es válido construirla anticipadamente sin autorización.
+
+---
+
+# 6. Área de trabajo
+
+Respetar estrictamente el área autorizada definida en `CURRENT_TASK.md`.
+
+No modificar archivos externos únicamente porque:
+
+- sería más cómodo;
+- permitiría una refactorización mayor;
+- parecería una arquitectura más limpia;
+- existe código relacionado fuera del alcance.
+
+Si una solución requiere modificar un archivo fuera del área autorizada:
+
+1. no modificarlo;
+2. explicar por qué sería necesario;
+3. continuar con todo lo que sí pueda realizarse dentro del alcance.
+
+---
+
+# 7. No reescribir código funcional sin necesidad
+
+Antes de reemplazar una implementación:
+
+1. entender qué responsabilidad cumple;
+2. comprobar si puede reutilizarse;
+3. identificar qué problema concreto resuelve el cambio.
+
+Preferir:
+
+`evolucionar`
+
+sobre:
+
+`reescribir desde cero`
+
+cuando el código existente sea correcto y reutilizable.
+
+---
+
+# 8. Preservar comportamiento aprobado
+
+Cada nuevo MVP debe considerarse una evolución del anterior.
+
+No romper funciones existentes que no formen parte explícita del cambio.
+
+Después de modificar arquitectura o dominio, realizar pruebas de regresión
+sobre las capacidades previamente aprobadas.
+
+---
+
+# 9. Modularización
+
+El proyecto busca ser comprensible para una persona que continúa aprendiendo
+desarrollo de software.
+
+Favorecer módulos con responsabilidades claras.
+
+Evitar archivos que concentren:
+
+- estado;
+- dominio;
+- renderizado;
+- validaciones;
+- eventos;
+- acceso a datos;
+
+simultáneamente.
+
+---
+
+# 10. No modularizar por modularizar
+
+Crear un archivo nuevo solamente cuando exista una responsabilidad real que
+justifique su existencia.
+
+Evitar:
+
+- archivos de unas pocas líneas sin valor arquitectónico;
+- wrappers innecesarios;
+- abstracciones prematuras;
+- fragmentación excesiva.
+
+La modularización debe aumentar:
+
+- comprensión;
+- mantenibilidad;
+- capacidad de prueba.
+
+No aumentar complejidad accidental.
+
+---
+
+# 11. `app.js`
+
+Cuando exista un archivo coordinador como:
+
+`app.js`
+
+debe actuar principalmente como punto de composición y coordinación.
+
+No convertirlo en un archivo monolítico que implemente directamente:
+
+- almacenamiento;
+- reglas completas de dominio;
+- materialización;
+- renderizado completo;
+- validaciones extensas;
+- utilidades de fecha.
+
+---
+
+# 12. Separación conceptual
+
+Cuando corresponda, favorecer responsabilidades equivalentes a:
+
+`data`
+→ datos iniciales o fixtures;
+
+`domain`
+→ reglas del negocio;
+
+`state`
+→ fuente mutable de estado;
+
+`scheduling`
+→ planificación temporal;
+
+`utils`
+→ utilidades puras reutilizables;
+
+`views`
+→ representación e interacción;
+
+`app`
+→ coordinación.
+
+Esta estructura es una guía.
+
+No crear carpetas vacías para cumplirla literalmente.
+
+---
+
+# 13. Fuente única de verdad
+
+Evitar mantener dos representaciones mutables de la misma información.
+
+Si un MVP reemplaza una estructura anterior:
+
+- migrar su responsabilidad;
+- actualizar consumidores;
+- eliminar la antigua fuente de verdad cuando sea seguro.
+
+No mantener compatibilidad temporal indefinida mediante datos duplicados.
+
+---
+
+# 14. Datos derivados
+
+No almacenar información que pueda derivarse de manera confiable salvo que
+exista una razón explícita.
+
+Ejemplos generales:
+
+- duración derivada de inicio y final;
+- posición derivada del orden;
+- mes derivado de fecha;
+- año derivado de fecha;
+- estado visual derivado del dominio.
+
+Preferir una fuente de verdad y calcular el resto.
+
+---
+
+# 15. Reglas de negocio
+
+Las reglas del negocio deben vivir fuera de la interfaz cuando sea razonable.
+
+La vista debe preguntar al dominio o al store:
+
+`¿puedo hacer esto?`
+
+en lugar de implementar por separado una versión propia de la regla.
+
+Evitar repetir la misma condición en múltiples archivos.
+
+---
+
+# 16. Validaciones
+
+Validar en la capa adecuada.
+
+La interfaz puede proporcionar feedback temprano.
+
+La capa propietaria de los datos debe mantener defensivamente la integridad.
+
+Nunca depender únicamente del HTML o de la vista para garantizar que los
+datos sean válidos.
+
+---
+
+# 17. Operaciones coherentes
+
+Una operación compuesta no debe dejar datos parcialmente modificados cuando
+falla.
+
+Cuando sea posible:
+
+1. construir el cambio;
+2. validar completamente;
+3. aplicar el cambio.
+
+Evitar:
+
+`guardar primero`
+→
+`validar después`
+→
+`intentar reparar`
+
+---
+
+# 18. Identidad
+
+No utilizar nombres visibles como identidad técnica definitiva.
+
+Los IDs deben ser independientes de:
+
+- nombre;
+- etiqueta visible;
+- posición;
+- fecha;
+- horario;
+
+salvo que un documento normativo indique expresamente otra cosa.
+
+---
+
+# 19. JavaScript
+
+Mientras el proyecto continúe utilizando JavaScript nativo:
+
+- utilizar módulos ES cuando corresponda;
+- evitar variables globales innecesarias;
+- preferir `const` cuando una referencia no cambia;
+- utilizar `let` cuando exista reasignación;
+- evitar `var`;
+- utilizar nombres descriptivos;
+- mantener funciones enfocadas;
+- evitar efectos secundarios innecesarios.
+
+---
+
+# 20. Código comprensible
+
+La solución no debe optimizarse exclusivamente para producir menos líneas.
+
+Preferir:
+
+`código explícito y comprensible`
+
+sobre:
+
+`código inteligente pero difícil de seguir`.
+
+No introducir patrones avanzados únicamente para demostrar sofisticación.
+
+---
+
+# 21. Comentarios
+
+Los comentarios deben explicar principalmente:
+
+- intención;
+- regla;
+- razón;
+- restricción no evidente.
+
+Evitar comentarios que solamente traduzcan literalmente el código.
+
+Ejemplo innecesario:
+
+```js
+// Suma uno
+count += 1;
 ```
 
-La tarea vigente corresponde exclusivamente al desarrollo del siguiente incremento frontend de:
+Ejemplo útil:
 
-```text
-modules/gestor_de_habitos/
-```
-
-La entrega actual es:
-
-```text
-Frontend MVP 03 — Integridad temporal, registros tipados y acciones contextuales
+```js
+// Una occurrence cancelada conserva historial,
+// pero deja de bloquear el intervalo temporal.
 ```
 
 ---
 
-# Fuentes de instrucciones vigentes
+# 22. Nombres
 
-Antes de modificar código, debes leer completamente los documentos vigentes en este orden:
+Utilizar nombres consistentes con el dominio definido por la documentación.
 
-1. `/AGENTS.md`
-2. `/docs/codex/CURRENT_TASK.md`
-3. `/docs/codex/FRONTEND_MVP_03.md`
-4. `/docs/codex/MOCK_DATA_CONTRACT_MVP_03.md`
-5. `/docs/codex/UI_REFERENCE.md`
-6. `/docs/codex/ACCEPTANCE_CRITERIA_MVP_03.md`
+No introducir sinónimos innecesarios para conceptos ya establecidos.
 
-También debes consultar las referencias visuales relevantes dentro de:
+Si el dominio utiliza:
 
-```text
-/docs/codex/assets/
-```
+`Occurrence`
 
-Especialmente:
+no crear simultáneamente conceptos equivalentes llamados:
 
-```text
-/docs/codex/assets/acciones-contextuales-fila.png
-```
+`Execution`
+`Instance`
+`DailyRecord`
 
-para la composición visual de las acciones de una fila seleccionada.
+sin una razón explícita.
 
 ---
 
-# Documentos archivados
+# 23. Dependencias
 
-La carpeta:
+No añadir:
 
-```text
-/docs/codex/archive/
-```
-
-contiene documentación de entregas anteriores.
-
-Puede utilizarse para comprender:
-
-* decisiones pasadas;
-* comportamiento que debe conservarse;
-* evolución del módulo.
-
-Pero sus documentos:
-
-* no son instrucciones vigentes;
-* no deben ampliar el alcance actual;
-* pueden contener decisiones reemplazadas.
-
-Cuando exista contradicción, tienen prioridad los documentos normativos del MVP 03.
-
----
-
-# Documentos de planeación
-
-La carpeta:
-
-```text
-/docs/codex/planeacion/
-```
-
-contiene:
-
-* razonamiento del proyecto;
-* conversaciones de diseño;
-* ideas;
-* mapas;
-* notas del desarrollador;
-* decisiones en evaluación;
-* funciones futuras.
-
-Estos documentos son exclusivamente contexto.
-
-No constituyen instrucciones de implementación.
-
-Pueden contener:
-
-* contradicciones;
-* ideas descartadas;
-* funciones todavía no autorizadas.
-
-No debes implementar algo solamente porque aparezca dentro de `planeacion/`.
-
----
-
-# Área autorizada
-
-Puedes crear, modificar, mover o eliminar código únicamente dentro de:
-
-```text
-modules/gestor_de_habitos/
-```
-
-No debes modificar:
-
-```text
-/index.html
-/css/
-/js/
-/docs/
-/modules/dev_notes/
-/README.md
-/.gitignore
-/AGENTS.md
-```
-
-ni ningún otro archivo fuera del módulo autorizado.
-
-Puedes leer esos archivos para comprender el proyecto.
-
----
-
-# Excepción: navegación a la aplicación principal
-
-El MVP 03 debe crear dentro del propio módulo un enlace hacia:
-
-```text
-../../index.html
-```
-
-Esto no autoriza modificar el `index.html` raíz.
-
-Si el enlace requiere cambios externos para funcionar, debes:
-
-1. No modificar el archivo externo.
-2. Informarlo.
-3. Explicar la causa.
-4. Esperar autorización.
-
----
-
-# Estado estable que debe conservarse
-
-El MVP 02 constituye la base funcional.
-
-No se debe eliminar ni deteriorar:
-
-* el tema oscuro;
-* la paleta;
-* los acentos dorados;
-* el encabezado;
-* la matriz mensual;
-* los siete registros iniciales;
-* las duraciones calculadas;
-* el mes actual;
-* todos los días del mes en escritorio;
-* una sola fecha en vista compacta;
-* navegación entre días;
-* resaltado del día actual;
-* resaltado de la fecha seleccionada;
-* selección de filas;
-* botón general para crear;
-* formulario mediante `<dialog>`;
-* creación en memoria;
-* inserción contextual;
-* cinco estados;
-* ciclo multestado;
-* leyenda;
-* foco visible;
-* navegación mediante teclado;
-* ausencia de scroll horizontal global;
-* separación modular del JavaScript.
-
-No se autoriza un rediseño general.
-
----
-
-# Tecnologías permitidas
-
-Utiliza únicamente:
-
-* HTML;
-* CSS;
-* JavaScript nativo;
-* módulos ES;
-* APIs nativas del navegador;
-* datos simulados en memoria.
-
-No utilices:
-
-* Flask;
-* Python;
-* PostgreSQL;
-* Supabase;
-* backend;
-* API externa;
-* `localStorage`;
-* `sessionStorage`;
-* IndexedDB;
-* JSON externo;
-* React;
-* Vue;
-* Angular;
-* frameworks CSS;
-* npm;
+* frameworks;
+* paquetes;
 * librerías externas;
 * servicios remotos;
-* recursos externos.
+
+sin autorización explícita del MVP actual.
+
+Antes de introducir una dependencia debe existir una necesidad concreta.
+
+Preferir capacidades nativas cuando resuelvan adecuadamente el problema.
 
 ---
 
-# Arquitectura actual
+# 24. Frontend
 
-La estructura modular existente debe conservarse conceptualmente:
+Preservar la identidad visual aprobada salvo que la tarea actual autorice un
+rediseño.
 
-```text
-modules/gestor_de_habitos/
-├── index.html
-├── css/
-│   └── gestor_habitos.css
-└── js/
-    ├── data/
-    │   └── mock-activities.js
-    ├── domain/
-    │   └── activity-status.js
-    ├── state/
-    │   └── activity-store.js
-    ├── utils/
-    │   └── date-time.js
-    ├── views/
-    │   ├── activity-matrix.js
-    │   └── activity-form.js
-    └── app.js
-```
+No cambiar colores, layout o componentes únicamente por preferencia del
+agente.
 
-Puedes ampliar alguno de estos módulos cuando sea necesario.
-
-No debes fragmentar el código creando archivos nuevos sin una responsabilidad clara.
-
-Si un archivo nuevo resulta necesario, debes justificarlo brevemente.
+Las nuevas funciones deben integrarse con el lenguaje visual existente.
 
 ---
 
-# Responsabilidades
+# 25. Responsive
 
-## Data
+Toda nueva funcionalidad visible debe considerar como mínimo:
 
-```text
-js/data/
-```
+* escritorio;
+* pantalla compacta.
 
-Contiene datos iniciales de demostración.
+Evitar:
 
-No manipula DOM.
-
----
-
-## Domain
-
-```text
-js/domain/
-```
-
-Contiene conceptos y reglas estables del dominio frontend.
-
-El MVP 03 puede ampliar esta área con reglas relacionadas con:
-
-* tipos;
-* subtipos;
-* estados.
-
-No debe contener el store mutable.
+* scroll horizontal global accidental;
+* controles superpuestos;
+* botones fuera del viewport;
+* diálogos imposibles de cerrar;
+* texto inaccesible.
 
 ---
 
-## State
+# 26. Accesibilidad
 
-```text
-js/state/
-```
+Preferir HTML semántico.
 
-Es propietario de la colección mutable de registros.
+Para interacción utilizar normalmente:
 
-Debe controlar:
+* `button`;
+* `input`;
+* `select`;
+* `dialog`;
+* `a`;
 
-* creación;
-* edición;
-* inserción;
-* estados;
-* orden;
-* posiciones;
-* validaciones defensivas.
+en lugar de convertir elementos genéricos en controles.
 
-Las vistas no modifican directamente los datos.
+Mantener:
 
----
+* foco visible;
+* navegación mediante teclado;
+* labels;
+* nombres accesibles;
+* comportamiento mediante Enter/Space cuando corresponda.
 
-## Utils
-
-```text
-js/utils/
-```
-
-Contiene funciones reutilizables para:
-
-* fechas;
-* horas;
-* duración;
-* comparación temporal;
-* validaciones temporales genéricas.
-
-No manipula DOM ni almacena actividades.
+No comunicar estados únicamente mediante color.
 
 ---
 
-## Views
+# 27. Referencias visuales
 
-```text
-js/views/
-```
+Las imágenes de `/docs/codex/assets/` son referencias.
 
-Contiene la representación y las interacciones visuales.
+Su categoría e interpretación deben obtenerse desde:
 
-Las vistas comunican intenciones.
+`/docs/codex/UI_REFERENCE.md`
 
-No son propietarias del estado persistente en memoria.
+cuando ese archivo forme parte de la documentación normativa actual.
 
----
-
-## App
-
-```text
-js/app.js
-```
-
-Coordina:
-
-```text
-store
-↕
-views
-```
-
-Debe continuar siendo un archivo relativamente pequeño y comprensible.
-
-No debe volver a concentrar toda la lógica del módulo.
+No asumir que una función visible en una captura está autorizada.
 
 ---
 
-# Registros del Plan del día
+# 28. Datos simulados
 
-Los registros del submódulo pueden ser:
+Los mocks deben servir para:
 
-```text
-activity
-habit
-```
+* demostrar reglas;
+* probar estados;
+* cubrir casos importantes;
+* facilitar validación visual.
 
----
+No hardcodear reglas del sistema a partir de un mock específico.
 
-# Actividades
+Ejemplo:
 
-Los subtipos permitidos son:
-
-```text
-anchor
-periodic
-unexpected
-```
-
-Representación visible:
-
-```text
-Ancla
-Periódica
-Imprevista
-```
+si los mocks utilizan agosto de 2026, el algoritmo no debe funcionar solamente
+para agosto de 2026.
 
 ---
 
-# Hábitos
+# 29. Fechas y horas
 
-En esta entrega solamente existe:
+No asumir automáticamente UTC cuando el dominio trabaja con calendario local.
 
-```text
-scheduled
-```
+Las reglas exactas deben seguir la documentación vigente.
 
-Representación visible:
+Evitar conversiones innecesarias entre:
 
-```text
-Hábito programado
-```
+* string local;
+* Date;
+* UTC;
 
-No implementar otros tipos de hábitos.
+que puedan cambiar de día debido a timezone.
 
 ---
 
-# Logros diarios
+# 30. Manejo de errores
 
-No implementar hábitos de cumplimiento diario sin horario.
+Cuando una operación falla:
 
-Ejemplos fuera de alcance:
-
-* no fumar;
-* no beber;
-* no FAP;
-* cantidad diaria de agua;
-* cantidad de lectura.
-
-Estos pertenecerán a otro submódulo futuro.
+* no dejar estado parcial;
+* no ocultar silenciosamente el error;
+* proporcionar feedback comprensible;
+* conservar los datos anteriores cuando sea posible.
 
 ---
 
-# Intervalos temporales
+# 31. No inventar decisiones de producto
 
-Todos los registros mostrados en `Plan del día` tienen:
+Cuando exista una ambigüedad que afecte:
 
-```text
-plannedStartTime
-plannedEndTime
-```
-
-La hora final debe ser posterior a la inicial.
-
-No se permiten cruces de medianoche en esta entrega.
-
----
-
-# Superposición
-
-No se permite que dos registros ocupen simultáneamente el mismo intervalo.
-
-Los intervalos contiguos sí se permiten.
-
-Debe aplicarse la regla definida en:
-
-```text
-/docs/codex/CURRENT_TASK.md
-```
-
-y posteriormente en:
-
-```text
-/docs/codex/FRONTEND_MVP_03.md
-```
-
----
-
-# Validación defensiva
-
-La validación temporal no debe depender únicamente del formulario.
-
-El store debe rechazar:
-
-* actividades inválidas;
-* ediciones inválidas;
-* horarios superpuestos.
-
-Una interfaz defectuosa no debe poder corromper el estado en memoria.
-
----
-
-# Edición
-
-La entrega debe permitir editar un registro existente.
-
-Debe conservar:
-
-```text
-id
-statesByDate
-```
-
-No debe tratar una edición como creación.
-
-No debe generar un identificador nuevo.
-
----
-
-# Acciones contextuales
-
-Cuando una fila esté seleccionada deben aparecer:
-
-```text
-+
-✎
-🗑
-```
-
-La referencia visual principal es:
-
-```text
-/docs/codex/assets/acciones-contextuales-fila.png
-```
-
----
-
-# Botón `+`
-
-Su centro debe ubicarse aproximadamente sobre la esquina superior izquierda de la celda del nombre.
-
-Debe ser más pequeño que el control del MVP 02.
-
-Puede desplazar ligeramente el texto del nombre para evitar superposición.
-
----
-
-# Editar
-
-Debe aparecer dentro de la celda del nombre, hacia la derecha.
-
-Debe abrir el formulario en modo edición.
-
----
-
-# Eliminar
-
-Debe aparecer visualmente junto a editar.
-
-En esta entrega:
-
-```text
-NO elimina
-```
-
-Debe estar claramente deshabilitado o marcado como función futura.
-
----
-
-# Navegación principal
-
-El encabezado debe incluir un enlace hacia:
-
-```text
-../../index.html
-```
-
-En escritorio debe mostrar conceptualmente:
-
-```text
-⌂ Vatos con Sesos
-```
-
-En vista compacta:
-
-```text
-⌂ VCS
-```
-
-No modifiques el index principal para implementar este enlace.
-
----
-
-# Persistencia
-
-Continúa siendo exclusivamente en memoria.
-
-No implementar ningún mecanismo de persistencia.
-
-Al recargar se restaura el estado inicial.
-
----
-
-# Estilo de código
-
-* Utilizar nombres técnicos en inglés.
-* Mantener texto visible en español.
-* Mantener funciones pequeñas.
-* Evitar duplicación.
-* Evitar variables globales innecesarias.
-* Evitar clases si funciones u objetos son suficientes.
-* No introducir abstracciones para funciones futuras.
-* Comentar por bloques funcionales.
-* No comentar sintaxis obvia.
-
----
-
-# Accesibilidad
-
-Toda nueva interacción debe:
-
-* utilizar elementos semánticos;
-* funcionar mediante teclado;
-* tener foco visible;
-* contar con nombre accesible;
-* no depender únicamente del color;
-* respetar el manejo de foco del diálogo;
-* mostrar errores de forma accesible.
-
----
-
-# Responsive
-
-Debe seguir funcionando correctamente en:
-
-* escritorio amplio;
-* vista compacta.
-
-No debe introducir:
-
-* scroll horizontal global;
-* superposición de texto;
-* controles inaccesibles;
-* deformación severa de columnas.
-
----
-
-# Fuera de alcance
-
-No implementar:
-
-* eliminación real;
-* hábitos tipo logro;
+* historial;
+* eliminación;
 * recurrencia;
-* semana ideal;
-* tiempos reales;
-* seguimiento temporal expandido;
-* comentarios;
-* subactividades;
-* estadísticas;
-* rachas;
-* porcentajes;
-* reajuste automático;
-* notificaciones;
-* autenticación;
-* backend;
-* base de datos;
-* integración completa con el shell principal;
-* despliegue.
+* identidad;
+* prioridades;
+* persistencia;
+* reglas de negocio;
+
+no seleccionar arbitrariamente la opción que resulte más sencilla de
+programar.
+
+Informar la ambigüedad.
 
 ---
 
-# Forma de trabajo
+# 32. No sobreingeniería
 
-Antes de modificar código debes:
+La arquitectura debe permitir crecer.
 
-1. Leer todos los documentos normativos.
-2. Inspeccionar el estado actual del módulo.
-3. Resumir tu comprensión.
-4. Enumerar los archivos que modificarás.
-5. Explicar cómo implementarás:
+Eso NO significa construir ahora:
 
-   * conflictos temporales;
-   * edición;
-   * clasificación;
-   * acciones contextuales;
-   * enlace hacia VCS.
-6. Explicar cómo conservarás el MVP 02.
+* microservicios;
+* event sourcing;
+* repositorios genéricos;
+* factories complejas;
+* patrones empresariales;
+* capas sin necesidad actual.
 
-Después espera autorización, salvo que el prompt del usuario indique explícitamente que puedes comenzar inmediatamente.
+Construir para el problema real del MVP presente.
 
 ---
 
-# Git
+# 33. Futuro backend
 
-No debes ejecutar:
+Mientras el proyecto siga en frontend en memoria, evitar introducir
+abstracciones falsas de backend únicamente para anticipar Flask o PostgreSQL.
 
-* `git commit`;
-* `git push`;
-* `git merge`;
-* `git switch`;
-* `git checkout`;
-* `git reset`;
-* `git restore`;
-* `git clean`.
+Sí debe evitarse una arquitectura que imposibilite posteriormente separar:
 
-No debes modificar historial ni cambiar de rama.
+Frontend
+↓
+API
+↓
+Backend
+↓
+Base de datos
 
-Puedes utilizar comandos de inspección y pruebas no destructivas.
-
----
-
-# Seguridad
-
-No crear:
-
-* credenciales;
-* secretos;
-* `.env`;
-* accesos remotos;
-* dependencias externas.
-
-No ejecutar comandos destructivos.
+La adaptación debe ser razonable, no prematura.
 
 ---
 
-# Finalización
+# 34. Git — política general
 
-La entrega solamente se considera terminada cuando cumple:
+El usuario controla:
 
-```text
-/docs/codex/ACCEPTANCE_CRITERIA_MVP_03.md
+* commits;
+* pushes;
+* merges;
+* tags;
+* ramas;
+* rollback.
+
+Un agente NO debe realizar operaciones destructivas o publicar cambios salvo
+que el usuario lo solicite explícitamente y el alcance actual lo permita.
+
+---
+
+# 35. Durante tareas de Codex
+
+Salvo autorización expresa, NO ejecutar:
+
+```bash
+git commit
+git push
+git merge
+git switch
+git checkout
+git reset
+git restore
+git clean
+git tag
 ```
 
-Codex debe ejecutar pruebas de regresión del MVP 02 además de las pruebas propias del MVP 03.
+---
 
-No declarar una función terminada si no fue implementada o verificada.
+# 36. Inspección de Git
+
+Se permiten normalmente operaciones no destructivas como:
+
+```bash
+git status
+git diff
+git diff --check
+git log
+```
+
+cuando ayuden a verificar el trabajo.
+
+---
+
+# 37. No arreglar cambios ajenos
+
+Si `git status` muestra modificaciones que no pertenecen a la tarea actual:
+
+* no revertirlas;
+* no formatearlas;
+* no incluirlas en refactors;
+* no eliminarlas.
+
+Trabajar alrededor de ellas.
+
+---
+
+# 38. Verificación antes de terminar
+
+Antes de declarar una tarea terminada:
+
+1. comprobar sintaxis;
+2. comprobar imports;
+3. probar las funciones modificadas;
+4. ejecutar casos límite relevantes;
+5. revisar regresiones;
+6. revisar `git diff`;
+7. ejecutar `git diff --check` cuando corresponda;
+8. verificar que no se modificaron archivos fuera del alcance.
+
+---
+
+# 39. Navegador
+
+Cuando exista un navegador disponible y la tarea afecte interfaz:
+
+realizar comprobación visual real.
+
+No afirmar que una interfaz funciona correctamente basándose únicamente en
+inspección del código.
+
+---
+
+# 40. Responsive real
+
+Cuando sea posible comprobar aproximadamente:
+
+```text
+1440 × 900
+390 × 844
+```
+
+o dimensiones equivalentes de escritorio y móvil.
+
+---
+
+# 41. Pruebas
+
+No afirmar que algo fue probado si solamente fue razonado.
+
+Distinguir claramente entre:
+
+* comprobado automáticamente;
+* comprobado visualmente;
+* inspeccionado;
+* no comprobado.
+
+---
+
+# 42. Informe final
+
+Al terminar una implementación, presentar un resumen que incluya como mínimo:
+
+* archivos creados;
+* archivos modificados;
+* archivos eliminados;
+* comportamiento implementado;
+* decisiones arquitectónicas relevantes;
+* pruebas realizadas;
+* problemas encontrados;
+* limitaciones conocidas;
+* funcionalidades deliberadamente aplazadas.
+
+---
+
+# 43. Transparencia
+
+Si algo no pudo verificarse:
+
+decirlo.
+
+Si una prueba falló:
+
+decirlo.
+
+Si una parte quedó incompleta:
+
+decirlo.
+
+No presentar una tarea como terminada únicamente porque el código fue escrito.
+
+---
+
+# 44. No hacer commits automáticamente
+
+Al finalizar:
+
+dejar los cambios disponibles para que el usuario:
+
+1. los revise;
+2. pruebe;
+3. decida si realizar commit.
+
+El agente no debe asumir que un resultado correcto debe guardarse
+automáticamente en Git.
+
+---
+
+# 45. Filosofía del proyecto
+
+Vatos con Sesos se está construyendo de manera incremental.
+
+Cada entrega debe buscar:
+
+```text
+algo pequeño
++
+funcional
++
+comprensible
++
+probable
++
+reversible
+```
+
+antes de añadir la siguiente capa.
+
+---
+
+# 46. Objetivo técnico
+
+La arquitectura debe favorecer simultáneamente:
+
+* control del usuario;
+* automatización;
+* historial;
+* extensibilidad;
+* comprensión del código;
+* mantenibilidad.
+
+---
+
+# 47. Objetivo de aprendizaje
+
+El código también forma parte del proceso de aprendizaje del propietario del
+proyecto.
+
+Por ello:
+
+* modularizar con intención;
+* utilizar nombres claros;
+* evitar magia innecesaria;
+* mantener reglas localizables;
+* permitir identificar fácilmente dónde modificar cada comportamiento.
+
+El objetivo no es únicamente:
+
+`que funcione`.
+
+También es:
+
+`que pueda entenderse, mantenerse y evolucionar`.
+
+---
+
+# Regla final
+
+Antes de tomar una decisión técnica preguntar conceptualmente:
+
+```text
+¿Está autorizada por la tarea actual?
+
+¿Conserva el comportamiento aprobado?
+
+¿Existe una solución más simple?
+
+¿Mantiene una sola fuente de verdad?
+
+¿Puedo explicar claramente por qué existe?
+```
+
+Si la respuesta no está clara:
+
+no inventar silenciosamente.
+
+Revisar la documentación o informar la duda.
