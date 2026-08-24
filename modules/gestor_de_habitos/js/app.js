@@ -1,12 +1,9 @@
-import { initialActivities } from "./data/mock-activities.js";
-import { createActivityStore } from "./state/activity-store.js";
-import {
-    formatMonth,
-    formatSelectedDate,
-    getMonthDates,
-} from "./utils/date-time.js";
-import { createActivityMatrixView } from "./views/activity-matrix.js";
-import { createActivityFormView } from "./views/activity-form.js";
+import { initialPlanItems } from "./data/mock-plan-items.js";
+import { mockStatusOverrides } from "./data/mock-status-overrides.js";
+import { createPlannerStore } from "./state/planner-store.js";
+import { formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
+import { createPlanItemFormView } from "./views/plan-item-form.js";
+import { createPlannerMatrixView } from "./views/planner-matrix.js";
 
 const elements = {
     monthName: document.getElementById("monthName"),
@@ -15,6 +12,7 @@ const elements = {
     nextDayButton: document.getElementById("nextDayButton"),
     matrixHead: document.getElementById("matrixHead"),
     matrixBody: document.getElementById("matrixBody"),
+    matrixFeedback: document.getElementById("matrixFeedback"),
     statusLegend: document.getElementById("statusLegend"),
     addActivityButton: document.getElementById("addActivityButton"),
     activityDialog: document.getElementById("activityDialog"),
@@ -23,12 +21,13 @@ const elements = {
     insertionReference: document.getElementById("insertionReference"),
     formErrors: document.getElementById("formErrors"),
     activityName: document.getElementById("activityName"),
-    recordKind: document.getElementById("recordKind"),
-    recordSubtype: document.getElementById("recordSubtype"),
+    planItemKind: document.getElementById("planItemKind"),
+    planItemType: document.getElementById("planItemType"),
     activitySubtypeField: document.getElementById("activitySubtypeField"),
     habitSubtypeField: document.getElementById("habitSubtypeField"),
-    plannedStartTime: document.getElementById("plannedStartTime"),
-    plannedEndTime: document.getElementById("plannedEndTime"),
+    occurrenceDate: document.getElementById("occurrenceDate"),
+    occurrenceStartTime: document.getElementById("occurrenceStartTime"),
+    occurrenceEndTime: document.getElementById("occurrenceEndTime"),
     cancelActivityButton: document.getElementById("cancelActivityButton"),
 };
 
@@ -36,122 +35,166 @@ const currentDate = new Date();
 const currentYear = currentDate.getFullYear();
 const currentMonth = currentDate.getMonth();
 const monthDates = getMonthDates(currentYear, currentMonth);
-const activityStore = createActivityStore(initialActivities);
+const plannerStore = createPlannerStore(
+    initialPlanItems,
+    mockStatusOverrides,
+    formatDateKey(currentDate),
+);
 let selectedDate = new Date(currentYear, currentMonth, currentDate.getDate());
-let selectedActivityId = null;
+let selectedPlanItemId = null;
+
+function clearFeedback() {
+    elements.matrixFeedback.hidden = true;
+    elements.matrixFeedback.textContent = "";
+}
+
+function showFeedback(message) {
+    elements.matrixFeedback.textContent = message;
+    elements.matrixFeedback.hidden = false;
+}
 
 function renderMatrix() {
     matrixView.render({
-        activities: activityStore.getActivities(),
+        planItems: plannerStore.getPlanItems(),
+        occurrences: plannerStore.getOccurrencesForMonth(currentYear, currentMonth),
         monthDates,
         currentDate,
         selectedDate,
-        selectedActivityId,
+        selectedPlanItemId,
     });
 }
 
-const matrixView = createActivityMatrixView({
+function getConflictError(conflict) {
+    return conflict
+        ? [{
+              field: "startTime",
+              message: `El horario se cruza con “${conflict.planItemName}” (${conflict.startTime}–${conflict.endTime}).`,
+          }]
+        : [];
+}
+
+const matrixView = createPlannerMatrixView({
     matrixHead: elements.matrixHead,
     matrixBody: elements.matrixBody,
     statusLegend: elements.statusLegend,
-    onStatusChange: (activityId, dateKey) =>
-        activityStore.advanceActivityStatus(activityId, dateKey),
-    onRowSelect: (activityId, shouldRestoreRowFocus) => {
-        selectedActivityId = selectedActivityId === activityId ? null : activityId;
-        renderMatrix();
-        if (shouldRestoreRowFocus && selectedActivityId) {
-            matrixView.focusActivityRow(selectedActivityId);
+    onStatusChange: (occurrenceId) => {
+        clearFeedback();
+        try {
+            return plannerStore.advanceOccurrenceStatus(occurrenceId);
+        } catch (error) {
+            const conflict = error.details?.conflictingOccurrence;
+            showFeedback(
+                conflict
+                    ? `No se cambió el estado: el horario está ocupado por “${conflict.planItemName}” (${conflict.startTime}–${conflict.endTime}).`
+                    : error.message,
+            );
+            return null;
         }
     },
-    onInsertBefore: (activityId, opener) => {
-        const referenceActivity = activityStore.getActivityById(activityId);
-        if (!referenceActivity) return;
-        const activities = activityStore.getActivities();
-        const referenceIndex = activities.findIndex((activity) => activity.id === activityId);
-        const previousActivity = referenceIndex > 0 ? activities[referenceIndex - 1] : null;
-        activityFormView.openInsertBefore(
-            referenceActivity,
-            previousActivity?.plannedEndTime || "",
+    onRowSelect: (planItemId, shouldRestoreRowFocus) => {
+        selectedPlanItemId = selectedPlanItemId === planItemId ? null : planItemId;
+        clearFeedback();
+        renderMatrix();
+        if (shouldRestoreRowFocus && selectedPlanItemId) matrixView.focusPlanItemRow(selectedPlanItemId);
+    },
+    onInsertBefore: (planItem, referenceOccurrence, opener) => {
+        const dailyOccurrences = plannerStore.getOccurrencesForDate(referenceOccurrence.date);
+        const referenceIndex = dailyOccurrences.findIndex(
+            (occurrence) => occurrence.id === referenceOccurrence.id,
+        );
+        const previousOccurrence = referenceIndex > 0 ? dailyOccurrences[referenceIndex - 1] : null;
+        planItemFormView.openInsertBefore(
+            planItem,
+            referenceOccurrence,
+            previousOccurrence?.endTime || "",
             opener,
         );
     },
-    onEdit: (activityId, opener) => {
-        const activity = activityStore.getActivityById(activityId);
-        if (activity) activityFormView.openEdit(activity, opener);
+    onEdit: (planItem, occurrence, opener) => {
+        planItemFormView.openEdit(planItem, occurrence, opener);
     },
 });
 
-const activityFormView = createActivityFormView({
+const planItemFormView = createPlanItemFormView({
     dialog: elements.activityDialog,
     form: elements.activityForm,
     title: elements.activityDialogTitle,
     referenceMessage: elements.insertionReference,
     errorsRegion: elements.formErrors,
     nameInput: elements.activityName,
-    recordKindInput: elements.recordKind,
-    recordSubtypeInput: elements.recordSubtype,
-    activitySubtypeField: elements.activitySubtypeField,
-    habitSubtypeField: elements.habitSubtypeField,
-    startTimeInput: elements.plannedStartTime,
-    endTimeInput: elements.plannedEndTime,
+    kindInput: elements.planItemKind,
+    itemTypeInput: elements.planItemType,
+    activityTypeField: elements.activitySubtypeField,
+    habitTypeField: elements.habitSubtypeField,
+    dateInput: elements.occurrenceDate,
+    startTimeInput: elements.occurrenceStartTime,
+    endTimeInput: elements.occurrenceEndTime,
     cancelButton: elements.cancelActivityButton,
     fallbackFocusElement: elements.addActivityButton,
-    onValidate: (activityDraft, context) => {
-        const ignoredActivityId = context.mode === "edit" ? context.activityId : null;
-        const conflict = activityStore.findTimeConflict(
-            activityDraft.plannedStartTime,
-            activityDraft.plannedEndTime,
-            ignoredActivityId,
+    onValidate: (result, context) => {
+        const ignoredOccurrenceId = context.mode === "edit" ? context.occurrenceId : null;
+        return getConflictError(
+            plannerStore.findTimeConflict(
+                result.occurrence.date,
+                result.occurrence.startTime,
+                result.occurrence.endTime,
+                ignoredOccurrenceId,
+            ),
         );
-        return conflict
-            ? [
-                  {
-                      field: "plannedStartTime",
-                      message: `El horario se cruza con “${conflict.name}” (${conflict.plannedStartTime}–${conflict.plannedEndTime}).`,
-                  },
-              ]
-            : [];
     },
-    onSubmit: (activityDraft, context) => {
+    onSubmit: (result, context) => {
+        clearFeedback();
         if (context.mode === "edit") {
-            activityStore.updateActivity(context.activityId, activityDraft);
-            selectedActivityId = context.activityId;
-        } else if (context.mode === "insert_before") {
-            activityStore.insertActivityBefore(activityDraft, context.referenceActivityId);
-            selectedActivityId = context.referenceActivityId;
+            plannerStore.updatePlanItemAndOccurrence(
+                context.planItemId,
+                result.planItem,
+                context.occurrenceId,
+                result.occurrence,
+            );
+            selectedPlanItemId = context.planItemId;
         } else {
-            activityStore.addActivity(activityDraft);
-            selectedActivityId = null;
+            const creationResult = plannerStore.addPlanItem({
+                ...result.planItem,
+                generationConfig: {
+                    mode: "single_date",
+                    date: result.occurrence.date,
+                    startTime: result.occurrence.startTime,
+                    endTime: result.occurrence.endTime,
+                },
+            });
+            selectedPlanItemId = creationResult.planItem.id;
         }
         renderMatrix();
     },
-    onFallbackFocus: (activityId) => matrixView.focusActivityRow(activityId),
+    onFallbackFocus: (planItemId) => {
+        if (!matrixView.focusPlanItemRow(planItemId)) elements.addActivityButton.focus();
+    },
 });
 
 function updateSelectedDatePresentation() {
-    matrixView.updateSelectedDate(selectedDate);
     elements.selectedDateLabel.textContent = formatSelectedDate(selectedDate);
     elements.previousDayButton.disabled = selectedDate.getDate() === 1;
     elements.nextDayButton.disabled = selectedDate.getDate() === monthDates.length;
+    clearFeedback();
+    renderMatrix();
 }
 
 function moveSelectedDate(dayDifference) {
     const candidate = new Date(currentYear, currentMonth, selectedDate.getDate() + dayDifference);
     if (candidate.getMonth() !== currentMonth) return;
     selectedDate = candidate;
+    selectedPlanItemId = null;
     updateSelectedDatePresentation();
 }
 
 function initializeApplication() {
     elements.monthName.textContent = formatMonth(currentDate);
-    renderMatrix();
     matrixView.renderLegend();
     updateSelectedDatePresentation();
-
     elements.previousDayButton.addEventListener("click", () => moveSelectedDate(-1));
     elements.nextDayButton.addEventListener("click", () => moveSelectedDate(1));
     elements.addActivityButton.addEventListener("click", () => {
-        activityFormView.openCreate(elements.addActivityButton);
+        planItemFormView.openCreate(formatDateKey(selectedDate), elements.addActivityButton);
     });
 }
 

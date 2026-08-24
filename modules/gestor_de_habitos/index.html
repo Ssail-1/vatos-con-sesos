@@ -71,6 +71,7 @@
                         <tbody id="matrixBody"></tbody>
                     </table>
                 </div>
+                <p id="matrixFeedback" class="matrix-feedback" role="alert" aria-live="assertive" hidden></p>
             </section>
 
             <section class="status-legend" aria-labelledby="legendTitle">
@@ -105,18 +106,19 @@
 
                 <div class="classification-fields">
                     <div class="form-field">
-                        <label for="recordKind">Tipo de registro</label>
-                        <select id="recordKind" name="recordKind" required>
+                        <label for="planItemKind">Tipo de registro</label>
+                        <select id="planItemKind" name="kind" required>
                             <option value="activity">Actividad</option>
                             <option value="habit">Hábito</option>
                         </select>
                     </div>
 
                     <div id="activitySubtypeField" class="form-field">
-                        <label for="recordSubtype">Subtipo de actividad</label>
-                        <select id="recordSubtype" name="recordSubtype" required>
+                        <label for="planItemType">Subtipo de actividad</label>
+                        <select id="planItemType" name="itemType" required>
                             <option value="anchor">Ancla</option>
                             <option value="periodic" selected>Periódica</option>
+                            <option value="event">Evento</option>
                             <option value="unexpected">Imprevista</option>
                         </select>
                     </div>
@@ -127,14 +129,19 @@
                     </div>
                 </div>
 
+                <div class="form-field">
+                    <label for="occurrenceDate">Fecha</label>
+                    <input id="occurrenceDate" name="date" type="date" required />
+                </div>
+
                 <div class="time-fields">
                     <div class="form-field">
-                        <label for="plannedStartTime">Hora de inicio</label>
-                        <input id="plannedStartTime" name="plannedStartTime" type="time" required />
+                        <label for="occurrenceStartTime">Hora de inicio</label>
+                        <input id="occurrenceStartTime" name="startTime" type="time" required />
                     </div>
                     <div class="form-field">
-                        <label for="plannedEndTime">Hora de finalización</label>
-                        <input id="plannedEndTime" name="plannedEndTime" type="time" required />
+                        <label for="occurrenceEndTime">Hora de finalización</label>
+                        <input id="occurrenceEndTime" name="endTime" type="time" required />
                     </div>
                 </div>
 

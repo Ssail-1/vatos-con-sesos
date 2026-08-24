@@ -364,6 +364,14 @@ h1 {
     filter: brightness(1.1);
 }
 
+.context-add-button:disabled {
+    border-color: var(--border-strong);
+    color: var(--cancelled);
+    background: var(--surface-muted);
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
 .activity-position,
 .activity-time,
 .activity-duration {
@@ -447,6 +455,31 @@ thead .today-column {
 .status-button[data-status="cancelled"] {
     color: var(--cancelled);
     background: #25292e;
+}
+
+.occurrence-controls {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+.not-scheduled-cell {
+    color: #747b84;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.not-scheduled-cell > span {
+    font-weight: 700;
+}
+
+.matrix-feedback {
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--not-completed);
+    color: #ffd5d5;
+    background: rgba(239, 107, 107, 0.1);
+    font-size: 0.82rem;
 }
 
 .status-legend {
