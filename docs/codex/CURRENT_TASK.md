@@ -3,7 +3,7 @@
 
 ## Entrega actual
 
-**MVP 04.0.1 — Motor temporal, modelo y materialización por ocurrencias**
+**MVP 04.0.2 — Navegación temporal y experiencia frontend completa**
 
 ---
 
@@ -21,53 +21,11 @@ Vatos con Sesos
 
 ---
 
-# Contexto
+# Estado del proyecto
 
-MVP 03 constituye el último checkpoint funcional aprobado.
+MVP 04.0.1 ya fue implementado y aprobado como checkpoint funcional.
 
-Actualmente el módulo ya permite:
-
-* visualizar una matriz mensual;
-* trabajar en escritorio y pantalla compacta;
-* crear registros;
-* editar registros;
-* seleccionar filas;
-* utilizar acciones contextuales;
-* manejar cinco estados;
-* validar conflictos temporales;
-* clasificar actividades y hábitos;
-* navegar hacia Vatos con Sesos;
-* trabajar exclusivamente en memoria.
-
-MVP 04 introduce un cambio estructural importante en el motor temporal.
-
----
-
-# División del MVP 04
-
-El MVP 04 está dividido en dos entregas internas.
-
-```text
-MVP 04.0.1
-Motor temporal, modelo y materialización
-
-MVP 04.0.2
-Navegación temporal y experiencia frontend completa
-```
-
-La tarea actualmente autorizada es únicamente:
-
-```text
-MVP 04.0.1
-```
-
-No implementar anticipadamente las funciones reservadas para MVP 04.0.2.
-
----
-
-# Objetivo principal
-
-Migrar el modelo temporal del MVP 03 hacia una arquitectura basada en:
+El motor temporal actual utiliza:
 
 ```text
 PlanItem
@@ -77,58 +35,156 @@ generationConfig
 Occurrence
 ```
 
-La nueva arquitectura debe permitir:
+MVP 04.0.2 NO debe reemplazar este modelo.
 
-```text
-automatización de planificación
-+
-independencia por fecha
-+
-conservación de historial
-+
-replanificación futura
-```
-
-sin introducir todavía backend ni persistencia.
+Debe construir la experiencia de usuario encima del motor existente.
 
 ---
 
-# Principio central
+# Baseline obligatorio
 
-Para saber:
+La implementación de MVP 04.0.1 constituye el nuevo baseline.
+
+Actualmente deben preservarse, entre otras cosas:
+
+* PlanItems separados de Occurrences;
+* generationConfig como generador de planificación futura;
+* Occurrences como agenda materializada;
+* status independiente por Occurrence;
+* materialización weekly;
+* materialización interval_days;
+* materialización manual_dates;
+* materialización single_date;
+* weekdayTimeOverrides;
+* horizonte de materialización;
+* idempotencia;
+* detección de conflictos;
+* edición individual de Occurrence;
+* integridad al cambiar status;
+* múltiples Occurrences posibles del mismo PlanItem en una fecha;
+* IDs independientes de nombre, fecha y horario;
+* almacenamiento exclusivamente en memoria.
+
+---
+
+# Regla de estados vigente
+
+Continúan bloqueando horario:
 
 ```text
-qué está realmente agendado
+pending
+in_progress
+completed
 ```
 
-consultar:
+Continúan liberando horario:
+
+```text
+not_completed
+cancelled
+```
+
+---
+
+# Comportamiento cíclico aprobado
+
+También debe preservarse la corrección incorporada al cierre de MVP 04.0.1.
+
+Si una Occurrence está:
+
+```text
+cancelled
+```
+
+y avanzar normalmente a:
+
+```text
+pending
+```
+
+produciría un conflicto temporal, el control cíclico debe utilizar:
+
+```text
+not_completed
+```
+
+como fallback.
+
+De este modo puede alternarse:
+
+```text
+not_completed
+↔
+cancelled
+```
+
+cuando el antiguo intervalo ya fue ocupado por otra Occurrence.
+
+Esto NO modifica la regla explícita de:
+
+```text
+setOccurrenceStatus(..., "pending")
+```
+
+que debe continuar rechazando una reactivación que produzca conflicto.
+
+---
+
+# Objetivo de MVP 04.0.2
+
+Transformar el motor temporal construido en MVP 04.0.1 en una experiencia de
+planificación completa y navegable.
+
+La interfaz debe permitir que el usuario trabaje naturalmente con:
+
+```text
+día
+semana
+mes
+recurrencia
+excepciones
+eventos
+imprevistos
+```
+
+sin necesitar comprender directamente:
+
+```text
+PlanItem
+Occurrence
+generationConfig
+materialización
+```
+
+---
+
+# Principio principal del frontend
+
+La interfaz siempre debe responder a:
+
+```text
+¿Qué está realmente programado para esta fecha?
+```
+
+consultando:
 
 ```text
 Occurrences
 ```
 
-Para saber:
+No consultar generationConfig como sustituto de una Occurrence materializada.
+
+generationConfig continúa respondiendo únicamente:
 
 ```text
-qué debe generarse en el futuro
+¿Qué debe generarse en el futuro?
 ```
-
-consultar:
-
-```text
-generationConfig
-```
-
-Una Occurrence ya materializada es independiente.
-
-No debe reconstruirse automáticamente desde generationConfig cada vez que la
-interfaz se renderiza.
 
 ---
 
 # Documentación normativa
 
-Antes de modificar código, leer completamente en este orden:
+Antes de modificar código, leer completamente:
 
 1. `/AGENTS.md`
 2. `/docs/codex/CURRENT_TASK.md`
@@ -138,14 +194,53 @@ Antes de modificar código, leer completamente en este orden:
 6. `/docs/codex/UI_REFERENCE.md`
 7. `/docs/codex/ACCEPTANCE_CRITERIA_MVP_04.md`
 
-Los documentos anteriores deben considerarse en conjunto.
+---
 
-Si existe una contradicción real entre documentos normativos que implique
-inventar una regla de negocio:
+# Activación de MVP 04.0.2
 
-* no tomar una decisión silenciosa;
-* detener únicamente la parte afectada;
-* informar claramente la contradicción.
+Dentro de:
+
+```text
+/docs/codex/ACCEPTANCE_CRITERIA_MVP_04.md
+```
+
+existe una sección titulada:
+
+```text
+MVP 04.0.2 — NO EJECUTAR TODAVÍA
+```
+
+La prohibición contenida en ese título queda expresamente levantada por este
+CURRENT_TASK.
+
+Los criterios pertenecientes a MVP 04.0.2 pasan a estar ACTIVOS para esta
+entrega.
+
+Los criterios de MVP 04.0.1 continúan vigentes como:
+
+```text
+criterios de regresión
+```
+
+y no como trabajo que deba reconstruirse desde cero.
+
+---
+
+# FRONTEND_MVP_04
+
+Todas las secciones correspondientes a:
+
+```text
+MVP 04.0.2
+```
+
+dentro de:
+
+```text
+/docs/codex/FRONTEND_MVP_04.md
+```
+
+quedan autorizadas para implementación.
 
 ---
 
@@ -159,18 +254,9 @@ Las carpetas:
 /docs/codex/archive/
 ```
 
-contienen:
+pueden utilizarse para comprender contexto.
 
-* historia;
-* conversaciones;
-* ideas;
-* decisiones futuras;
-* funciones aplazadas;
-* documentación antigua.
-
-Pueden utilizarse para comprender contexto.
-
-NO deben utilizarse para ampliar el alcance actual.
+NO deben ampliar el alcance actual.
 
 En particular:
 
@@ -178,27 +264,37 @@ En particular:
 /docs/codex/planeacion/ROADMAP_PENDING_FEATURES.md
 ```
 
-sirve exclusivamente para no olvidar funciones futuras.
+contiene funciones futuras o pendientes.
 
-No autoriza su implementación.
+No implementarlas únicamente porque estén documentadas allí.
 
 ---
 
 # Referencias visuales
 
-Las referencias específicas del MVP 04 se encuentran principalmente en:
-
-```text
-/docs/codex/assets/assets-MVP04/
-```
-
-Su interpretación debe seguir:
+Utilizar:
 
 ```text
 /docs/codex/UI_REFERENCE.md
 ```
 
-Una imagen nunca amplía por sí sola el alcance de esta tarea.
+para interpretar las imágenes.
+
+Las referencias activas del MVP 04 se encuentran principalmente en:
+
+```text
+/docs/codex/assets/assets-MVP04/
+```
+
+Las imágenes estadísticas continúan siendo visión futura.
+
+NO implementar a partir de ellas:
+
+* gráficas;
+* porcentajes;
+* rachas;
+* premios;
+* dashboard estadístico.
 
 ---
 
@@ -227,9 +323,7 @@ No modificar:
 /.gitignore
 ```
 
-ni ningún otro archivo fuera del módulo autorizado.
-
-Los archivos externos pueden leerse cuando sea necesario.
+ni ningún archivo fuera del módulo autorizado.
 
 ---
 
@@ -251,9 +345,7 @@ git tag
 
 No cambiar de rama.
 
-No modificar historial.
-
-Puede utilizarse inspección no destructiva:
+Puede utilizarse:
 
 ```text
 git status
@@ -262,9 +354,11 @@ git diff --check
 git log
 ```
 
+como inspección no destructiva.
+
 ---
 
-# Tecnologías autorizadas
+# Tecnologías
 
 Continuar utilizando:
 
@@ -273,12 +367,11 @@ Continuar utilizando:
 * JavaScript nativo;
 * módulos ES;
 * APIs nativas del navegador;
-* almacenamiento exclusivamente en memoria.
+* datos exclusivamente en memoria.
 
-No introducir todavía:
+No introducir:
 
 * Flask;
-* Python como backend;
 * PostgreSQL;
 * Supabase;
 * API;
@@ -290,175 +383,496 @@ No introducir todavía:
 * Angular;
 * npm;
 * frameworks;
-* librerías externas;
-* servicios remotos.
+* librerías externas.
 
 ---
 
-# Cambio estructural obligatorio
+# ============================================================
 
-El modelo activo del MVP 03:
+# 1. ESTADO TEMPORAL DE INTERFAZ
+
+# ============================================================
+
+La interfaz debe utilizar conceptualmente:
 
 ```text
-Record
-├── id
-├── name
-├── recordKind
-├── recordSubtype
-├── position
-├── plannedStartTime
-├── plannedEndTime
-└── statesByDate
+selectedDate
+visibleMonth
+showAllMonthRecords
 ```
 
-debe migrarse conceptualmente hacia:
+Estos valores pertenecen al frontend.
+
+No agregarlos a:
 
 ```text
 PlanItem
-├── id
-├── name
-├── kind
-├── activityType / habitType
-└── generationConfig
-
 Occurrence
-├── id
-├── planItemId
-├── date
-├── startTime
-├── endTime
-└── status
+generationConfig
 ```
 
 ---
 
-# Fuente canónica en memoria
+# selectedDate
 
-La fuente mutable debe representar conceptualmente:
+Representa la fecha actualmente seleccionada.
 
-```js
-{
-    planItems: [],
-    occurrences: []
-}
-```
+La planificación diaria visible debe resolverse utilizando las Occurrences de
+esa fecha.
 
-Puede existir encapsulación dentro del store.
+---
 
-La obligación es que:
+# visibleMonth
+
+Representa el mes mostrado actualmente en la matriz.
+
+Debe poder cambiar mediante navegación mensual y selección directa.
+
+---
+
+# showAllMonthRecords
+
+Controla:
 
 ```text
-PlanItems
+false
+→ Plan del día
+
+true
+→ visión completa del mes
+```
+
+Valor inicial:
+
+```text
+false
+```
+
+---
+
+# Carga inicial
+
+Al cargar:
+
+```text
+selectedDate = fecha local actual
+visibleMonth = mes de selectedDate
+showAllMonthRecords = false
+```
+
+No asumir UTC para resolver la fecha local.
+
+---
+
+# ============================================================
+
+# 2. SELECCIÓN DE DÍA
+
+# ============================================================
+
+En escritorio, los encabezados de fecha de la matriz deben poder seleccionar
+directamente un día.
+
+Ejemplo:
+
+```text
+LUN
+17
+```
+
+Al activarlo:
+
+```text
+selectedDate = esa fecha
+```
+
+---
+
+# Columna seleccionada
+
+La fecha seleccionada debe conservar un resaltado coherente con el acento
+dorado actual.
+
+No depender exclusivamente del color para comunicar selección.
+
+---
+
+# Vista compacta
+
+Las flechas diarias existentes continúan representando:
+
+```text
+día anterior
+día siguiente
+```
+
+Deben permitir cruzar correctamente entre:
+
+* meses;
+* años.
+
+Al cruzar un mes debe sincronizarse:
+
+```text
+visibleMonth
+```
+
+---
+
+# ============================================================
+
+# 3. SELECTOR DE FECHA
+
+# ============================================================
+
+Implementar selección directa de fecha.
+
+Preferir:
+
+```html
+<input type="date">
 ```
 
 y:
 
-```text
-Occurrences
-```
-
-sean conceptos separados.
-
----
-
-# No mantener dos modelos activos
-
-Después de la migración no debe existir:
-
-```text
-statesByDate
-```
-
-como segunda fuente de verdad.
-
-Tampoco debe conservarse:
-
-```text
-position
-```
-
-como propiedad persistente del dominio.
-
----
-
-# PlanItem
-
-PlanItem representa:
-
-```text
-qué cosa es
-```
-
-Ejemplos:
-
-```text
-Gym
-Trabajo
-Meditar
-CCNA / Estudio
-Boda de Efrén
-Ponchadura de llanta
-```
-
-El PlanItem no representa una fecha concreta.
-
----
-
-# Identidad de PlanItem
-
-El id debe ser independiente de:
-
-* nombre;
-* fecha;
-* horario;
-* posición.
-
-Renombrar:
-
-```text
-Gym
-↓
-Gimnasio
-```
-
-no debe cambiar el id.
-
-Los nuevos PlanItems deben utilizar preferentemente:
-
 ```js
-crypto.randomUUID()
+showPicker()
 ```
 
-con fallback local cuando resulte necesario.
+cuando exista soporte.
+
+Debe existir fallback razonable.
+
+No construir un calendario complejo propio.
+
+Consultar:
+
+```text
+selector-fecha-desktop.png
+selector-fecha-mobile.png
+```
+
+según UI_REFERENCE.
 
 ---
 
-# kind
+# ============================================================
 
-Valores:
+# 4. NAVEGACIÓN MENSUAL
+
+# ============================================================
+
+Implementar navegación independiente para:
 
 ```text
-activity
-habit
+visibleMonth
+```
+
+No confundirla con la navegación diaria.
+
+---
+
+# Escritorio
+
+Integrar controles mensuales siguiendo la intención de:
+
+```text
+flechas-para-navegar-meses-en-pantalla-completa.png
+```
+
+---
+
+# Compacto
+
+Integrar navegación aproximadamente como:
+
+```text
+‹   Agosto de 2026   ›
+```
+
+siguiendo:
+
+```text
+flechas-para-navegar-meses-en-pantalla-pequeña.png
+```
+
+---
+
+# Selector de mes
+
+El nombre del mes debe permitir selección directa cuando sea razonable.
+
+Preferir:
+
+```html
+<input type="month">
+```
+
+con fallback si resulta necesario.
+
+---
+
+# Mes vacío
+
+La selección manual debe permitir visitar un mes sin Occurrences.
+
+Mostrar un estado vacío comprensible.
+
+No impedir la navegación.
+
+---
+
+# Recurrencias indefinidas
+
+Si el usuario navega más allá del horizonte materializado y existen
+generationConfigs indefinidas:
+
+utilizar el motor existente para extender materialización de manera finita.
+
+No reconstruir todo el calendario.
+
+No generar infinitamente.
+
+---
+
+# ============================================================
+
+# 5. MODO PLAN DEL DÍA — OJO CERRADO
+
+# ============================================================
+
+Estado inicial:
+
+```text
+showAllMonthRecords = false
+```
+
+Mostrar únicamente PlanItems que tengan al menos una Occurrence en:
+
+```text
+selectedDate
+```
+
+---
+
+# Regla importante
+
+Si un PlanItem no posee Occurrence ese día:
+
+NO debe aparecer en modo Plan del día.
+
+No consultar weekdays de generationConfig para decidirlo.
+
+Consultar Occurrences.
+
+---
+
+# Orden
+
+Ordenar por horario concreto de la Occurrence:
+
+```text
+startTime
+```
+
+---
+
+# ============================================================
+
+# 6. MODO MENSUAL — OJO ABIERTO
+
+# ============================================================
+
+Implementar un control accesible para alternar:
+
+```text
+Plan del día
+↔
+Vista mensual completa
+```
+
+---
+
+# Ojo abierto
+
+Con:
+
+```text
+showAllMonthRecords = true
+```
+
+mostrar todos los PlanItems que tengan al menos una Occurrence dentro de:
+
+```text
+visibleMonth
+```
+
+---
+
+# Inicio y duración
+
+Si un PlanItem visible no posee Occurrence en:
+
+```text
+selectedDate
+```
+
+mostrar:
+
+```text
+Inicio: —
+Duración: —
+```
+
+No tomar el horario de otra fecha.
+
+---
+
+# Horario concreto
+
+Si sí existe una Occurrence en selectedDate:
+
+Inicio y Duración deben derivarse de ESA Occurrence.
+
+No de generationConfig.
+
+---
+
+# ============================================================
+
+# 7. CELDAS NO PROGRAMADAS
+
+# ============================================================
+
+Con ojo abierto, una celda sin Occurrence debe representar:
+
+```text
+NO PROGRAMADO
+```
+
+---
+
+# Apariencia
+
+Debe utilizar una representación equivalente a:
+
+```text
+gris
+sin símbolo
+deshabilitada
+```
+
+---
+
+# No crear estado nuevo
+
+No implementar:
+
+```text
+status = disabled
+```
+
+---
+
+# No crear Occurrence falsa
+
+La ausencia de programación se representa mediante:
+
+```text
+ausencia de Occurrence
+```
+
+No mediante un registro artificial.
+
+---
+
+# Diferencias semánticas
+
+```text
+no programado
+≠ pending
+
+no programado
+≠ cancelled
+
+no programado
+≠ not_completed
+```
+
+---
+
+# ============================================================
+
+# 8. SEMANAS VISUALES
+
+# ============================================================
+
+Integrar separación visual dentro de la matriz mensual según semanas:
+
+```text
+lunes → domingo
+```
+
+Consultar:
+
+```text
+Visualizacion-por-semanas.png
+```
+
+---
+
+# Mantener una sola matriz
+
+NO dividir el mes en varias tablas.
+
+Debe continuar existiendo:
+
+```text
+una sola matriz mensual
+```
+
+---
+
+# Estilo permitido
+
+Puede utilizarse:
+
+* borde ligeramente más fuerte;
+* fondos alternos discretos;
+* variaciones suaves de opacidad;
+* degradados muy sutiles;
+
+manteniendo la identidad oscura actual.
+
+No convertir las semanas en bloques multicolor llamativos.
+
+---
+
+# ============================================================
+
+# 9. FORMULARIO DE CREACIÓN DINÁMICO
+
+# ============================================================
+
+La interfaz debe implementar durante esta entrega los tipos actualmente
+aceptados por el dominio.
+
+---
+
+# Selección principal
+
+Permitir elegir:
+
+```text
+Actividad
+Hábito
 ```
 
 ---
 
 # Activity
 
-Cuando:
-
-```text
-kind === "activity"
-```
-
-debe existir:
-
-```text
-activityType
-```
-
-Valores permitidos:
+Tipos:
 
 ```text
 anchor
@@ -467,25 +881,11 @@ event
 unexpected
 ```
 
-`event` debe incorporarse durante MVP 04.
-
 ---
 
 # Habit
 
-Cuando:
-
-```text
-kind === "habit"
-```
-
-debe existir:
-
-```text
-habitType
-```
-
-Durante MVP 04 únicamente:
+Tipo actual:
 
 ```text
 scheduled
@@ -493,712 +893,339 @@ scheduled
 
 ---
 
-# No utilizar propiedades nulas innecesarias
+# Activity / Anchor
 
-Un Activity no debe contener:
-
-```text
-habitType: null
-```
-
-Un Habit no debe contener:
+Interfaz orientada principalmente a:
 
 ```text
-activityType: null
+weekly
 ```
 
-Utilizar un modelo discriminado.
+Debe permitir como mínimo:
+
+```text
+Nombre
+Fecha inicial
+Días L–D
+Horario general
+Horarios diferentes por weekday
+Fecha final o indefinidamente
+```
 
 ---
 
-# generationConfig
+# Activity / Periodic
 
-generationConfig representa:
-
-```text
-la configuración ACTUAL utilizada para generar Occurrences futuras
-```
-
-No representa:
-
-* una plantilla del usuario;
-* una occurrence;
-* una entidad histórica independiente;
-* una versión almacenada de planificación.
-
----
-
-# No crear ScheduleRule
-
-Durante MVP 04 NO crear como entidad independiente:
+Debe permitir elegir:
 
 ```text
-ScheduleRule
+Días de la semana
+Cada N días
+Fechas específicas
 ```
 
-No agregar:
-
-```text
-scheduleId
-scheduleVersionId
-```
-
-a Occurrence.
-
----
-
-# Modos de generationConfig
-
-El motor debe soportar:
+correspondientes a:
 
 ```text
 weekly
 interval_days
 manual_dates
+```
+
+---
+
+# Activity / Event
+
+Debe utilizar principalmente:
+
+```text
+single_date
+manual_dates
+```
+
+para fechas conocidas anticipadamente.
+
+---
+
+# Activity / Unexpected
+
+Debe utilizar principalmente:
+
+```text
 single_date
 ```
 
-según:
+La fecha inicial sugerida debe ser:
 
 ```text
-SCHEDULE_MODEL_MVP_04.md
-MOCK_DATA_CONTRACT_MVP_04.md
+selectedDate
 ```
 
 ---
 
-# Weekly
+# Habit / Scheduled
 
-Debe soportar:
+Continúa siendo un bloque temporal.
+
+Debe soportar principalmente:
 
 ```text
-startDate
-endDate / indefinite
+weekly
+```
+
+con:
+
+```text
+fecha inicial
 weekdays
-defaultStartTime
-defaultEndTime
-weekdayTimeOverrides
+inicio
+fin
+fecha final / indefinido
 ```
 
 ---
 
-# Días de semana
+# No implementar hábito puntual
 
-Utilizar representación ISO:
-
-```text
-1 = lunes
-2 = martes
-3 = miércoles
-4 = jueves
-5 = viernes
-6 = sábado
-7 = domingo
-```
-
-No utilizar `0 = domingo` como representación persistente del dominio.
-
-Las conversiones de JavaScript deben quedar encapsuladas en utilidades.
-
----
-
-# interval_days
-
-Debe soportar:
+Todos los hábitos continúan teniendo:
 
 ```text
-cada N días
-```
-
-a partir de:
-
-```text
-startDate
-```
-
----
-
-# manual_dates
-
-Debe soportar:
-
-```text
-varias fechas explícitas
-+
-horario independiente por entrada
-```
-
----
-
-# single_date
-
-Debe soportar:
-
-```text
-una fecha concreta
-+
-horario
-```
-
-y servir de base principalmente para:
-
-```text
-event
-unexpected
-```
-
----
-
-# Occurrence
-
-Occurrence representa:
-
-```text
-una aparición concreta de un PlanItem dentro de la agenda
-```
-
-Ejemplo:
-
-```text
-Gym
-20 agosto 2026
-05:30–07:15
-completed
-```
-
----
-
-# Contrato conceptual de Occurrence
-
-Cada occurrence debe contener:
-
-```text
-id
-planItemId
-date
 startTime
 endTime
-status
 ```
+
+durante MVP 04.
+
+La semántica de hábito puntual pertenece al roadmap futuro.
 
 ---
 
-# Identity de Occurrence
+# ============================================================
 
-Occurrence.id debe ser independiente de:
+# 10. DIÁLOGO DE EDICIÓN DINÁMICO
 
-* date;
-* startTime;
-* endTime.
+# ============================================================
 
-Mover una occurrence de fecha u horario no debe modificar su identidad.
+El botón:
+
+```text
+✎
+```
+
+debe abrir:
+
+```text
+UN SOLO DIÁLOGO
+```
+
+No crear una cadena de ventanas consecutivas.
 
 ---
 
-# Más de una Occurrence por fecha
+# Jerarquía
 
-La arquitectura NO debe asumir:
-
-```text
-un PlanItem
-=
-máximo una occurrence por día
-```
-
-Debe permitir conceptualmente:
+La interfaz debe organizarse conceptualmente:
 
 ```text
-Medicamento
-08:00
-
-Medicamento
-20:00
+1. Horario
+2. Fecha
+3. Repetición
+4. Alcance cuando corresponda
+5. Cancelar / Aceptar
 ```
-
-en la misma fecha.
 
 ---
 
 # Horario
 
-Durante MVP 04 utilizar:
+Los primeros controles deben permitir cambiar:
 
 ```text
 startTime
 endTime
 ```
 
-por occurrence.
-
-No introducir todavía:
-
-```text
-actualStartTime
-actualEndTime
-```
+de la Occurrence observada.
 
 ---
 
-# Replanificación
+# Fecha
 
-Modificar una occurrence de:
-
-```text
-05:30–07:00
-```
-
-a:
+Debe poder cambiarse:
 
 ```text
-06:00–08:00
-```
-
-representa:
-
-```text
-replanificar esa aparición concreta
-```
-
-No representa todavía seguimiento de tiempo real.
-
----
-
-# Status
-
-Cada occurrence contiene directamente:
-
-```text
-status
-```
-
-Valores:
-
-```text
-pending
-in_progress
-completed
-not_completed
-cancelled
-```
-
----
-
-# Eliminación de statesByDate
-
-No conservar:
-
-```text
-statesByDate
-```
-
-como mecanismo activo.
-
-La relación antigua:
-
-```text
-registro
-↓
-fecha → status
-```
-
-se reemplaza por:
-
-```text
-Occurrence
-↓
-status
-```
-
----
-
-# Estados que bloquean horario
-
-Bloquean:
-
-```text
-pending
-in_progress
-completed
-```
-
----
-
-# Estados que liberan horario
-
-NO bloquean:
-
-```text
-not_completed
-cancelled
-```
-
-Esta regla es obligatoria.
-
----
-
-# Significado de cancelled
-
-`cancelled` significa:
-
-```text
-estaba planeada
-pero fue cancelada
-```
-
-La occurrence permanece en historial.
-
-Su intervalo queda disponible para otra occurrence.
-
----
-
-# Significado de not_completed
-
-`not_completed` significa:
-
-```text
-estaba planeada
-pero no se realizó
-```
-
-La occurrence permanece en historial.
-
-Su intervalo también queda disponible.
-
----
-
-# Ejemplo obligatorio
-
-Debe ser válido:
-
-```text
-Gym
-05:30–07:30
-not_completed
-
-Desayuno
-06:00–06:30
-pending
-```
-
-en la misma fecha.
-
----
-
-# completed
-
-Una occurrence:
-
-```text
-completed
-```
-
-continúa bloqueando el intervalo.
-
-No permitir superponer silenciosamente otra occurrence activa sobre algo
-registrado como realizado.
-
----
-
-# Regla centralizada de bloqueo
-
-Debe existir una responsabilidad de dominio equivalente a:
-
-```js
-blocksSchedule(occurrence)
-```
-
-No duplicar esta regla de forma incompatible entre vistas y store.
-
----
-
-# Conflictos temporales
-
-Existe conflicto únicamente cuando:
-
-1. las occurrences pertenecen a la misma fecha;
-2. ambas bloquean horario;
-3. los intervalos se superponen.
-
-Regla:
-
-```text
-newStart < existingEnd
-AND
-newEnd > existingStart
-```
-
----
-
-# Fechas diferentes
-
-No existe conflicto temporal entre:
-
-```text
-Lunes
-05:30–07:00
-```
-
-y:
-
-```text
-Martes
-05:30–07:00
-```
-
----
-
-# Intervalos contiguos
-
-Debe permitirse:
-
-```text
-08:00–09:00
-09:00–10:00
-```
-
----
-
-# Validación de cambios de status
-
-La integridad temporal ya no se valida únicamente al:
-
-* crear;
-* editar.
-
-También debe validarse cuando una transición de status vuelve a convertir una
-occurrence en bloqueante.
-
----
-
-# Ejemplo obligatorio
-
-Estado:
-
-```text
-Gym
-05:30–07:30
-not_completed
-
-Desayuno
-06:00–06:30
-pending
-```
-
-Si el usuario intenta cambiar Gym a:
-
-```text
-pending
-```
-
-debe rechazarse porque produciría una superposición activa.
-
----
-
-# Transición inválida
-
-Cuando una transición de status sea rechazada:
-
-* conservar status anterior;
-* conservar datos anteriores;
-* informar el conflicto;
-* no producir un estado inválido temporal.
-
----
-
-# Prioridades
-
-La prioridad NO se almacena dentro de PlanItem ni Occurrence.
-
-Debe derivarse desde el dominio.
-
-Conceptualmente:
-
-```text
-NORMAL      = 100
-EVENT       = 200
-UNEXPECTED  = 300
-```
-
----
-
-# Clasificación de prioridad
-
-```text
-habit / scheduled
-→ NORMAL
-
-activity / anchor
-→ NORMAL
-
-activity / periodic
-→ NORMAL
-
-activity / event
-→ EVENT
-
-activity / unexpected
-→ UNEXPECTED
-```
-
----
-
-# Override
-
-La arquitectura debe quedar preparada para que Event y Unexpected puedan
-resolver conflictos mediante una confirmación explícita del usuario.
-
-No cancelar otra occurrence silenciosamente.
-
-La interfaz completa de esta función puede quedar para MVP 04.0.2 según los
-criterios normativos.
-
----
-
-# Materialización
-
-Debe existir una responsabilidad separada que transforme:
-
-```text
-PlanItem
-+
-generationConfig
-+
-rango temporal
-```
-
-en:
-
-```text
-Occurrence drafts
-```
-
----
-
-# Regla de materialización
-
-El proceso debe:
-
-```text
-calcular fechas
-↓
-resolver horario
-↓
-construir drafts
-↓
-validar
-↓
-insertar Occurrences
-```
-
----
-
-# Atomicidad conceptual
-
-Cuando una operación genera varias occurrences:
-
-```text
-validar el conjunto
-antes de modificar definitivamente el store
-```
-
-No dejar una creación parcialmente aplicada sin un comportamiento explícito.
-
----
-
-# Materialización idempotente
-
-Ejecutar repetidamente:
-
-```text
-mismo PlanItem
-+
-mismo rango
-```
-
-no debe crear occurrences automáticas idénticas duplicadas.
-
-Puede utilizarse para detectar duplicados:
-
-```text
-planItemId
 date
-startTime
-endTime
 ```
 
-sin convertir esa combinación en Occurrence.id.
+para cualquier Occurrence.
+
+Mover una Occurrence mediante:
+
+```text
+Solo esta fecha
+```
+
+representa una excepción individual.
+
+No modifica automáticamente generationConfig.
 
 ---
 
-# Materialización indefinida
+# Repetición
 
-Nunca intentar generar infinitamente.
+Cuando exista una configuración semanal, mostrar los weekdays de manera
+interactiva.
 
-Utilizar un horizonte finito.
+Debe distinguirse visualmente:
+
+```text
+día activo en la recurrencia
+```
+
+de:
+
+```text
+día actualmente seleccionado dentro del editor
+```
+
+No utilizar un único estado visual ambiguo para ambos conceptos.
 
 ---
 
-# Horizonte mínimo inicial
+# Cambio entre días
 
-La regla inicial será:
+Si el usuario selecciona otro weekday activo dentro del editor, los campos de
+horario deben representar la Occurrence concreta correspondiente a ese día de
+la semana observada, cuando exista.
+
+No utilizar automáticamente el horario global de generationConfig como si
+fuera una Occurrence.
+
+---
+
+# ============================================================
+
+# 11. ALCANCE DE EDICIÓN
+
+# ============================================================
+
+El diálogo debe ser progresivo.
+
+Si únicamente se modifica:
 
 ```text
-resto del mes de referencia
-+
-mes siguiente completo
+hora
+fecha
 ```
 
-Ejemplo:
+de la Occurrence actual y no se cambia la recurrencia:
+
+el comportamiento corresponde a:
 
 ```text
-23 agosto 2026
+Solo esta fecha
+```
+
+y basta el botón final:
+
+```text
+Aceptar
+```
+
+---
+
+# Cambio de recurrencia
+
+Si el usuario modifica:
+
+* weekdays;
+* patrón;
+* configuración repetitiva;
+
+mostrar antes de Aceptar:
+
+```text
+Aplicar solo esta semana
+
+Aplicar de aquí en adelante
+```
+
+---
+
+# Alcance no ejecuta inmediatamente
+
+El flujo debe ser:
+
+```text
+editar
 ↓
-materializar al menos hasta
-30 septiembre 2026
+elegir alcance
+↓
+Aceptar
 ```
 
-El cálculo debe ser genérico.
+Los botones de alcance representan selección.
+
+No deben guardar por sí solos.
 
 ---
 
-# Extensión del horizonte
+# Aplicar solo esta semana
 
-Cuando exista planificación explícita futura posterior al horizonte actual,
-las recurrencias indefinidas deben poder extenderse hasta el final del mes de
-esa planificación.
-
-Ejemplo:
+Utilizar semana lógica:
 
 ```text
-Evento:
-10 julio 2027
+lunes → domingo
 ```
 
-puede provocar materialización hasta:
+Modificar únicamente las Occurrences del mismo PlanItem dentro de esa semana.
 
-```text
-31 julio 2027
-```
+NO modificar generationConfig general para semanas posteriores.
 
 ---
 
-# Futuro e historial
+# Integridad semanal
 
-Principio:
+La operación debe validarse como conjunto antes de mutar el store.
+
+No dejar una semana parcialmente modificada si alguna nueva Occurrence produce
+conflicto.
+
+---
+
+# Aplicar de aquí en adelante
+
+Debe actualizar la configuración futura del PlanItem y regenerar planificación
+desde la fecha efectiva.
+
+Principio obligatorio:
 
 ```text
-pasado / historia
+historia
 → preservar
 
-futuro pendiente
-→ puede regenerarse
+futuro pendiente regenerable
+→ retirar y volver a materializar
 ```
 
 ---
 
-# Regeneración futura
+# No reescribir historia
 
-Las principales occurrences candidatas a regeneración automática son:
+No modificar automáticamente Occurrences históricas con valor real como:
+
+```text
+completed
+not_completed
+cancelled
+in_progress
+```
+
+---
+
+# Pending futuro
+
+Las principales candidatas a regeneración son:
 
 ```text
 fecha futura
@@ -1206,477 +1233,638 @@ fecha futura
 status === pending
 ```
 
-No eliminar automáticamente occurrences históricas con:
+---
+
+# ============================================================
+
+# 12. CONFLICTOS Y PRIORIDADES
+
+# ============================================================
+
+Conservar:
+
+```text
+NORMAL      = 100
+EVENT       = 200
+UNEXPECTED  = 300
+```
+
+como regla derivada del dominio.
+
+No guardar prioridad en PlanItem ni Occurrence.
+
+---
+
+# Override permitido
+
+Una Occurrence nueva solamente puede desplazar automáticamente mediante
+confirmación a otra cuando su prioridad sea:
+
+```text
+ESTRICTAMENTE MAYOR
+```
+
+que la prioridad de la Occurrence conflictiva.
+
+---
+
+# Misma prioridad
+
+Si ambas poseen la misma prioridad:
+
+```text
+rechazar conflicto
+```
+
+No cancelar una de ellas arbitrariamente.
+
+---
+
+# Prioridad inferior
+
+Si la nueva Occurrence posee prioridad menor:
+
+```text
+rechazar conflicto
+```
+
+---
+
+# EVENT
+
+Un Event puede desplazar mediante confirmación una Occurrence NORMAL.
+
+---
+
+# UNEXPECTED
+
+Un Unexpected puede desplazar mediante confirmación:
+
+```text
+NORMAL
+EVENT
+```
+
+si la regla de prioridad aplicable lo permite.
+
+---
+
+# Completed
+
+No realizar override automático sobre una Occurrence:
 
 ```text
 completed
-not_completed
+```
+
+durante MVP 04.
+
+Aunque la nueva Occurrence tenga prioridad superior:
+
+```text
+rechazar
+```
+
+El historial realizado no se reescribe automáticamente.
+
+---
+
+# Confirmación
+
+Antes de modificar la Occurrence desplazada, mostrar información equivalente a:
+
+```text
+Este registro entra en conflicto con:
+
+Trabajo
+08:00–17:00
+
+Si continúas, Trabajo será cancelado únicamente para esta fecha.
+```
+
+Opciones:
+
+```text
+Volver
+Continuar
+```
+
+---
+
+# No cancelar silenciosamente
+
+La Occurrence existente solo cambia a:
+
+```text
 cancelled
-in_progress
 ```
+
+después de confirmación explícita.
 
 ---
 
-# Edición individual obligatoria
+# Cancelled / not_completed
 
-MVP 04.0.1 debe soportar como mínimo:
-
-```text
-editar una Occurrence concreta
-```
-
-Debe poder cambiar:
+Si la Occurrence existente ya está:
 
 ```text
-date
-startTime
-endTime
+cancelled
 ```
 
-preservando:
+o:
 
 ```text
-id
-planItemId
-status
+not_completed
 ```
+
+su intervalo está libre.
+
+No requiere override.
 
 ---
 
-# Edición por semana y futuro
+# ============================================================
 
-Los alcances:
+# 13. ACCIONES CONTEXTUALES
 
-```text
-Solo esta semana
-De aquí en adelante
-```
+# ============================================================
 
-deben estar soportados por la arquitectura.
-
-Su experiencia completa corresponde principalmente a:
+Conservar:
 
 ```text
-MVP 04.0.2
++
+✎
+🗑
 ```
 
-No adelantar UI innecesaria durante 04.0.1.
+como lenguaje visual de la fila seleccionada.
 
 ---
 
-# Position
+# +
 
-Eliminar como propiedad persistente:
+Debe continuar permitiendo una creación contextual.
 
-```text
-position
-```
-
-La numeración visible debe derivarse después de ordenar las occurrences.
+Su implementación debe utilizar el nuevo formulario dinámico.
 
 ---
 
-# Duración
+# Lápiz
 
-No almacenar:
-
-```text
-duration
-```
-
-Calcular:
-
-```text
-endTime - startTime
-```
+Utiliza el diálogo de edición definido en esta tarea.
 
 ---
 
-# Datos iniciales
+# Papelera
 
-Migrar los siete registros demostrativos del MVP 03 hacia PlanItems.
+Conservar visualmente.
 
-Los mocks deben demostrar que:
+NO implementar todavía eliminación destructiva del historial.
 
-```text
-NO todos los PlanItems ocurren todos los días
-```
+No inventar su semántica definitiva durante 04.0.2.
 
-Por ejemplo:
-
-```text
-Gym
-L / X / V
-
-CCNA
-L / X / V
-
-Cepillado
-todos los días
-```
-
-La configuración exacta se encuentra en:
-
-```text
-MOCK_DATA_CONTRACT_MVP_04.md
-```
+La eliminación completa permanece en roadmap.
 
 ---
 
-# Status de demostración
+# ============================================================
 
-Migrar los estados visuales anteriores hacia:
+# 14. RESPONSIVE
 
-```text
-Occurrence.status
-```
+# ============================================================
 
-No crear Occurrences ficticias únicamente para aplicar un fixture de status.
-
----
-
-# Store
-
-El store debe ser la única fuente mutable de:
-
-```text
-planItems
-occurrences
-```
-
-Las vistas no deben mutar directamente esas colecciones.
-
----
-
-# Consultas mínimas
-
-Debe poder resolverse conceptualmente:
-
-```text
-getPlanItemById
-getOccurrenceById
-getOccurrencesForDate
-getOccurrencesForMonth
-getOccurrencesForPlanItem
-```
-
-Los nombres exactos pueden variar.
-
----
-
-# Scheduling
-
-Las responsabilidades relacionadas con:
-
-* materialización;
-* recurrencia;
-* resolución de horarios;
-* conflictos temporales;
-
-deben quedar fuera de las vistas.
-
----
-
-# Domain
-
-Las responsabilidades relacionadas con:
-
-* clasificación;
-* status;
-* bloqueo temporal;
-* prioridades;
-
-deben quedar centralizadas fuera de la UI.
-
----
-
-# app.js
-
-Debe continuar actuando principalmente como:
-
-```text
-coordinador
-```
-
-No convertirlo en:
-
-* store;
-* materializador;
-* detector de conflictos completo;
-* módulo de clasificación;
-* renderer monolítico.
-
----
-
-# Frontend durante MVP 04.0.1
-
-La interfaz del MVP 03 es el baseline.
-
-Durante esta entrega:
-
-```text
-cambiar el motor
-```
-
-sin realizar todavía:
-
-```text
-el rediseño completo de navegación temporal
-```
-
----
-
-# Debe conservarse visualmente
-
-En la medida compatible con la migración:
-
-* tema oscuro;
-* paleta;
-* matriz;
-* encabezado;
-* acciones contextuales;
-* diálogo;
-* estados;
-* responsive;
-* enlace VCS.
-
----
-
-# NO implementar como objetivo de 04.0.1
-
-No implementar todavía como objetivo principal:
-
-```text
-click completo en encabezados de fecha
-selector de calendario nuevo
-selector de mes
-flechas mensuales nuevas
-ojo abierto / cerrado
-filtrado completo por selectedDate
-celdas grises no programadas
-separaciones visuales semanales
-editor completo por alcance
-formularios finales de todos los generation modes
-estadísticas
-gráficas
-porcentajes
-rachas
-premios
-```
-
-Estas funciones pertenecen principalmente a:
-
-```text
-MVP 04.0.2
-```
-
----
-
-# Funciones completamente fuera de MVP 04.0.1
-
-No implementar:
-
-* backend;
-* Flask;
-* PostgreSQL;
-* Supabase;
-* API;
-* autenticación;
-* usuarios;
-* despliegue;
-* localStorage;
-* estadísticas;
-* subactividades;
-* hábitos tipo logro;
-* hábitos puntuales;
-* tiempos reales;
-* comentarios;
-* autocompletado histórico de PlanItems;
-* eliminación destructiva del historial.
-
----
-
-# Eliminación
-
-Conservar la papelera visual existente.
-
-No implementar todavía eliminación destructiva sin una definición de negocio
-completa.
-
-La eliminación futura deberá distinguir conceptos como:
-
-```text
-quitar occurrence
-cancelar
-detener recurrencia
-retirar planificación futura
-```
-
----
-
-# ROADMAP
-
-Las funciones deliberadamente aplazadas deben conservarse en:
-
-```text
-/docs/codex/planeacion/ROADMAP_PENDING_FEATURES.md
-```
-
-Ese archivo NO autoriza implementación.
-
----
-
-# Regresión
-
-Después de la migración debe seguir siendo posible:
-
-* abrir la aplicación;
-* visualizar los registros;
-* crear;
-* editar;
-* cambiar estados;
-* seleccionar filas;
-* utilizar acciones contextuales;
-* utilizar la interfaz responsive;
-* regresar a Vatos con Sesos.
-
----
-
-# Pruebas obligatorias
-
-La implementación debe contrastarse completamente contra la sección:
-
-```text
-MVP 04.0.1 — CRITERIOS OBLIGATORIOS
-```
-
-de:
-
-```text
-/docs/codex/ACCEPTANCE_CRITERIA_MVP_04.md
-```
-
-La sección:
-
-```text
-MVP 04.0.2 — NO EJECUTAR TODAVÍA
-```
-
-es únicamente contexto para esta ejecución.
-
----
-
-# Verificación técnica
-
-Cuando resulte aplicable:
-
-```text
-node --check
-```
-
-sobre los módulos JavaScript.
-
-Probar imports mediante servidor HTTP local.
-
----
-
-# Verificación visual
-
-Cuando el entorno lo permita comprobar aproximadamente:
+MVP 04.0.2 debe funcionar aproximadamente en:
 
 ```text
 1440 × 900
 390 × 844
 ```
 
-El objetivo visual de 04.0.1 es:
+---
+
+# Escritorio
+
+Priorizar:
 
 ```text
-no romper MVP 03
+matriz mensual completa
++
+selección directa de fecha
++
+navegación mensual
++
+acciones contextuales
 ```
 
-no implementar todavía toda la interfaz final de MVP 04.
-
 ---
 
-# Informe final
+# Compacto
 
-Al terminar Codex debe informar como mínimo:
-
-1. archivos creados;
-2. archivos modificados;
-3. archivos eliminados;
-4. estructura final;
-5. cómo quedó PlanItem;
-6. cómo quedó Occurrence;
-7. cómo quedó generationConfig;
-8. cómo migró desde MVP 03;
-9. cómo eliminó statesByDate;
-10. cómo eliminó position;
-11. materialización weekly;
-12. materialización interval_days;
-13. materialización manual_dates;
-14. materialización single_date;
-15. weekday overrides;
-16. horizonte de materialización;
-17. idempotencia;
-18. detección de conflictos;
-19. comportamiento de cancelled;
-20. comportamiento de not_completed;
-21. comportamiento de completed;
-22. validación de transiciones de status;
-23. edición individual de Occurrence;
-24. pruebas de regresión;
-25. pruebas visuales;
-26. criterios no comprobados;
-27. limitaciones conocidas;
-28. instrucciones exactas para abrir y probar.
-
-No declarar una función terminada si no fue implementada o comprobada.
-
----
-
-# Definición de terminado — MVP 04.0.1
-
-La entrega está terminada cuando puede demostrarse:
+Priorizar:
 
 ```text
-PlanItem
-        ↓
-generationConfig
-        ↓
-materializador
-        ↓
-Occurrences
-        ↓
-agenda por fecha
+una fecha visible
++
+navegación diaria
++
+selector de fecha
++
+navegación mensual compacta
+```
+
+---
+
+# Formularios largos
+
+Los formularios dinámicos pueden utilizar:
+
+```text
+scroll vertical interno del dialog
+```
+
+cuando sea necesario.
+
+No generar overflow horizontal global.
+
+---
+
+# ============================================================
+
+# 15. ACCESIBILIDAD
+
+# ============================================================
+
+Mantener y ampliar:
+
+* HTML semántico;
+* buttons reales;
+* inputs asociados a labels;
+* foco visible;
+* teclado;
+* Escape;
+* restauración de foco;
+* nombres accesibles;
+* símbolos además de color.
+
+---
+
+# Encabezados interactivos
+
+Los días seleccionables deben tener nombres accesibles equivalentes a:
+
+```text
+Ver planificación del lunes 17 de agosto de 2026
+```
+
+---
+
+# Ojo
+
+Debe anunciar su acción.
+
+Ejemplo:
+
+```text
+Mostrar todos los registros del mes
 ```
 
 y:
 
 ```text
-Occurrence
-        ↓
-status propio
+Mostrar solo el Plan del día
 ```
 
-además:
+---
+
+# ============================================================
+
+# 16. ARQUITECTURA
+
+# ============================================================
+
+No deshacer la modularización aprobada en MVP 04.0.1.
+
+Mantener responsabilidades claras entre:
 
 ```text
-cancelled
-not_completed
-        ↓
-liberan horario
+data
+domain
+scheduling
+state
+utils
+views
+app.js
 ```
 
-mientras:
+---
+
+# app.js
+
+Debe continuar siendo coordinador.
+
+No trasladar allí:
+
+* reglas completas de recurrencia;
+* store;
+* conflictos;
+* renderizado completo;
+* prioridad;
+* cálculos temporales extensos.
+
+---
+
+# Store
+
+Continúa siendo la única fuente mutable de:
 
 ```text
-pending
-in_progress
-completed
-        ↓
-bloquean horario
+planItems
+occurrences
 ```
 
-y todo esto ocurre sin destruir la funcionalidad aprobada del MVP 03.
+Las vistas no deben mutar colecciones directamente.
+
+---
+
+# Operaciones compuestas
+
+Las operaciones:
+
+```text
+editar semana
+editar futuro
+override
+```
+
+deben validarse antes de aplicar mutaciones definitivas.
+
+Evitar estados parciales.
+
+---
+
+# ============================================================
+
+# 17. NO REGRESIONES DE MVP 04.0.1
+
+# ============================================================
+
+Debe continuar funcionando:
+
+* materialización weekly;
+* interval_days;
+* manual_dates;
+* single_date;
+* weekdayTimeOverrides;
+* horizonte;
+* extensión de horizonte;
+* idempotencia;
+* múltiples Occurrences por día;
+* edición individual preservando ID;
+* cancelled liberando horario;
+* not_completed liberando horario;
+* completed bloqueando;
+* validación al reactivar status;
+* fallback cancelled → not_completed cuando pending entra en conflicto.
+
+---
+
+# ============================================================
+
+# 18. FUERA DE ALCANCE
+
+# ============================================================
+
+No implementar durante MVP 04.0.2:
+
+* PostgreSQL;
+* Flask;
+* API;
+* Supabase;
+* usuarios;
+* autenticación;
+* despliegue;
+* localStorage;
+* IndexedDB;
+* sincronización remota;
+* estadísticas;
+* gráficas;
+* porcentajes;
+* rachas;
+* premios;
+* subactividades;
+* hábitos puntuales;
+* hábitos por cantidad;
+* actualStartTime;
+* actualEndTime;
+* comentarios sobre Occurrences;
+* autocompletado histórico de PlanItems;
+* eliminación destructiva avanzada;
+* restauración automática mediante cancelledByOccurrenceId.
+
+---
+
+# 19. PRUEBAS OBLIGATORIAS
+
+Antes de terminar debe contrastarse la implementación contra TODOS los
+criterios activos de MVP 04.0.2 en:
+
+```text
+ACCEPTANCE_CRITERIA_MVP_04.md
+```
+
+y comprobar regresión de MVP 04.0.1.
+
+Como mínimo comprobar:
+
+* carga inicial;
+* fecha local;
+* selección de día en escritorio;
+* flechas diarias;
+* cruce de mes;
+* selector de fecha;
+* navegación mensual;
+* selector de mes;
+* mes vacío;
+* extensión de recurrencias indefinidas;
+* ojo cerrado;
+* ojo abierto;
+* celda no programada;
+* diferentes horarios por fecha;
+* separación visual semanal;
+* creación Anchor;
+* creación Periodic / weekly;
+* creación Periodic / interval_days;
+* creación Periodic / manual_dates;
+* creación Event;
+* creación Unexpected;
+* creación Habit / scheduled;
+* weekdayTimeOverrides;
+* edición solo esta fecha;
+* cambio de fecha;
+* edición solo esta semana;
+* edición de aquí en adelante;
+* conservación de historia;
+* regeneración de pending futuro;
+* conflictos normales;
+* Event sobre NORMAL;
+* Unexpected sobre NORMAL;
+* Unexpected sobre EVENT;
+* rechazo de misma prioridad;
+* rechazo de prioridad inferior;
+* rechazo sobre completed;
+* confirmación antes de cancelar por override;
+* cancelled y not_completed liberando horario;
+* transición de status inválida;
+* fallback cancelled ↔ not_completed;
+* teclado;
+* foco;
+* responsive;
+* ausencia de overflow horizontal global;
+* consola sin errores.
+
+---
+
+# 20. VERIFICACIÓN TÉCNICA
+
+Cuando corresponda ejecutar:
+
+```text
+node --check
+```
+
+sobre todos los módulos JavaScript.
+
+Ejecutar las pruebas existentes.
+
+Añadir pruebas nuevas para las nuevas reglas del store/scheduling cuando la
+funcionalidad sea comprobable sin navegador.
+
+Ejecutar:
+
+```text
+git diff --check
+```
+
+---
+
+# 21. VERIFICACIÓN VISUAL
+
+Probar mediante servidor HTTP real.
+
+Cuando el entorno lo permita verificar aproximadamente:
+
+```text
+1440 × 900
+390 × 844
+```
+
+No afirmar funcionamiento visual basándose únicamente en lectura del código.
+
+---
+
+# 22. INFORME FINAL
+
+Al terminar informar claramente:
+
+1. archivos creados;
+2. archivos modificados;
+3. archivos eliminados;
+4. arquitectura final;
+5. selectedDate;
+6. visibleMonth;
+7. showAllMonthRecords;
+8. selección de fecha en escritorio;
+9. navegación diaria;
+10. selector de fecha;
+11. navegación mensual;
+12. selector de mes;
+13. comportamiento en meses vacíos;
+14. extensión de materialización;
+15. ojo cerrado;
+16. ojo abierto;
+17. celdas no programadas;
+18. separación semanal;
+19. formulario Anchor;
+20. formulario Periodic;
+21. formulario Event;
+22. formulario Unexpected;
+23. formulario Scheduled Habit;
+24. weekdayTimeOverrides;
+25. diálogo único de edición;
+26. edición solo esta fecha;
+27. edición solo esta semana;
+28. edición de aquí en adelante;
+29. regeneración futura;
+30. conservación de historial;
+31. prioridades;
+32. confirmaciones de override;
+33. conflictos con completed;
+34. acciones contextuales;
+35. comportamiento responsive;
+36. accesibilidad;
+37. pruebas automáticas;
+38. pruebas visuales;
+39. criterios no comprobados;
+40. limitaciones conocidas;
+41. funciones deliberadamente aplazadas;
+42. instrucciones exactas para probar manualmente.
+
+No declarar como terminado algo que no fue comprobado.
+
+---
+
+# Definición de terminado — MVP 04.0.2
+
+MVP 04.0.2 está terminado cuando el usuario puede:
+
+```text
+seleccionar una fecha
+↓
+ver las Occurrences reales de ese día
+↓
+navegar entre días y meses
+↓
+crear planificación según su tipo
+↓
+editar una aparición o su recurrencia
+↓
+resolver conflictos de manera explícita
+```
+
+y puede alternar entre:
+
+```text
+Plan del día
+```
+
+y:
+
+```text
+Vista mensual completa
+```
+
+sin destruir:
+
+* historial;
+* integridad temporal;
+* comportamiento aprobado de MVP 04.0.1.
+
+---
+
+# Resultado del MVP 04 completo
+
+Al cerrar esta entrega debe existir:
+
+```text
+MVP 04.0.1
+Motor temporal
+        +
+MVP 04.0.2
+Experiencia de planificación
+        =
+MVP 04 completo
+```
+
+Después de este checkpoint podrá evaluarse el siguiente MVP sin necesidad de
+reconstruir nuevamente el dominio temporal ni la experiencia principal de
+planificación.
