@@ -46,27 +46,30 @@ function createStatusButton(planItem, occurrence, date, onStatusChange) {
     return button;
 }
 
-function createDayHeader(date, currentDate, selectedDate) {
+function createDayHeader(date, selectedDate, onDateSelect) {
     const header = document.createElement("th");
-    const heading = document.createElement("span");
+    const heading = document.createElement("button");
     const weekday = document.createElement("abbr");
     const dayNumber = document.createElement("span");
     const weekdayLabels = getWeekdayLabels(date);
     header.scope = "col";
     header.className = "day-column";
     header.dataset.date = formatDateKey(date);
+    heading.type = "button";
     heading.className = "day-heading";
+    heading.setAttribute("aria-label", `Ver planificación del ${formatSelectedDate(date)}`);
+    heading.setAttribute("aria-pressed", String(isSameLocalDate(date, selectedDate)));
+    heading.addEventListener("click", () => onDateSelect(formatDateKey(date)));
     weekday.textContent = weekdayLabels.short;
     weekday.title = weekdayLabels.long;
     dayNumber.textContent = String(date.getDate());
-    if (isSameLocalDate(date, currentDate)) header.classList.add("today-column");
     if (isSameLocalDate(date, selectedDate)) header.classList.add("selected-day-column");
     heading.append(weekday, dayNumber);
     header.append(heading);
     return header;
 }
 
-function renderHeader(matrixHead, monthDates, currentDate, selectedDate) {
+function renderHeader(matrixHead, monthDates, selectedDate, onDateSelect) {
     const row = document.createElement("tr");
     row.append(
         createTextCell("th", "position-column", "#"),
@@ -75,11 +78,11 @@ function renderHeader(matrixHead, monthDates, currentDate, selectedDate) {
         createTextCell("th", "name-column", "Actividad"),
     );
     Array.from(row.children).forEach((header) => (header.scope = "col"));
-    monthDates.forEach((date) => row.append(createDayHeader(date, currentDate, selectedDate)));
+    monthDates.forEach((date) => row.append(createDayHeader(date, selectedDate, onDateSelect)));
     matrixHead.replaceChildren(row);
 }
 
-function buildRows(planItems, occurrences, selectedDateKey) {
+export function buildPlannerRows(planItems, occurrences, selectedDateKey, showAllMonthRecords) {
     const occurrencesByPlanItem = new Map();
     occurrences.forEach((occurrence) => {
         if (!occurrencesByPlanItem.has(occurrence.planItemId)) {
@@ -90,12 +93,13 @@ function buildRows(planItems, occurrences, selectedDateKey) {
     return planItems
         .map((planItem) => {
             const itemOccurrences = occurrencesByPlanItem.get(planItem.id) ?? [];
-            const selectedOccurrence = itemOccurrences.find(
+            const selectedOccurrences = itemOccurrences.filter(
                 (occurrence) => occurrence.date === selectedDateKey,
             );
-            return { planItem, occurrences: itemOccurrences, selectedOccurrence };
+            const selectedOccurrence = selectedOccurrences.length === 1 ? selectedOccurrences[0] : null;
+            return { planItem, occurrences: itemOccurrences, selectedOccurrence, selectedDateAmbiguous: selectedOccurrences.length > 1 };
         })
-        .filter((row) => row.occurrences.length > 0)
+        .filter((row) => row.occurrences.length > 0 && (showAllMonthRecords || row.selectedOccurrence))
         .sort((first, second) => {
             const firstTime = first.selectedOccurrence?.startTime ?? first.occurrences[0].startTime;
             const secondTime = second.selectedOccurrence?.startTime ?? second.occurrences[0].startTime;
@@ -104,7 +108,7 @@ function buildRows(planItems, occurrences, selectedDateKey) {
 }
 
 function createPlanItemRow(rowData, position, context) {
-    const { planItem, occurrences, selectedOccurrence } = rowData;
+    const { planItem, occurrences, selectedOccurrence, selectedDateAmbiguous } = rowData;
     const row = document.createElement("tr");
     const nameCell = document.createElement("th");
     const nameContent = document.createElement("span");
@@ -147,17 +151,19 @@ function createPlanItemRow(rowData, position, context) {
         editButton.type = "button";
         editButton.className = "row-action-button edit-activity-button";
         editButton.textContent = "✎";
-        editButton.disabled = !selectedOccurrence;
         editButton.setAttribute(
             "aria-label",
-            selectedOccurrence
+            selectedDateAmbiguous
+                ? `${planItem.name} tiene varias occurrences ambiguas en la fecha seleccionada`
+                : selectedOccurrence
                 ? `Editar ${planItem.name} en la fecha seleccionada`
-                : `${planItem.name} no está programado en la fecha seleccionada`,
+                : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
+        editButton.disabled = selectedDateAmbiguous;
         editButton.title = editButton.getAttribute("aria-label");
         editButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            if (selectedOccurrence) context.onEdit(planItem, selectedOccurrence, editButton);
+            if (!selectedDateAmbiguous) context.onEdit(planItem, selectedOccurrence, editButton, formatDateKey(context.selectedDate));
         });
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
@@ -204,8 +210,8 @@ function createPlanItemRow(rowData, position, context) {
         const dailyOccurrences = occurrencesByDate.get(dateKey) ?? [];
         cell.className = "day-column";
         cell.dataset.date = dateKey;
-        if (isSameLocalDate(date, context.currentDate)) cell.classList.add("today-column");
         if (isSameLocalDate(date, context.selectedDate)) cell.classList.add("selected-day-column");
+        if (date.getDay() === 1 && date.getDate() !== 1) cell.classList.add("week-boundary-column");
         if (dailyOccurrences.length === 0) {
             const marker = document.createElement("span");
             cell.classList.add("not-scheduled-cell");
@@ -214,13 +220,22 @@ function createPlanItemRow(rowData, position, context) {
             marker.setAttribute("aria-label", `${planItem.name} no está programado para ${formatSelectedDate(date)}.`);
             marker.title = marker.getAttribute("aria-label");
             cell.append(marker);
-        } else {
+        } else if (dailyOccurrences.length === 1) {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";
             dailyOccurrences.forEach((occurrence) =>
                 controls.append(createStatusButton(planItem, occurrence, date, context.onStatusChange)),
             );
             cell.append(controls);
+        } else {
+            const marker = document.createElement("span");
+            cell.classList.add("ambiguous-occurrence-cell");
+            marker.textContent = "!";
+            marker.setAttribute("role", "img");
+            marker.setAttribute("aria-label", `${planItem.name} tiene varias occurrences en ${formatSelectedDate(date)}. Edítalas individualmente fuera de la matriz.`);
+            marker.title = marker.getAttribute("aria-label");
+            cell.append(marker);
+            context.onAmbiguity?.(marker.getAttribute("aria-label"));
         }
         row.append(cell);
     });
@@ -248,10 +263,10 @@ function renderLegend(statusLegend) {
 
 export function createPlannerMatrixView(context) {
     return {
-        render({ planItems, occurrences, monthDates, currentDate, selectedDate, selectedPlanItemId }) {
-            renderHeader(context.matrixHead, monthDates, currentDate, selectedDate);
+        render({ planItems, occurrences, monthDates, currentDate, selectedDate, selectedPlanItemId, showAllMonthRecords }) {
+            renderHeader(context.matrixHead, monthDates, selectedDate, context.onDateSelect);
             const selectedDateKey = formatDateKey(selectedDate);
-            const rows = buildRows(planItems, occurrences, selectedDateKey);
+            const rows = buildPlannerRows(planItems, occurrences, selectedDateKey, showAllMonthRecords);
             const fragment = document.createDocumentFragment();
             rows.forEach((rowData, index) =>
                 fragment.append(
@@ -265,6 +280,7 @@ export function createPlannerMatrixView(context) {
                 ),
             );
             context.matrixBody.replaceChildren(fragment);
+            return rows.length;
         },
 
         renderLegend() {

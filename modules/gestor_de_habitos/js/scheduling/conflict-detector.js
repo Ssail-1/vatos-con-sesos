@@ -1,22 +1,24 @@
 import { blocksSchedule } from "../domain/occurrence-status.js";
 import { timeRangesOverlap } from "../utils/date-time.js";
 
-export function findOccurrenceConflict(candidate, occurrences, ignoredOccurrenceId = null) {
-    if (!blocksSchedule(candidate)) return null;
-    return (
-        occurrences.find(
-            (occurrence) =>
-                occurrence.id !== ignoredOccurrenceId &&
-                occurrence.date === candidate.date &&
-                blocksSchedule(occurrence) &&
-                timeRangesOverlap(
-                    candidate.startTime,
-                    candidate.endTime,
-                    occurrence.startTime,
-                    occurrence.endTime,
-                ),
-        ) ?? null
+export function findOccurrenceConflicts(candidate, occurrences, ignoredOccurrenceId = null) {
+    if (!blocksSchedule(candidate)) return [];
+    return occurrences.filter(
+        (occurrence) =>
+            occurrence.id !== ignoredOccurrenceId &&
+            occurrence.date === candidate.date &&
+            blocksSchedule(occurrence) &&
+            timeRangesOverlap(
+                candidate.startTime,
+                candidate.endTime,
+                occurrence.startTime,
+                occurrence.endTime,
+            ),
     );
+}
+
+export function findOccurrenceConflict(candidate, occurrences, ignoredOccurrenceId = null) {
+    return findOccurrenceConflicts(candidate, occurrences, ignoredOccurrenceId)[0] ?? null;
 }
 
 export function findConflictInDraftSet(drafts, existingOccurrences = []) {
