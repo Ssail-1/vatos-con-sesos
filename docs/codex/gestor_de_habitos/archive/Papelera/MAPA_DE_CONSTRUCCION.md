@@ -6,7 +6,7 @@
 Será crear el organigrama dinamico inicial del gestor de hábitos, quiero que tengas en cuenta que el siguiente contenido seŕa el primer mvp funcional, la version inicial, pero el modulo se dirige hacia muchas mas funciones descritas en los otros documentos que te pedi leer como AGENTS.md en la raiz de este repo y los que se encuentran dentro de /vcs/codex pero principalmente del documento `HISTORIA_DEL_NEGOCIO.md` que fue de aqui donde redacte el porque y que problemas quiero resolver con este modulo.
 
 Así como basarte el diseño principal de la siguiente imagen: 
-!["Ejemplo del objetivo del organizador personal"](../assets/Ejemplo-objetivo-plantilla.png "Ejemplo de como quiero el organigrama")
+!["Ejemplo del objetivo del organizador personal"](/docs/codex/assets/Ejemplo-objetivo-plantilla.png "Ejemplo de como quiero el organigrama")
 Obviamente para nosotros en la version darkmode, siguiendo el patron o haciendo juego con la pagina principal.
 
 ## Ubicación de la implementación
@@ -132,7 +132,7 @@ Algunos de estos atributos en la interfaz o graficamente se deben ver algo así:
 
 ### Seguimiento temporal cerrado o resumido
 
-!["Seguimiento temporal resumido sin cambios registrados"](../assets/Seguimiento%20temporal%20resumido%20sin%20cambios%20registrados.png "Seguimiento temporal resumido sin cambios registrados")
+!["Seguimiento temporal resumido sin cambios registrados"](/docs/codex/assets/Seguimiento%20temporal%20resumido%20sin%20cambios%20registrados.png "Seguimiento temporal resumido sin cambios registrados")
 
 #### Datos sin modificaciones
 
@@ -147,7 +147,7 @@ Si ya se agrego un tiempo real de inicio, ejecucion o ambos, debe mostrar la hor
 Al dar click en > seguimiento temporal o en alguno de los signos de interrogacion correspondiente a cada habito o actividada, se abrira o collapsaran para mostrar mas datos o visualizar mas a fondo y detalladamente lo referentemente al tiempo estimado de una actividad y el tiempo real de ejecucion.  
 Se debe ver de esta manera:
 
-!["Seguimiento temporal collapsado con cambios registrados"](../assets/Seguimiento%20temporal%20collapsado%20con%20cambios%20registrados.png "Seguimiento temporal collapsado con cambios registrados")
+!["Seguimiento temporal collapsado con cambios registrados"](/docs/codex/assets/Seguimiento%20temporal%20collapsado%20con%20cambios%20registrados.png "Seguimiento temporal collapsado con cambios registrados")
 
 ### Click al signo de interrogación...
 
