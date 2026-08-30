@@ -32,11 +32,27 @@ function assertTimeRange(startTime, endTime) {
     }
 }
 
+function assertGenerationControls(config) {
+    if (config.excludedDates !== undefined) {
+        if (
+            !Array.isArray(config.excludedDates) ||
+            config.excludedDates.some((date) => !isValidDateKey(date)) ||
+            new Set(config.excludedDates).size !== config.excludedDates.length
+        ) {
+            throw new MaterializationError("excludedDates debe contener fechas válidas y únicas.");
+        }
+    }
+    if (config.stoppedFromDate !== undefined && !isValidDateKey(config.stoppedFromDate)) {
+        throw new MaterializationError("stoppedFromDate debe ser una fecha válida.");
+    }
+}
+
 export function validateGenerationConfig(config) {
     if (config === null) return;
     if (!config || typeof config !== "object") {
         throw new MaterializationError("La configuración de generación es obligatoria.");
     }
+    assertGenerationControls(config);
 
     if (config.mode === "weekly") {
         assertDateRange(config.startDate, config.endDate, config.indefinite);
@@ -139,17 +155,22 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
     validateGenerationConfig(planItem.generationConfig);
     const config = planItem.generationConfig;
     if (config === null) return [];
-    if (config.mode === "weekly") return materializeWeekly(planItem, rangeStart, rangeEnd);
-    if (config.mode === "interval_days") return materializeIntervalDays(planItem, rangeStart, rangeEnd);
+    let drafts = [];
+    if (config.mode === "weekly") drafts = materializeWeekly(planItem, rangeStart, rangeEnd);
+    else if (config.mode === "interval_days") drafts = materializeIntervalDays(planItem, rangeStart, rangeEnd);
     if (config.mode === "manual_dates") {
-        return config.entries
+        drafts = config.entries
             .filter((entry) => isDateInRange(entry.date, rangeStart, rangeEnd))
             .map((entry) => makeDraft(planItem.id, entry.date, entry.startTime, entry.endTime));
     }
     if (config.mode === "single_date" && isDateInRange(config.date, rangeStart, rangeEnd)) {
-        return [makeDraft(planItem.id, config.date, config.startTime, config.endTime)];
+        drafts = [makeDraft(planItem.id, config.date, config.startTime, config.endTime)];
     }
-    return [];
+    const excludedDates = new Set(config.excludedDates ?? []);
+    return drafts.filter(({ date }) =>
+        !excludedDates.has(date) &&
+        (!config.stoppedFromDate || date < config.stoppedFromDate)
+    );
 }
 
 export function getLatestExplicitDate(planItems) {

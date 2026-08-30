@@ -186,9 +186,17 @@ function createPlanItemRow(rowData, position, context) {
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
         deleteButton.textContent = "🗑";
-        deleteButton.disabled = true;
-        deleteButton.setAttribute("aria-label", `Eliminar ${planItem.name} — disponible próximamente`);
-        deleteButton.title = `Eliminar ${planItem.name} — disponible próximamente`;
+        deleteButton.setAttribute(
+            "aria-label",
+            selectedDateFrozen
+                ? `Consultar eliminación de ${planItem.name}: historial congelado`
+                : `Gestionar eliminación de ${planItem.name} desde la fecha seleccionada`,
+        );
+        deleteButton.title = deleteButton.getAttribute("aria-label");
+        deleteButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            context.onDelete(planItem, deleteButton, selectedDateKey);
+        });
         actions.append(editButton, deleteButton);
         nameContent.prepend(insertButton);
         nameContent.append(actions);

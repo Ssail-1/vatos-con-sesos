@@ -10,7 +10,12 @@ function cloneConfig(config) {
 }
 
 function configsEqual(first, second) {
-    return JSON.stringify(first) === JSON.stringify(second);
+    const editableConfig = (config) => {
+        if (config === null) return null;
+        const { excludedDates, stoppedFromDate, ...editableFields } = config;
+        return editableFields;
+    };
+    return JSON.stringify(editableConfig(first)) === JSON.stringify(editableConfig(second));
 }
 
 function normalizeManualDateEntry(entry = {}) {

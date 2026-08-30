@@ -4,6 +4,7 @@ import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
 import { createOverrideConfirmationView } from "./views/override-confirmation.js";
+import { createDeletionDialogView } from "./views/deletion-dialog.js";
 import { createPlanItemFormView } from "./views/plan-item-form.js";
 import { createPlannerMatrixView } from "./views/planner-matrix.js";
 
@@ -22,6 +23,8 @@ const elements = Object.fromEntries([
     "occurrenceTimeFields", "recurrenceScopeField", "overrideDialog", "overrideCandidateSummary",
     "overrideCandidateOccurrences", "overrideConflictList", "overrideConsequence", "overrideError",
     "overrideBackButton", "overrideContinueButton",
+    "deletionDialog", "deletionSummary", "deleteOccurrenceButton", "deleteOccurrenceDetails",
+    "stopPlanningButton", "stopPlanningDetails", "deletionError", "deletionBackButton",
 ].map((id) => [id, byId(id)]));
 
 function getCurrentLocalDate() {
@@ -136,6 +139,23 @@ const matrixView = createPlannerMatrixView({
         planItemFormView.openInsertBefore(item, occurrence, index > 0 ? daily[index - 1].endTime : "", opener);
     },
     onEdit: (item, occurrence, opener, selectedDateKey) => planItemFormView.openEdit(item, occurrence, selectedDateKey, opener),
+    onDelete: (item, opener, selectedDateKey) => {
+        const options = plannerStore.getDeletionOptions(item.id, selectedDateKey);
+        deletionDialogView.open(options, {
+            onDeleteOccurrence: (occurrenceId) => plannerStore.deleteOccurrenceForDate(occurrenceId),
+            onStopPlanning: (planItemId, date) => plannerStore.stopPlanItemFromDate(planItemId, date),
+            onComplete: (result, operation) => {
+                selectedPlanItemId = result.planItem.id;
+                render();
+                showFeedback(
+                    operation === "deleted_occurrence"
+                        ? "La aparición fue eliminada únicamente para esta fecha."
+                        : "La planificación futura fue detenida; el historial se conservó.",
+                    "notice",
+                );
+            },
+        });
+    },
     onAmbiguity: (message) => showFeedback(message),
 });
 
@@ -148,6 +168,18 @@ const overrideConfirmationView = createOverrideConfirmationView({
     errorRegion: elements.overrideError,
     backButton: elements.overrideBackButton,
     continueButton: elements.overrideContinueButton,
+});
+
+const deletionDialogView = createDeletionDialogView({
+    dialog: elements.deletionDialog,
+    summary: elements.deletionSummary,
+    deleteOccurrenceButton: elements.deleteOccurrenceButton,
+    deleteOccurrenceDetails: elements.deleteOccurrenceDetails,
+    stopPlanningButton: elements.stopPlanningButton,
+    stopPlanningDetails: elements.stopPlanningDetails,
+    errorRegion: elements.deletionError,
+    backButton: elements.deletionBackButton,
+    fallbackFocusElement: elements.addActivityButton,
 });
 
 function commitPreparedChange(prepared, context) {
