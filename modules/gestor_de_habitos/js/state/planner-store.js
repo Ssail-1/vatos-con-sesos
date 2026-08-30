@@ -1,9 +1,16 @@
 import { isValidClassification, getPlanItemType } from "../domain/plan-item-classification.js";
-import { getSchedulingPriority } from "../domain/scheduling-priority.js";
+import { getSchedulingPriority, PRIORITY_OVERRIDE_REASON } from "../domain/scheduling-priority.js";
 import {
     getNextStatus,
     isValidOccurrenceStatus,
 } from "../domain/occurrence-status.js";
+import {
+    getDateTemporalZone,
+    getHistoryCutoff,
+    HISTORY_EDIT_WINDOW_DAYS,
+    reconcileFrozenStatus,
+    TEMPORAL_ZONES,
+} from "../domain/temporal-integrity.js";
 import { findConflictInDraftSet, findOccurrenceConflict, findOccurrenceConflicts } from "../scheduling/conflict-detector.js";
 import {
     getLatestExplicitDate,
@@ -17,6 +24,7 @@ import {
     getIsoWeekday,
     isValidDateKey,
     isValidTimeRange,
+    timeRangesOverlap,
 } from "../utils/date-time.js";
 
 export class PlannerStoreError extends Error {
@@ -50,7 +58,10 @@ function clonePlanItem(planItem) {
 }
 
 function cloneOccurrence(occurrence) {
-    return { ...occurrence };
+    return {
+        ...occurrence,
+        ...(occurrence.statusContext ? { statusContext: { ...occurrence.statusContext } } : {}),
+    };
 }
 
 function normalizePlanItemDraft(draft) {
@@ -86,7 +97,12 @@ function validateOccurrenceDraft(draft) {
         typeof draft.planItemId !== "string" ||
         !isValidDateKey(draft.date) ||
         !isValidTimeRange(draft.startTime, draft.endTime) ||
-        !isValidOccurrenceStatus(draft.status)
+        !isValidOccurrenceStatus(draft.status) ||
+        draft.statusContext !== undefined && (
+            draft.statusContext?.reason !== PRIORITY_OVERRIDE_REASON ||
+            typeof draft.statusContext.sourceOccurrenceId !== "string" ||
+            !draft.statusContext.sourceOccurrenceId
+        )
     ) {
         throw new PlannerStoreError("invalid_occurrence", "La occurrence no cumple el contrato.");
     }
@@ -130,10 +146,15 @@ function getConfiguredMaterializationRange(planItem, fallbackStart, fallbackEnd)
     return { rangeStart: dates[0], rangeEnd: dates.at(-1) };
 }
 
-export function createPlannerStore(initialPlanItems, statusOverrides = [], referenceDateKey) {
+export function createPlannerStore(initialPlanItems, statusOverrides = [], referenceDateKey, options = {}) {
     if (!isValidDateKey(referenceDateKey)) {
         throw new PlannerStoreError("invalid_reference_date", "La fecha de referencia no es válida.");
     }
+
+    const historyEditWindowDays = options.historyEditWindowDays ?? HISTORY_EDIT_WINDOW_DAYS;
+    const getCurrentDateKey = options.getCurrentDateKey ?? (() => referenceDateKey);
+    // Valida también la configuración de la ventana antes de materializar datos.
+    getHistoryCutoff(referenceDateKey, historyEditWindowDays);
 
     let planItems = initialPlanItems.map(clonePlanItem);
     let occurrences = [];
@@ -218,6 +239,69 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return occurrences.find((candidate) => candidate.id === occurrenceId) ?? null;
     }
 
+    function getCurrentReferenceDate() {
+        const currentReferenceDate = getCurrentDateKey();
+        if (!isValidDateKey(currentReferenceDate)) {
+            throw new PlannerStoreError("invalid_reference_date", "La fecha actual no es válida.");
+        }
+        return currentReferenceDate;
+    }
+
+    function reconcileTemporalState(referenceDate = getCurrentReferenceDate()) {
+        const reconciled = [];
+        occurrences.forEach((occurrence) => {
+            if (getDateTemporalZone(occurrence.date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN) return;
+            const reconciledStatus = reconcileFrozenStatus(occurrence.status);
+            if (reconciledStatus === occurrence.status) return;
+            occurrence.status = reconciledStatus;
+            reconciled.push(cloneOccurrence(occurrence));
+        });
+        return reconciled;
+    }
+
+    function requireScheduleMutableDate(date) {
+        if (!isValidDateKey(date)) {
+            throw new PlannerStoreError("invalid_occurrence", "La fecha de la occurrence no es válida.");
+        }
+        const referenceDate = getCurrentReferenceDate();
+        reconcileTemporalState(referenceDate);
+        const zone = getDateTemporalZone(date, referenceDate, historyEditWindowDays);
+        if (zone === TEMPORAL_ZONES.FROZEN) {
+            throw new PlannerStoreError("history_frozen", "La occurrence está fuera de la ventana editable y es de solo lectura.");
+        }
+        return { referenceDate, zone };
+    }
+
+    function requireStatusTransition(occurrence, targetStatus) {
+        const temporal = requireScheduleMutableDate(occurrence.date);
+        if (
+            temporal.zone === TEMPORAL_ZONES.FUTURE &&
+            (!["pending", "cancelled"].includes(occurrence.status) || !["pending", "cancelled"].includes(targetStatus))
+        ) {
+            throw new PlannerStoreError(
+                "future_status_locked",
+                "En una fecha futura solamente puede alternarse entre Pendiente y Cancelada.",
+            );
+        }
+        return temporal;
+    }
+
+    function requireDraftsOutsideFrozenHistory(drafts, referenceDate = getCurrentReferenceDate()) {
+        reconcileTemporalState(referenceDate);
+        const containsFrozenDate = drafts.some(({ date }) =>
+            getDateTemporalZone(date, referenceDate, historyEditWindowDays) === TEMPORAL_ZONES.FROZEN
+        );
+        if (containsFrozenDate) {
+            throw new PlannerStoreError(
+                "history_frozen",
+                "No se pueden crear registros dentro del historial congelado.",
+            );
+        }
+    }
+
+    // El bootstrap aplica primero sus fixtures y después cierra cualquier historia ya congelada.
+    reconcileTemporalState();
+
     function describeConflict(conflict) {
         const planItem = getPlanItemReference(conflict.planItemId);
         return {
@@ -227,6 +311,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function ensureMaterializedThrough(targetDate) {
+        reconcileTemporalState();
         const targetHorizon = getMonthEnd(targetDate);
         if (!targetHorizon || targetHorizon <= materializedThrough) return [];
         const rangeStart = addDays(materializedThrough, 1);
@@ -301,6 +386,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         const previewHorizon = explicitDate && explicitDate > materializedThrough ? getMonthEnd(explicitDate) : materializedThrough;
         const range = getConfiguredMaterializationRange(preview, materializationStart, previewHorizon);
         const drafts = materializeOccurrenceDrafts(preview, range.rangeStart, range.rangeEnd);
+        requireDraftsOutsideFrozenHistory(drafts);
         return {
             ...evaluatePriorityConflicts(preview, drafts),
             operation: { kind: "create_plan_item", planItemDraft: clonePlanItem(normalized) },
@@ -317,6 +403,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     function prepareOccurrenceAddition(planItemId, occurrenceDraft) {
         const planItem = getPlanItemReference(planItemId);
         if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
+        requireScheduleMutableDate(occurrenceDraft?.date);
         const draft = { planItemId, date: occurrenceDraft?.date, startTime: occurrenceDraft?.startTime, endTime: occurrenceDraft?.endTime, status: "pending" };
         validateOccurrenceDraft(draft);
         return {
@@ -338,6 +425,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
             throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
         }
+        requireScheduleMutableDate(occurrence.date);
         if (occurrenceChanges.date !== occurrence.date) {
             throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
         }
@@ -418,6 +506,12 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             return materializedThrough;
         },
 
+        getHistoryEditWindowDays() {
+            return historyEditWindowDays;
+        },
+
+        reconcileTemporalState,
+
         findTimeConflict(date, startTime, endTime, ignoredOccurrenceId = null, status = "pending") {
             const conflict = findOccurrenceConflict(
                 { date, startTime, endTime, status },
@@ -430,7 +524,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         materializePlanItem(planItemId, rangeStart, rangeEnd) {
             const planItem = getPlanItemReference(planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
-            return materializePlanItemInternal(planItem, rangeStart, rangeEnd);
+            const created = materializePlanItemInternal(planItem, rangeStart, rangeEnd);
+            reconcileTemporalState();
+            return created.map(({ id }) => cloneOccurrence(getOccurrenceReference(id)));
         },
 
         ensureMaterializedThrough,
@@ -445,21 +541,56 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 throw new PlannerStoreError("stale_override", "La agenda cambió desde la confirmación. Revisa nuevamente los conflictos.");
             }
             const conflictReferences = (current.conflicts ?? []).map(({ id }) => getOccurrenceReference(id));
-            const originalStatuses = conflictReferences.map(({ id, status }) => ({ id, status }));
-            if (current.type === "override_required") conflictReferences.forEach((occurrence) => { occurrence.status = "cancelled"; });
+            const originalStatuses = conflictReferences.map(({ id, status, statusContext }) => ({
+                id,
+                status,
+                ...(statusContext ? { statusContext: { ...statusContext } } : {}),
+            }));
+            if (current.type === "override_required") {
+                conflictReferences.forEach((occurrence) => {
+                    occurrence.status = occurrence.status === "in_progress" ? "not_finished" : "cancelled";
+                });
+            }
             try {
-                if (current.operation.kind === "create_plan_item") return this.addPlanItem(current.operation.planItemDraft);
-                if (current.operation.kind === "add_occurrence") return this.addOccurrenceForPlanItem(current.operation.planItemId, current.operation.occurrenceDraft);
-                return this.updatePlanItemAndOccurrence(
-                    current.operation.planItemId,
-                    current.operation.planItemChanges,
-                    current.operation.occurrenceId,
-                    current.operation.occurrenceChanges,
-                );
+                let result;
+                if (current.operation.kind === "create_plan_item") {
+                    result = this.addPlanItem(current.operation.planItemDraft);
+                } else if (current.operation.kind === "add_occurrence") {
+                    result = this.addOccurrenceForPlanItem(current.operation.planItemId, current.operation.occurrenceDraft);
+                } else {
+                    result = this.updatePlanItemAndOccurrence(
+                        current.operation.planItemId,
+                        current.operation.planItemChanges,
+                        current.operation.occurrenceId,
+                        current.operation.occurrenceChanges,
+                    );
+                }
+
+                if (current.type === "override_required") {
+                    const sourceOccurrences = current.operation.kind === "create_plan_item"
+                        ? result.occurrences.filter(({ planItemId }) => planItemId === result.planItem.id)
+                        : current.operation.kind === "add_occurrence"
+                            ? [result]
+                            : [result.occurrence];
+                    conflictReferences.forEach((occurrence) => {
+                        const source = sourceOccurrences.find((candidate) =>
+                            candidate.date === occurrence.date &&
+                            timeRangesOverlap(candidate.startTime, candidate.endTime, occurrence.startTime, occurrence.endTime)
+                        ) ?? sourceOccurrences[0];
+                        occurrence.statusContext = {
+                            reason: PRIORITY_OVERRIDE_REASON,
+                            sourceOccurrenceId: source.id,
+                        };
+                    });
+                }
+                return result;
             } catch (error) {
-                originalStatuses.forEach(({ id, status }) => {
+                originalStatuses.forEach(({ id, status, statusContext }) => {
                     const occurrence = getOccurrenceReference(id);
-                    if (occurrence) occurrence.status = status;
+                    if (!occurrence) return;
+                    occurrence.status = status;
+                    if (statusContext) occurrence.statusContext = { ...statusContext };
+                    else delete occurrence.statusContext;
                 });
                 throw error;
             }
@@ -468,6 +599,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         addOccurrenceForPlanItem(planItemId, occurrenceDraft) {
             const planItem = getPlanItemReference(planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
+            requireScheduleMutableDate(occurrenceDraft?.date);
             const candidate = {
                 planItemId,
                 date: occurrenceDraft?.date,
@@ -488,15 +620,18 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!planItem || !isValidDateKey(anchorDate)) {
                 throw new PlannerStoreError("not_found", "El registro o la fecha seleccionada no existe.");
             }
+            const { referenceDate } = requireScheduleMutableDate(anchorDate);
             if (generationConfig?.mode !== "weekly") {
                 throw new PlannerStoreError("invalid_generation_config", "La excepción semanal requiere configuración weekly.");
             }
             validateGenerationConfig(generationConfig);
             const weekStart = addDays(anchorDate, 1 - getIsoWeekday(anchorDate));
             const weekEnd = addDays(weekStart, 6);
+            const historyCutoff = getHistoryCutoff(referenceDate, historyEditWindowDays);
+            const mutableWeekStart = weekStart < historyCutoff ? historyCutoff : weekStart;
             const pendingByDate = new Map();
             occurrences
-                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= weekStart && occurrence.date <= weekEnd)
+                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= mutableWeekStart && occurrence.date <= weekEnd)
                 .forEach((occurrence) => {
                     const sameDate = pendingByDate.get(occurrence.date) ?? [];
                     sameDate.push(occurrence);
@@ -506,7 +641,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 throw new PlannerStoreError("ambiguous_week", "Hay varias occurrences pending del mismo registro en una fecha; edítalas individualmente.");
             }
             const removable = [...pendingByDate.values()].flat();
-            const { preservedOccurrences, drafts } = buildWeeklyCandidate(planItem, generationConfig, weekStart, weekEnd, removable);
+            const { preservedOccurrences, drafts } = buildWeeklyCandidate(planItem, generationConfig, mutableWeekStart, weekEnd, removable);
             const reusableByDate = new Map(removable.map((occurrence) => [occurrence.date, occurrence]));
             const replacements = drafts.map((draft) => {
                 const reusable = reusableByDate.get(draft.date);
@@ -522,6 +657,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!planItem || !isValidDateKey(effectiveDate)) {
                 throw new PlannerStoreError("not_found", "El registro o la fecha efectiva no existe.");
             }
+            requireScheduleMutableDate(effectiveDate);
             const normalizedConfig = cloneGenerationConfig(generationConfig);
             if (["weekly", "interval_days"].includes(normalizedConfig?.mode)) {
                 normalizedConfig.startDate = effectiveDate;
@@ -570,6 +706,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         addPlanItem(planItemDraft) {
+            reconcileTemporalState();
             const normalized = normalizePlanItemDraft(planItemDraft);
             validatePlanItem(normalized);
             idSequence += 1;
@@ -592,6 +729,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 candidateRange.rangeStart,
                 candidateRange.rangeEnd,
             );
+            requireDraftsOutsideFrozenHistory(candidateDrafts);
             const extensionStart = addDays(materializedThrough, 1);
             const extensionDrafts =
                 candidateHorizon > materializedThrough
@@ -608,9 +746,10 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             occurrences.push(...createdOccurrences);
             occurrences.sort(compareOccurrences);
             materializedThrough = candidateHorizon;
+            reconcileTemporalState();
             return {
                 planItem: clonePlanItem(candidate),
-                occurrences: createdOccurrences.map(cloneOccurrence),
+                occurrences: createdOccurrences.map(({ id }) => cloneOccurrence(getOccurrenceReference(id))),
             };
         },
 
@@ -620,6 +759,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
                 throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
             }
+            requireScheduleMutableDate(occurrence.date);
             if (occurrenceChanges.date !== occurrence.date) {
                 throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
             }
@@ -657,6 +797,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         updateOccurrence(occurrenceId, occurrenceChanges) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireScheduleMutableDate(occurrence.date);
             const candidate = {
                 ...occurrence,
                 date: occurrenceChanges.date,
@@ -664,6 +805,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceChanges.endTime,
             };
             validateOccurrenceDraft(candidate);
+            requireScheduleMutableDate(candidate.date);
             const conflict = findOccurrenceConflict(candidate, occurrences, occurrence.id);
             if (conflict) {
                 throw new PlannerStoreError("time_conflict", "El horario se superpone.", {
@@ -683,6 +825,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!isValidOccurrenceStatus(status)) {
                 throw new PlannerStoreError("invalid_status", "El estado no es válido.");
             }
+            requireStatusTransition(occurrence, status);
             const candidate = { ...occurrence, status };
             const conflict = findOccurrenceConflict(candidate, occurrences, occurrence.id);
             if (conflict) {
@@ -697,12 +840,19 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         advanceOccurrenceStatus(occurrenceId) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
-            const nextStatus = getNextStatus(occurrence.status);
+            const temporal = requireStatusTransition(
+                occurrence,
+                occurrence.status === "pending" ? "cancelled" : occurrence.status === "cancelled" ? "pending" : getNextStatus(occurrence.status),
+            );
+            const nextStatus = temporal.zone === TEMPORAL_ZONES.FUTURE
+                ? occurrence.status === "pending" ? "cancelled" : "pending"
+                : getNextStatus(occurrence.status);
 
             try {
                 return this.setOccurrenceStatus(occurrenceId, nextStatus);
             } catch (error) {
                 const canUseReleasedStatusFallback =
+                    temporal.zone === TEMPORAL_ZONES.EDITABLE &&
                     occurrence.status === "cancelled" &&
                     nextStatus === "pending" &&
                     error instanceof PlannerStoreError &&

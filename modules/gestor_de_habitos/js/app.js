@@ -1,6 +1,7 @@
 import { initialPlanItems } from "./data/mock-plan-items.js";
 import { mockStatusOverrides } from "./data/mock-status-overrides.js";
 import { createPlannerStore } from "./state/planner-store.js";
+import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
 import { createOverrideConfirmationView } from "./views/override-confirmation.js";
 import { createPlanItemFormView } from "./views/plan-item-form.js";
@@ -23,9 +24,19 @@ const elements = Object.fromEntries([
     "overrideBackButton", "overrideContinueButton",
 ].map((id) => [id, byId(id)]));
 
-const currentDate = new Date();
-const plannerStore = createPlannerStore(initialPlanItems, mockStatusOverrides, formatDateKey(currentDate));
-let selectedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+function getCurrentLocalDate() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+const initialCurrentDate = getCurrentLocalDate();
+const plannerStore = createPlannerStore(
+    initialPlanItems,
+    mockStatusOverrides,
+    formatDateKey(initialCurrentDate),
+    { getCurrentDateKey: () => formatDateKey(getCurrentLocalDate()) },
+);
+let selectedDate = new Date(initialCurrentDate);
 let visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 let showAllMonthRecords = false;
 let selectedPlanItemId = null;
@@ -48,6 +59,10 @@ function monthValue(date) { return `${date.getFullYear()}-${String(date.getMonth
 function showNativePicker(input) { if (typeof input.showPicker === "function") input.showPicker(); else { input.focus(); input.click(); } }
 
 function render() {
+    const currentDate = getCurrentLocalDate();
+    const currentDateKey = formatDateKey(currentDate);
+    const selectedDateKey = formatDateKey(selectedDate);
+    plannerStore.reconcileTemporalState(currentDateKey);
     const year = visibleMonth.getFullYear();
     const month = visibleMonth.getMonth();
     plannerStore.ensureMaterializedThrough(formatDateKey(new Date(year, month + 1, 0)));
@@ -55,6 +70,11 @@ function render() {
     elements.monthPicker.value = monthValue(visibleMonth);
     elements.datePicker.value = formatDateKey(selectedDate);
     elements.selectedDateLabel.textContent = formatSelectedDate(selectedDate);
+    const selectedDateFrozen = getDateTemporalZone(selectedDateKey, currentDateKey) === TEMPORAL_ZONES.FROZEN;
+    elements.addActivityButton.disabled = selectedDateFrozen;
+    elements.addActivityButton.title = selectedDateFrozen
+        ? "El historial congelado es de solo lectura"
+        : "Agregar registro";
     elements.toggleMonthRecordsButton.textContent = showAllMonthRecords ? "👁" : "⊝";
     elements.toggleMonthRecordsButton.setAttribute("aria-pressed", String(showAllMonthRecords));
     elements.toggleMonthRecordsButton.setAttribute("aria-label", showAllMonthRecords ? "Mostrar solo el Plan del día" : "Mostrar todos los registros del mes");
@@ -97,7 +117,18 @@ function moveMonth(offset) {
 const matrixView = createPlannerMatrixView({
     matrixHead: elements.matrixHead, matrixBody: elements.matrixBody, statusLegend: elements.statusLegend,
     onDateSelect: selectDate,
-    onStatusChange: (id) => { try { clearFeedback(); return plannerStore.advanceOccurrenceStatus(id); } catch (error) { showFeedback(error.message); return null; } },
+    onStatusChange: (id) => {
+        try {
+            clearFeedback();
+            const updated = plannerStore.advanceOccurrenceStatus(id);
+            render();
+            return updated;
+        } catch (error) {
+            showFeedback(error.message);
+            render();
+            return null;
+        }
+    },
     onRowSelect: (id, restore) => { selectedPlanItemId = selectedPlanItemId === id ? null : id; render(); if (restore && selectedPlanItemId) matrixView.focusPlanItemRow(id); },
     onInsertBefore: (item, occurrence, opener) => {
         const daily = plannerStore.getOccurrencesForDate(occurrence.date);

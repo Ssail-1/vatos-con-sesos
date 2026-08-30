@@ -4,6 +4,7 @@ import {
     statusDefinitions,
 } from "../domain/occurrence-status.js";
 import { getClassificationLabel } from "../domain/plan-item-classification.js";
+import { getDateTemporalZone, getOccurrenceTemporalPolicy, TEMPORAL_ZONES } from "../domain/temporal-integrity.js";
 import {
     calculateDuration,
     formatDateKey,
@@ -19,29 +20,36 @@ function createTextCell(tagName, className, text) {
     return cell;
 }
 
-function updateStatusButton(button, occurrence, planItemName, date) {
+function updateStatusButton(button, occurrence, planItemName, date, currentDate) {
+    const referenceDate = formatDateKey(currentDate);
+    const policy = getOccurrenceTemporalPolicy(occurrence, referenceDate);
+    const readOnlyMessage = policy.zone === TEMPORAL_ZONES.FROZEN
+        ? "Historial congelado, solo lectura."
+        : "En el futuro solo Pendiente y Cancelada pueden modificarse.";
     const presentation = getStatusPresentation(
         occurrence.status,
         planItemName,
         formatSelectedDate(date),
+        policy.canChangeStatus ? "Activar para cambiar estado." : readOnlyMessage,
     );
     button.dataset.status = presentation.status;
     button.textContent = presentation.symbol;
+    button.disabled = !policy.canChangeStatus;
     button.setAttribute("aria-label", presentation.accessibleLabel);
     button.title = presentation.accessibleLabel;
 }
 
-function createStatusButton(planItem, occurrence, date, onStatusChange) {
+function createStatusButton(planItem, occurrence, date, currentDate, onStatusChange) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "status-button";
     button.dataset.occurrenceId = occurrence.id;
     button.dataset.date = occurrence.date;
-    updateStatusButton(button, occurrence, planItem.name, date);
+    updateStatusButton(button, occurrence, planItem.name, date, currentDate);
     button.addEventListener("click", (event) => {
         event.stopPropagation();
         const updatedOccurrence = onStatusChange(occurrence.id);
-        if (updatedOccurrence) updateStatusButton(button, updatedOccurrence, planItem.name, date);
+        if (updatedOccurrence) updateStatusButton(button, updatedOccurrence, planItem.name, date, currentDate);
     });
     return button;
 }
@@ -126,15 +134,23 @@ function createPlanItemRow(rowData, position, context) {
     row.setAttribute("aria-selected", String(planItem.id === context.selectedPlanItemId));
 
     if (planItem.id === context.selectedPlanItemId) {
+        const referenceDate = formatDateKey(context.currentDate);
+        const selectedDateKey = formatDateKey(context.selectedDate);
+        const selectedDateFrozen = getDateTemporalZone(selectedDateKey, referenceDate) === TEMPORAL_ZONES.FROZEN;
+        const selectedOccurrencePolicy = selectedOccurrence
+            ? getOccurrenceTemporalPolicy(selectedOccurrence, referenceDate)
+            : null;
         row.classList.add("is-selected");
         const insertButton = document.createElement("button");
         insertButton.type = "button";
         insertButton.className = "context-add-button";
         insertButton.textContent = "+";
-        insertButton.disabled = !selectedOccurrence;
+        insertButton.disabled = !selectedOccurrence || !selectedOccurrencePolicy.canEditSchedule;
         insertButton.setAttribute(
             "aria-label",
-            selectedOccurrence
+            selectedDateFrozen
+                ? `${planItem.name}: historial congelado, no se puede agregar desde esta fecha`
+                : selectedOccurrence
                 ? `Agregar un registro antes de ${planItem.name}`
                 : `${planItem.name} no está programado en la fecha seleccionada`,
         );
@@ -153,17 +169,19 @@ function createPlanItemRow(rowData, position, context) {
         editButton.textContent = "✎";
         editButton.setAttribute(
             "aria-label",
-            selectedDateAmbiguous
+            selectedDateFrozen
+                ? `${planItem.name}: historial congelado, solo lectura`
+                : selectedDateAmbiguous
                 ? `${planItem.name} tiene varias occurrences ambiguas en la fecha seleccionada`
                 : selectedOccurrence
                 ? `Editar ${planItem.name} en la fecha seleccionada`
                 : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
-        editButton.disabled = selectedDateAmbiguous;
+        editButton.disabled = selectedDateAmbiguous || selectedDateFrozen;
         editButton.title = editButton.getAttribute("aria-label");
         editButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            if (!selectedDateAmbiguous) context.onEdit(planItem, selectedOccurrence, editButton, formatDateKey(context.selectedDate));
+            if (!editButton.disabled) context.onEdit(planItem, selectedOccurrence, editButton, formatDateKey(context.selectedDate));
         });
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
@@ -224,7 +242,7 @@ function createPlanItemRow(rowData, position, context) {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";
             dailyOccurrences.forEach((occurrence) =>
-                controls.append(createStatusButton(planItem, occurrence, date, context.onStatusChange)),
+                controls.append(createStatusButton(planItem, occurrence, date, context.currentDate, context.onStatusChange)),
             );
             cell.append(controls);
         } else {
@@ -251,6 +269,7 @@ function renderLegend(statusLegend) {
         const definition = statusDefinitions[status];
         item.className = "legend-item";
         symbol.className = "legend-symbol";
+        symbol.dataset.status = status;
         symbol.style.setProperty("--legend-color", definition.color);
         symbol.textContent = definition.symbol;
         symbol.setAttribute("aria-hidden", "true");

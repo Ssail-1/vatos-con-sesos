@@ -106,7 +106,7 @@ for (const itemType of ["event", "periodic"]) {
         activityType: "periodic",
         generationConfig: { mode: "manual_dates", entries: [entryA, entryB] },
     };
-    const store = createPlannerStore([original], [], "2026-08-28");
+    const store = createPlannerStore([original], [], entryA.date);
     const historical = store.getOccurrencesForDate(entryA.date)[0];
     store.setOccurrenceStatus(historical.id, "completed");
     const revisedEntryB = { ...entryB, startTime: "18:00", endTime: "19:00" };

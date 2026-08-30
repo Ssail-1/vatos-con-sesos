@@ -4,6 +4,12 @@ export const SCHEDULING_PRIORITY = Object.freeze({
     UNEXPECTED: 300,
 });
 
+export const PRIORITY_OVERRIDE_REASON = "priority_override";
+
+export function wasDisplacedByPriorityOverride(occurrence) {
+    return occurrence?.statusContext?.reason === PRIORITY_OVERRIDE_REASON;
+}
+
 export function getSchedulingPriority(planItem) {
     if (planItem.kind !== "activity") return SCHEDULING_PRIORITY.NORMAL;
     if (planItem.activityType === "event") return SCHEDULING_PRIORITY.EVENT;

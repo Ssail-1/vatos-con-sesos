@@ -241,6 +241,16 @@ h1 {
     filter: brightness(1.08);
 }
 
+.add-activity-button:disabled {
+    cursor: not-allowed;
+    filter: grayscale(0.55);
+    opacity: 0.48;
+}
+
+.add-activity-button:disabled:hover {
+    filter: grayscale(0.55);
+}
+
 .matrix-container {
     width: 100%;
     overflow: hidden;
@@ -465,6 +475,7 @@ thead .selected-day-column {
 }
 
 .status-button {
+    position: relative;
     display: inline-grid;
     width: 23px;
     height: 23px;
@@ -495,12 +506,37 @@ thead .selected-day-column {
 }
 
 .status-button[data-status="not_completed"] {
+    color: color-mix(in srgb, var(--not-completed) 76%, var(--text-muted));
+    background: rgba(239, 107, 107, 0.04);
+}
+
+.status-button[data-status="not_finished"] {
+    color: var(--in-progress);
+}
+
+.status-button[data-status="not_finished"]::after {
+    position: absolute;
+    top: 0;
+    right: 2px;
+    content: "!";
     color: var(--not-completed);
+    font-size: 0.62rem;
+    font-weight: 950;
 }
 
 .status-button[data-status="cancelled"] {
     color: var(--cancelled);
     background: #25292e;
+}
+
+.status-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+}
+
+.status-button:disabled:hover {
+    background: inherit;
+    transform: none;
 }
 
 .occurrence-controls {
@@ -600,6 +636,13 @@ thead .selected-day-column {
 .legend-symbol {
     color: var(--legend-color);
     font-weight: 800;
+}
+
+.legend-symbol[data-status="not_finished"]::after {
+    margin-left: 1px;
+    content: "!";
+    color: var(--not-completed);
+    font-weight: 950;
 }
 
 .memory-notice {

@@ -3,6 +3,7 @@ export const occurrenceStatuses = Object.freeze([
     "in_progress",
     "completed",
     "not_completed",
+    "not_finished",
     "cancelled",
 ]);
 
@@ -11,6 +12,7 @@ export const statusDefinitions = Object.freeze({
     in_progress: { symbol: "◷", label: "En progreso", color: "var(--in-progress)" },
     completed: { symbol: "✓", label: "Completada", color: "var(--completed)" },
     not_completed: { symbol: "✕", label: "No realizada", color: "var(--not-completed)" },
+    not_finished: { symbol: "◷", modifier: "!", label: "No terminada", color: "var(--in-progress)" },
     cancelled: { symbol: "⚠", label: "Cancelada", color: "var(--cancelled)" },
 });
 
@@ -19,7 +21,7 @@ export function isValidOccurrenceStatus(status) {
 }
 
 export function blocksSchedule(occurrence) {
-    return occurrence.status !== "not_completed" && occurrence.status !== "cancelled";
+    return ["pending", "in_progress", "completed"].includes(occurrence.status);
 }
 
 export function getNextStatus(currentStatus) {
@@ -28,12 +30,12 @@ export function getNextStatus(currentStatus) {
     return occurrenceStatuses[(safeIndex + 1) % occurrenceStatuses.length];
 }
 
-export function getStatusPresentation(status, planItemName, dateLabel) {
+export function getStatusPresentation(status, planItemName, dateLabel, actionDescription = "Activar para cambiar estado.") {
     const safeStatus = statusDefinitions[status] ? status : "pending";
     const definition = statusDefinitions[safeStatus];
     return {
         status: safeStatus,
         ...definition,
-        accessibleLabel: `${planItemName}, ${dateLabel}: ${definition.label}. Activar para cambiar estado.`,
+        accessibleLabel: `${planItemName}, ${dateLabel}: ${definition.label}. ${actionDescription}`,
     };
 }

@@ -104,7 +104,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
 }
 
 {
-    const store = createPlannerStore([], [], "2026-08-23");
+    const store = createPlannerStore([], [], "2026-08-24", { historyEditWindowDays: 365 });
     const historical = store.addPlanItem({
         name: "Fecha histórica explícita",
         kind: "activity",
@@ -115,7 +115,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
 }
 
 {
-    const store = createPlannerStore([], [], "2026-08-23");
+    const store = createPlannerStore([], [], "2026-08-24");
     const first = store.addPlanItem({
         name: "Primera",
         kind: "activity",
@@ -162,7 +162,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
 }
 
 {
-    const store = createPlannerStore([], [], "2026-08-23");
+    const store = createPlannerStore([], [], "2026-08-25");
     const released = store.addPlanItem({
         name: "Occurrence A",
         kind: "activity",
@@ -178,6 +178,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         generationConfig: single("2026-08-24", "06:00", "06:30"),
     }).occurrences[0];
 
+    assert.equal(store.advanceOccurrenceStatus(released.id).status, "not_finished");
     assert.equal(store.advanceOccurrenceStatus(released.id).status, "cancelled");
     assert.equal(store.advanceOccurrenceStatus(released.id).status, "not_completed");
     assert.equal(store.getOccurrenceById(occupant.id).status, "pending");
@@ -187,13 +188,14 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
     assert.equal(store.getOccurrenceById(occupant.id).status, "pending");
 
     store.setOccurrenceStatus(occupant.id, "cancelled");
+    assert.equal(store.advanceOccurrenceStatus(released.id).status, "not_finished");
     assert.equal(store.advanceOccurrenceStatus(released.id).status, "cancelled");
     assert.equal(store.advanceOccurrenceStatus(released.id).status, "pending");
     assert.equal(store.getOccurrenceById(occupant.id).status, "cancelled");
 }
 
 {
-    const store = createPlannerStore([], [], "2026-08-23");
+    const store = createPlannerStore([], [], "2026-08-25");
     const result = store.addPlanItem({
         name: "Dos veces",
         kind: "activity",

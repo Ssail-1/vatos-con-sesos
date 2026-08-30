@@ -68,10 +68,20 @@ export function createOverrideConfirmationView({
             item.dataset.occurrenceId = conflict.id;
             return item;
         }));
-        const plural = prepared.conflicts.length === 1;
-        consequence.textContent = plural
-            ? "Si continúas, este registro será cancelado únicamente para esta fecha."
-            : "Si continúas, estos registros serán cancelados únicamente para sus fechas indicadas.";
+        const pendingCount = prepared.conflicts.filter(({ status }) => status === "pending").length;
+        const inProgressCount = prepared.conflicts.filter(({ status }) => status === "in_progress").length;
+        const consequences = [];
+        if (pendingCount) {
+            consequences.push(pendingCount === 1
+                ? "el registro pendiente se marcará como Cancelado"
+                : `${pendingCount} registros pendientes se marcarán como Cancelados`);
+        }
+        if (inProgressCount) {
+            consequences.push(inProgressCount === 1
+                ? "el registro en progreso se marcará como No terminada"
+                : `${inProgressCount} registros en progreso se marcarán como No terminados`);
+        }
+        consequence.textContent = `Si continúas, ${consequences.join(" y ")} únicamente para las fechas indicadas.`;
     }
 
     backButton.addEventListener("click", () => dialog.close("back"));

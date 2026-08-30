@@ -57,15 +57,15 @@ for (const [kind, type] of [
 }
 
 {
-    const store = createPlannerStore([item("weekly")], [], "2026-08-24");
+    const store = createPlannerStore([item("weekly")], [
+        { planItemId: "weekly", date: "2026-08-24", status: "completed" },
+        { planItemId: "weekly", date: "2026-08-26", status: "not_completed" },
+        { planItemId: "weekly", date: "2026-08-28", status: "cancelled" },
+    ], "2026-08-24");
     const originalConfig = store.getPlanItemById("weekly").generationConfig;
     const monday = store.getOccurrencesForDate("2026-08-24")[0];
     const wednesday = store.getOccurrencesForDate("2026-08-26")[0];
     const friday = store.getOccurrencesForDate("2026-08-28")[0];
-    store.setOccurrenceStatus(monday.id, "completed");
-    store.setOccurrenceStatus(wednesday.id, "not_completed");
-    store.setOccurrenceStatus(friday.id, "cancelled");
-
     store.applyWeeklyToWeek("weekly", "2026-08-26", weekly({
         weekdays: [1, 2, 3, 5],
         weekdayTimeOverrides: { "2": { startTime: "10:00", endTime: "11:00" } },
@@ -108,16 +108,17 @@ for (const [kind, type] of [
 }
 
 {
-    const store = createPlannerStore([item("weekly")], [], "2026-08-24");
+    const store = createPlannerStore([item("weekly")], [
+        { planItemId: "weekly", date: "2026-08-26", status: "completed" },
+        { planItemId: "weekly", date: "2026-08-28", status: "not_completed" },
+        { planItemId: "weekly", date: "2026-08-31", status: "in_progress" },
+        { planItemId: "weekly", date: "2026-09-02", status: "cancelled" },
+    ], "2026-08-24");
     const past = store.getOccurrencesForDate("2026-08-24")[0];
     const completed = store.getOccurrencesForDate("2026-08-26")[0];
     const notCompleted = store.getOccurrencesForDate("2026-08-28")[0];
     const inProgress = store.getOccurrencesForDate("2026-08-31")[0];
     const cancelled = store.getOccurrencesForDate("2026-09-02")[0];
-    store.setOccurrenceStatus(completed.id, "completed");
-    store.setOccurrenceStatus(notCompleted.id, "not_completed");
-    store.setOccurrenceStatus(inProgress.id, "in_progress");
-    store.setOccurrenceStatus(cancelled.id, "cancelled");
     const horizon = store.getMaterializedThrough();
     const result = store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({
         weekdays: [2, 4], defaultStartTime: "10:00", defaultEndTime: "11:00",
