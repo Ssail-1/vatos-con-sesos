@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="es">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="Prototipo de matriz mensual para el Gestor de Hábitos"
+        />
+        <title>Gestor de Hábitos</title>
+        <link rel="icon" href="data:," />
+        <link rel="stylesheet" href="./css/gestor_habitos.css" />
+        <script type="module" src="./js/app.js"></script>
+    </head>
+    <body>
+        <main class="habit-tracker">
+            <header class="page-header">
+                <div class="page-identity">
+                    <p class="eyebrow">Organizador personal</p>
+                    <h1>Hábitos</h1>
+                </div>
+
+                <a
+                    class="home-link"
+                    href="../../index.html"
+                    aria-label="Volver a la página principal de Vatos con Sesos"
+                >
+                    <span aria-hidden="true">⌂</span>
+                    <span class="home-link-full">Vatos con Sesos</span>
+                    <span class="home-link-compact">VCS</span>
+                </a>
+
+                <div class="month-heading">
+                    <span>Mes actual</span>
+                    <div class="month-heading-controls">
+                        <button id="compactPreviousMonthButton" class="compact-month-navigation-button" type="button" aria-label="Mes anterior">‹</button>
+                        <span class="month-picker-anchor">
+                            <button id="monthPickerButton" class="picker-trigger" type="button" aria-label="Seleccionar mes">
+                                <strong id="monthName" aria-live="polite"></strong>
+                            </button>
+                            <input id="monthPicker" class="month-picker-input" type="month" aria-label="Seleccionar mes" tabindex="-1" />
+                        </span>
+                        <button id="compactNextMonthButton" class="compact-month-navigation-button" type="button" aria-label="Mes siguiente">›</button>
+                    </div>
+                </div>
+            </header>
+
+            <section class="compact-date-navigation" aria-label="Fecha seleccionada">
+                <button id="previousDayButton" class="date-navigation-button" type="button">
+                    <span aria-hidden="true">‹</span>
+                    <span class="visually-hidden">Día anterior</span>
+                </button>
+                <button id="datePickerButton" class="picker-trigger selected-date-trigger" type="button">
+                    <span id="selectedDateLabel" aria-live="polite"></span>
+                </button>
+                <input id="datePicker" class="native-picker" type="date" aria-label="Seleccionar fecha" />
+                <button id="nextDayButton" class="date-navigation-button" type="button">
+                    <span aria-hidden="true">›</span>
+                    <span class="visually-hidden">Día siguiente</span>
+                </button>
+            </section>
+
+            <div class="planner-navigation-layout">
+                <button id="previousMonthButton" class="desktop-month-navigation-button" type="button" aria-label="Mes anterior">‹</button>
+                <div class="planner-content">
+            <section class="matrix-panel" aria-labelledby="matrixTitle">
+                <div class="matrix-introduction">
+                    <div class="matrix-title-group">
+                        <button id="toggleMonthRecordsButton" class="view-toggle-button" type="button" aria-pressed="false"></button>
+                        <div>
+                            <p class="section-kicker"><span class="desktop-kicker">Seguimiento mensual</span><span class="compact-kicker">Seguimiento diario</span></p>
+                            <h2 id="matrixTitle">Plan del día</h2>
+                        </div>
+                    </div>
+                    <div class="matrix-actions">
+                        <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
+                        <button id="addActivityButton" class="add-activity-button" type="button">
+                            <span aria-hidden="true">+</span> Agregar registro
+                        </button>
+                    </div>
+                </div>
+
+                <div class="matrix-container">
+                    <table class="activity-matrix">
+                        <caption class="visually-hidden">
+                            Actividades del mes actual y estado diario de cada una
+                        </caption>
+                        <thead id="matrixHead"></thead>
+                        <tbody id="matrixBody"></tbody>
+                    </table>
+                </div>
+                <p id="matrixFeedback" class="matrix-feedback" role="alert" aria-live="assertive" hidden></p>
+                <p id="emptyState" class="empty-state" hidden>No hay registros programados.</p>
+            </section>
+
+            <section class="status-legend" aria-labelledby="legendTitle">
+                <h2 id="legendTitle">Estados</h2>
+                <ul id="statusLegend"></ul>
+            </section>
+                </div>
+                <button id="nextMonthButton" class="desktop-month-navigation-button" type="button" aria-label="Mes siguiente">›</button>
+            </div>
+
+            <p class="memory-notice">Los cambios son temporales y se perderán al recargar la página.</p>
+        </main>
+
+        <dialog id="activityDialog" class="activity-dialog" aria-labelledby="activityDialogTitle">
+            <form id="activityForm" class="activity-form" novalidate>
+                <div class="dialog-heading">
+                    <p class="section-kicker">Plan del día</p>
+                    <h2 id="activityDialogTitle">Agregar actividad</h2>
+                    <p id="insertionReference" class="insertion-reference" hidden></p>
+                </div>
+
+                <div id="formErrors" class="form-errors" role="alert" aria-live="polite" hidden></div>
+
+                <div class="form-field">
+                    <label for="activityName">Nombre</label>
+                    <input
+                        id="activityName"
+                        name="name"
+                        type="text"
+                        maxlength="80"
+                        autocomplete="off"
+                        required
+                    />
+                </div>
+
+                <div class="classification-fields">
+                    <div class="form-field">
+                        <label for="planItemKind">Tipo de registro</label>
+                        <select id="planItemKind" name="kind" required>
+                            <option value="activity">Actividad</option>
+                            <option value="habit">Hábito</option>
+                        </select>
+                    </div>
+
+                    <div id="activitySubtypeField" class="form-field">
+                        <label for="planItemType">Subtipo de actividad</label>
+                        <select id="planItemType" name="itemType" required>
+                            <option value="anchor">Ancla</option>
+                            <option value="periodic" selected>Periódica</option>
+                            <option value="event">Evento</option>
+                            <option value="unexpected">Imprevista</option>
+                        </select>
+                    </div>
+
+                    <div id="habitSubtypeField" class="form-field subtype-summary" hidden>
+                        <span>Subtipo</span>
+                        <strong>Hábito programado</strong>
+                    </div>
+                </div>
+
+                <div class="form-field">
+                    <label for="scheduleMode">Programación</label>
+                    <select id="scheduleMode" name="scheduleMode"></select>
+                </div>
+
+                <div id="weeklyFields" class="schedule-fields" hidden>
+                    <div class="form-field"><label for="scheduleStartDate">Fecha inicial</label><input id="scheduleStartDate" name="startDate" type="date" /></div>
+                    <fieldset class="weekday-fieldset"><legend>Días de la semana</legend><div id="weekdayChoices" class="weekday-choices"></div></fieldset>
+                    <div class="time-fields">
+                        <div class="form-field"><label for="weeklyDefaultStartTime">Inicio general</label><input id="weeklyDefaultStartTime" name="weeklyDefaultStartTime" type="time" /></div>
+                        <div class="form-field"><label for="weeklyDefaultEndTime">Final general</label><input id="weeklyDefaultEndTime" name="weeklyDefaultEndTime" type="time" /></div>
+                    </div>
+                    <label class="checkbox-field"><input id="indefiniteSchedule" name="indefinite" type="checkbox" checked /> Indefinidamente</label>
+                    <div id="scheduleEndDateField" class="form-field" hidden><label for="scheduleEndDate">Fecha final</label><input id="scheduleEndDate" name="endDate" type="date" /></div>
+                    <details id="weekdayOverrides"><summary>Horarios diferentes por día</summary><div id="weekdayOverrideFields"></div></details>
+                </div>
+                <div id="intervalFields" class="schedule-fields" hidden><div class="form-field"><label for="intervalDays">Repetir cada</label><div class="inline-field"><input id="intervalDays" name="intervalDays" type="number" min="1" value="2" /><span>días</span></div></div></div>
+                <fieldset id="manualDatesField" class="manual-dates-fieldset" hidden>
+                    <legend>Fechas específicas</legend>
+                    <div id="manualDateEntries" class="manual-date-entries"></div>
+                    <button id="addManualDateButton" class="manual-date-add-button" type="button">
+                        <span aria-hidden="true">+</span> Agregar fecha
+                    </button>
+                </fieldset>
+                <div id="singleDateField" class="form-field"><label id="occurrenceDateLabel" for="occurrenceDate">Fecha</label><input id="occurrenceDate" name="date" type="date" required /></div>
+
+                <div id="occurrenceTimeFields" class="time-fields">
+                    <div class="form-field">
+                        <label for="occurrenceStartTime">Hora de inicio</label>
+                        <input id="occurrenceStartTime" name="startTime" type="time" required />
+                    </div>
+                    <div class="form-field">
+                        <label for="occurrenceEndTime">Hora de finalización</label>
+                        <input id="occurrenceEndTime" name="endTime" type="time" required />
+                    </div>
+                </div>
+
+                <fieldset id="recurrenceScopeField" class="scope-fieldset" hidden>
+                    <legend>Alcance del cambio recurrente</legend>
+                    <label><input type="radio" name="recurrenceScope" value="week" checked /> Aplicar solo esta semana</label>
+                    <label><input type="radio" name="recurrenceScope" value="future" /> Aplicar de aquí en adelante</label>
+                </fieldset>
+
+                <div class="dialog-actions">
+                    <button id="cancelActivityButton" class="secondary-button" type="button">
+                        Cancelar
+                    </button>
+                    <button class="primary-button" type="submit">Guardar</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog
+            id="overrideDialog"
+            class="override-dialog"
+            aria-labelledby="overrideDialogTitle"
+            aria-describedby="overrideConsequence"
+        >
+            <div class="override-dialog-content">
+                <div class="dialog-heading">
+                    <p class="section-kicker">Cambio de prioridad</p>
+                    <h2 id="overrideDialogTitle">Confirmar desplazamiento</h2>
+                </div>
+
+                <section class="override-candidate" aria-labelledby="overrideCandidateSummary">
+                    <h3 id="overrideCandidateSummary"></h3>
+                    <ul id="overrideCandidateOccurrences" class="override-schedule-list"></ul>
+                </section>
+
+                <section aria-labelledby="overrideConflictsTitle">
+                    <h3 id="overrideConflictsTitle">Registros que entran en conflicto</h3>
+                    <ul id="overrideConflictList" class="override-conflict-list"></ul>
+                </section>
+
+                <p id="overrideConsequence" class="override-consequence"></p>
+                <p id="overrideError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+
+                <div class="dialog-actions">
+                    <button id="overrideBackButton" class="secondary-button" type="button">Volver</button>
+                    <button id="overrideContinueButton" class="primary-button" type="button">Continuar</button>
+                </div>
+            </div>
+        </dialog>
+
+        <dialog
+            id="deletionDialog"
+            class="override-dialog deletion-dialog"
+            aria-labelledby="deletionDialogTitle"
+            aria-describedby="deletionSummary"
+        >
+            <div class="override-dialog-content">
+                <div class="dialog-heading">
+                    <p class="section-kicker">Gestión de planificación</p>
+                    <h2 id="deletionDialogTitle">Eliminar o detener</h2>
+                    <p id="deletionSummary" class="insertion-reference"></p>
+                </div>
+
+                <div class="deletion-options">
+                    <section class="deletion-option" aria-labelledby="deleteOccurrenceButton">
+                        <button id="deleteOccurrenceButton" class="destructive-button" type="button">
+                            Eliminar solo este día
+                        </button>
+                        <p id="deleteOccurrenceDetails"></p>
+                    </section>
+
+                    <section class="deletion-option" aria-labelledby="stopPlanningButton">
+                        <button id="stopPlanningButton" class="destructive-button" type="button">
+                            Detener de aquí en adelante
+                        </button>
+                        <p id="stopPlanningDetails"></p>
+                    </section>
+                </div>
+
+                <p id="deletionError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+
+                <div class="dialog-actions">
+                    <button id="deletionBackButton" class="secondary-button" type="button">Volver</button>
+                </div>
+            </div>
+        </dialog>
+    </body>
+</html>
