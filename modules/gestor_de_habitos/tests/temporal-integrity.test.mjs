@@ -10,20 +10,20 @@ import {
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
 import { buildPlannerRows } from "../js/views/planner-matrix.js";
 
-const single = (date, startTime = "08:00", endTime = "09:00") => ({ mode: "single_date", date, startTime, endTime });
+const explicitDate = (date, startTime = "08:00", endTime = "09:00") => ({ mode: "manual_dates", entries: [{ date, startTime, endTime }] });
 const activity = (id, date, startTime = "08:00", endTime = "09:00", activityType = "periodic") => ({
     id,
     name: id,
     kind: "activity",
     activityType,
-    generationConfig: single(date, startTime, endTime),
+    generationConfig: explicitDate(date, startTime, endTime),
 });
 const habit = (id, date, startTime, endTime) => ({
     id,
     name: id,
     kind: "habit",
     habitType: "scheduled",
-    generationConfig: single(date, startTime, endTime),
+    generationConfig: explicitDate(date, startTime, endTime),
 });
 const expectCode = (action, code) => assert.throws(
     action,
@@ -146,7 +146,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const store = createPlannerStore([activity("released-future", "2026-09-30", "08:00", "10:00")], [], "2026-09-29");
     const released = store.getOccurrencesForPlanItem("released-future")[0];
     store.setOccurrenceStatus(released.id, "cancelled");
-    store.addPlanItem({ name: "occupant", kind: "activity", activityType: "periodic", generationConfig: single("2026-09-30", "09:00", "09:30") });
+    store.addPlanItem({ name: "occupant", kind: "activity", activityType: "periodic", generationConfig: explicitDate("2026-09-30", "09:00", "09:30") });
     expectCode(() => store.advanceOccurrenceStatus(released.id), "time_conflict");
     assert.equal(store.getOccurrenceById(released.id).status, "cancelled", "el futuro no usa fallback histórico");
 }
@@ -154,7 +154,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
 {
     const store = createPlannerStore([activity("lower-pending", "2026-09-29", "08:00", "10:00")], [], "2026-09-29");
     const lower = store.getOccurrencesForPlanItem("lower-pending")[0];
-    const prepared = store.preparePlanItemCreation({ name: "higher-event", kind: "activity", activityType: "event", generationConfig: single("2026-09-29", "09:00", "09:30") });
+    const prepared = store.preparePlanItemCreation({ name: "higher-event", kind: "activity", activityType: "event", generationConfig: explicitDate("2026-09-29", "09:00", "09:30") });
     const result = store.commitPreparedScheduleChange(prepared);
     const displaced = store.getOccurrenceById(lower.id);
     assert.equal(displaced.status, "cancelled", "la geometría no inventa que pending había comenzado");
@@ -166,7 +166,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
 {
     const store = createPlannerStore([activity("correctable-interruption", "2026-09-29", "08:00", "10:00")], [], "2026-09-29");
     const lower = store.getOccurrencesForPlanItem("correctable-interruption")[0];
-    const prepared = store.preparePlanItemCreation({ name: "interrupting-event", kind: "activity", activityType: "event", generationConfig: single("2026-09-29", "09:00", "09:30") });
+    const prepared = store.preparePlanItemCreation({ name: "interrupting-event", kind: "activity", activityType: "event", generationConfig: explicitDate("2026-09-29", "09:00", "09:30") });
     store.commitPreparedScheduleChange(prepared);
     assert.equal(store.advanceOccurrenceStatus(lower.id).status, "not_completed");
     assert.equal(store.advanceOccurrenceStatus(lower.id).status, "not_finished");
@@ -179,7 +179,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const store = createPlannerStore([activity("lower-progress", "2026-09-29", "08:00", "10:00")], [], "2026-09-29");
     const lower = store.getOccurrencesForPlanItem("lower-progress")[0];
     store.setOccurrenceStatus(lower.id, "in_progress");
-    const prepared = store.preparePlanItemCreation({ name: "higher-unexpected", kind: "activity", activityType: "unexpected", generationConfig: single("2026-09-29", "09:00", "09:30") });
+    const prepared = store.preparePlanItemCreation({ name: "higher-unexpected", kind: "activity", activityType: "unexpected", generationConfig: explicitDate("2026-09-29", "09:00", "09:30") });
     store.commitPreparedScheduleChange(prepared);
     const displaced = store.getOccurrenceById(lower.id);
     assert.equal(displaced.status, "not_finished");
@@ -200,7 +200,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const completed = store.getOccurrencesForPlanItem("protected")[0];
     store.setOccurrenceStatus(completed.id, "completed");
     expectCode(
-        () => store.preparePlanItemCreation({ name: "unexpected", kind: "activity", activityType: "unexpected", generationConfig: single("2026-09-29", "09:00", "09:30") }),
+        () => store.preparePlanItemCreation({ name: "unexpected", kind: "activity", activityType: "unexpected", generationConfig: explicitDate("2026-09-29", "09:00", "09:30") }),
         "completed_conflict",
     );
     assert.equal(store.getOccurrenceById(completed.id).status, "completed");
@@ -218,7 +218,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
         assert.equal(blocksSchedule(updated), false);
     }
     assert.equal(buildPlannerRows(store.getPlanItems(), store.getOccurrences(), "2026-09-29", false).length, 2);
-    store.addPlanItem({ name: "uses-released-time", kind: "activity", activityType: "periodic", generationConfig: single("2026-09-29", "08:15", "08:45") });
+    store.addPlanItem({ name: "uses-released-time", kind: "activity", activityType: "periodic", generationConfig: explicitDate("2026-09-29", "08:15", "08:45") });
 }
 
 {

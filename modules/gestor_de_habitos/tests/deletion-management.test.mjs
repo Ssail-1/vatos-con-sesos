@@ -23,8 +23,8 @@ function planItem(id, generationConfig = weeklyConfig(), activityType = "periodi
     return { id, name: id, kind: "activity", activityType, generationConfig };
 }
 
-function singleConfig(date, startTime = "08:00", endTime = "09:00", controls = {}) {
-    return { mode: "single_date", date, startTime, endTime, ...controls };
+function explicitDateConfig(date, startTime = "08:00", endTime = "09:00", controls = {}) {
+    return { mode: "manual_dates", entries: [{ date, startTime, endTime }], ...controls };
 }
 
 function expectCode(action, code) {
@@ -98,7 +98,7 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
     const store = createPlannerStore([planItem("restore-conflict")], [], REFERENCE_DATE);
     const deleted = occurrenceFor(store, "restore-conflict", REFERENCE_DATE);
     store.deleteOccurrenceForDate(deleted.id);
-    store.addPlanItem(planItem("occupant", singleConfig(REFERENCE_DATE)));
+    store.addPlanItem(planItem("occupant", explicitDateConfig(REFERENCE_DATE)));
     expectCode(
         () => store.prepareOccurrenceAddition("restore-conflict", {
             date: REFERENCE_DATE,
@@ -233,7 +233,7 @@ const modeCases = [
             { date: "2026-10-03", startTime: "08:00", endTime: "09:00" },
         ],
     }],
-    ["single", singleConfig("2026-10-03")],
+    ["explicit", explicitDateConfig("2026-10-03")],
 ];
 for (const [id, config] of modeCases) {
     const store = createPlannerStore([planItem(`mode-${id}`, config)], [], REFERENCE_DATE);
@@ -308,14 +308,14 @@ for (const [id, config] of modeCases) {
 // La procedencia de prioridad se preserva en historia retenida y la occurrence superior no se toca.
 {
     const store = createPlannerStore(
-        [planItem("lower", singleConfig(REFERENCE_DATE, "08:00", "10:00"))],
+        [planItem("lower", explicitDateConfig(REFERENCE_DATE, "08:00", "10:00"))],
         [],
         REFERENCE_DATE,
     );
     const lower = occurrenceFor(store, "lower", REFERENCE_DATE);
     store.setOccurrenceStatus(lower.id, "in_progress");
     const prepared = store.preparePlanItemCreation(
-        planItem("higher", singleConfig(REFERENCE_DATE, "09:00", "09:30"), "event"),
+        planItem("higher", explicitDateConfig(REFERENCE_DATE, "09:00", "09:30"), "event"),
     );
     const higherResult = store.commitPreparedScheduleChange(prepared);
     const interrupted = store.getOccurrenceById(lower.id);
@@ -329,13 +329,13 @@ for (const [id, config] of modeCases) {
 {
     const futureDate = "2026-09-30";
     const store = createPlannerStore(
-        [planItem("future-lower", singleConfig(futureDate, "08:00", "10:00"))],
+        [planItem("future-lower", explicitDateConfig(futureDate, "08:00", "10:00"))],
         [],
         REFERENCE_DATE,
     );
     const lower = occurrenceFor(store, "future-lower", futureDate);
     const prepared = store.preparePlanItemCreation(
-        planItem("future-higher", singleConfig(futureDate, "09:00", "09:30"), "event"),
+        planItem("future-higher", explicitDateConfig(futureDate, "09:00", "09:30"), "event"),
     );
     const higherResult = store.commitPreparedScheduleChange(prepared);
     assert.equal(store.getOccurrenceById(lower.id).status, "cancelled");

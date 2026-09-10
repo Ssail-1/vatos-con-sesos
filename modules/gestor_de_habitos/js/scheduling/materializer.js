@@ -101,12 +101,6 @@ export function validateGenerationConfig(config) {
         return;
     }
 
-    if (config.mode === "single_date") {
-        if (!isValidDateKey(config.date)) throw new MaterializationError("La fecha única no es válida.");
-        assertTimeRange(config.startTime, config.endTime);
-        return;
-    }
-
     throw new MaterializationError("El modo de generación no es válido.");
 }
 
@@ -163,9 +157,6 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
             .filter((entry) => isDateInRange(entry.date, rangeStart, rangeEnd))
             .map((entry) => makeDraft(planItem.id, entry.date, entry.startTime, entry.endTime));
     }
-    if (config.mode === "single_date" && isDateInRange(config.date, rangeStart, rangeEnd)) {
-        drafts = [makeDraft(planItem.id, config.date, config.startTime, config.endTime)];
-    }
     const excludedDates = new Set(config.excludedDates ?? []);
     return drafts.filter(({ date }) =>
         !excludedDates.has(date) &&
@@ -176,7 +167,6 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
 export function getLatestExplicitDate(planItems) {
     const dates = planItems.flatMap((planItem) => {
         const config = planItem.generationConfig;
-        if (config?.mode === "single_date") return [config.date];
         if (config?.mode === "manual_dates") return config.entries.map((entry) => entry.date);
         return [];
     });

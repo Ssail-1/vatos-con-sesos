@@ -84,7 +84,7 @@ for (const itemType of ["event", "periodic"]) {
         name: "Evento existente",
         kind: "activity",
         activityType: "event",
-        generationConfig: { mode: "single_date", date: entryB.date, startTime: "16:30", endTime: "17:00" },
+        generationConfig: { mode: "manual_dates", entries: [{ date: entryB.date, startTime: "16:30", endTime: "17:00" }] },
     };
     const store = createPlannerStore([existingEvent], [], "2026-08-28");
     const beforeItems = store.getPlanItems();

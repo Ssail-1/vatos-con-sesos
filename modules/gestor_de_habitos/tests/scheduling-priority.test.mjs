@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { getSchedulingPriority, SCHEDULING_PRIORITY } from "../js/domain/scheduling-priority.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
 
-const single = (date, startTime, endTime) => ({ mode: "single_date", date, startTime, endTime });
+const explicitDate = (date, startTime, endTime) => ({ mode: "manual_dates", entries: [{ date, startTime, endTime }] });
 const plan = (id, type, startTime = "08:00", endTime = "10:00", date = "2026-08-27") => ({
-    id, name: id, kind: "activity", activityType: type, generationConfig: single(date, startTime, endTime),
+    id, name: id, kind: "activity", activityType: type, generationConfig: explicitDate(date, startTime, endTime),
 });
 const draft = (name, type, startTime = "09:00", endTime = "09:30", date = "2026-08-27") => ({
-    name, kind: "activity", activityType: type, generationConfig: single(date, startTime, endTime),
+    name, kind: "activity", activityType: type, generationConfig: explicitDate(date, startTime, endTime),
 });
 const expectCode = (action, code) => assert.throws(action, (error) => error instanceof PlannerStoreError && error.code === code);
 

@@ -14,7 +14,13 @@ const base = {
 assert.deepEqual(validateFormValues({ ...base, scheduleMode: "weekly" }).generationConfig.weekdays, [1, 3, 5]);
 assert.equal(validateFormValues({ ...base, scheduleMode: "interval_days" }).generationConfig.intervalDays, 3);
 assert.equal(validateFormValues({ ...base, scheduleMode: "manual_dates" }).generationConfig.entries.length, 2);
-assert.equal(validateFormValues({ ...base, scheduleMode: "single_date", itemType: "event" }).generationConfig.mode, "single_date");
+assert.deepEqual(
+    validateFormValues({ ...base, scheduleMode: "explicit_date", itemType: "event" }).generationConfig,
+    {
+        mode: "manual_dates",
+        entries: [{ date: "2026-08-24", startTime: "08:00", endTime: "09:00" }],
+    },
+);
 assert.equal(validateFormValues({ ...base, scheduleMode: "weekly", weekdays: [] }).errors[0].field, "scheduleMode");
 assert.deepEqual(normalizeWeekdayOverride("08:00", "09:00", "10:00", "11:00"), { startTime: "10:00", endTime: "11:00" });
 assert.deepEqual(normalizeWeekdayOverride("08:00", "09:00", "10:30", "11:30"), { startTime: "10:30", endTime: "11:30" });

@@ -7,8 +7,8 @@ function activity(id, generationConfig, activityType = "periodic") {
     return { id, name: id, kind: "activity", activityType, generationConfig };
 }
 
-function single(date, startTime, endTime) {
-    return { mode: "single_date", date, startTime, endTime };
+function explicitDate(date, startTime, endTime) {
+    return { mode: "manual_dates", entries: [{ date, startTime, endTime }] };
 }
 
 function weekly(overrides = {}) {
@@ -69,10 +69,10 @@ function expectStoreError(action, code) {
             { date: "2026-11-20", startTime: "16:00", endTime: "17:30" },
         ],
     });
-    const singleItem = activity("single", single("2027-07-10", "09:00", "23:00"), "event");
+    const explicitItem = activity("explicit", explicitDate("2027-07-10", "09:00", "23:00"), "event");
     assert.equal(materializeOccurrenceDrafts(manual, "2026-01-01", "2026-12-31").length, 2);
-    assert.equal(materializeOccurrenceDrafts(singleItem, "2027-01-01", "2027-12-31").length, 1);
-    assert.equal(materializeOccurrenceDrafts(singleItem, "2026-01-01", "2026-12-31").length, 0);
+    assert.equal(materializeOccurrenceDrafts(explicitItem, "2027-01-01", "2027-12-31").length, 1);
+    assert.equal(materializeOccurrenceDrafts(explicitItem, "2026-01-01", "2026-12-31").length, 0);
 }
 
 assert.throws(() => validateGenerationConfig(weekly({ weekdays: [1, 1, 3] })));
@@ -109,7 +109,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Fecha histórica explícita",
         kind: "activity",
         activityType: "event",
-        generationConfig: single("2026-01-15", "10:00", "11:00"),
+        generationConfig: explicitDate("2026-01-15", "10:00", "11:00"),
     });
     assert.equal(historical.occurrences[0].date, "2026-01-15");
 }
@@ -120,7 +120,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Primera",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: single("2026-08-24", "08:00", "10:00"),
+        generationConfig: explicitDate("2026-08-24", "08:00", "10:00"),
     });
     const firstOccurrence = first.occurrences[0];
     store.setOccurrenceStatus(firstOccurrence.id, "completed");
@@ -130,7 +130,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
                 name: "Superpuesta",
                 kind: "activity",
                 activityType: "periodic",
-                generationConfig: single("2026-08-24", "09:00", "09:30"),
+                generationConfig: explicitDate("2026-08-24", "09:00", "09:30"),
             }),
         "time_conflict",
     );
@@ -142,7 +142,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
                 name: "También superpuesta",
                 kind: "activity",
                 activityType: "periodic",
-                generationConfig: single("2026-08-24", "09:15", "09:45"),
+                generationConfig: explicitDate("2026-08-24", "09:15", "09:45"),
             }),
         "time_conflict",
     );
@@ -151,7 +151,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Segunda",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: single("2026-08-24", "09:00", "09:30"),
+        generationConfig: explicitDate("2026-08-24", "09:00", "09:30"),
     });
     assert.equal(second.occurrences.length, 1);
     expectStoreError(() => store.setOccurrenceStatus(firstOccurrence.id, "pending"), "time_conflict");
@@ -167,7 +167,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Occurrence A",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: single("2026-08-24", "05:30", "07:30"),
+        generationConfig: explicitDate("2026-08-24", "05:30", "07:30"),
     }).occurrences[0];
     store.setOccurrenceStatus(released.id, "not_completed");
 
@@ -175,7 +175,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Occurrence B",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: single("2026-08-24", "06:00", "06:30"),
+        generationConfig: explicitDate("2026-08-24", "06:00", "06:30"),
     }).occurrences[0];
 
     assert.equal(store.advanceOccurrenceStatus(released.id).status, "not_finished");
@@ -227,7 +227,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Evento futuro",
         kind: "activity",
         activityType: "event",
-        generationConfig: single("2027-07-10", "15:00", "16:00"),
+        generationConfig: explicitDate("2027-07-10", "15:00", "16:00"),
     });
     assert.equal(store.getMaterializedThrough(), "2027-07-31");
     assert.ok(store.getOccurrencesForPlanItem("recurring").some(({ date }) => date.startsWith("2027-07")));
@@ -239,7 +239,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Contrato",
         kind: "habit",
         habitType: "scheduled",
-        generationConfig: single("2026-08-23", "12:00", "12:15"),
+        generationConfig: explicitDate("2026-08-23", "12:00", "12:15"),
     });
     assert.deepEqual(Object.keys(result.planItem).sort(), ["generationConfig", "habitType", "id", "kind", "name"]);
     assert.deepEqual(

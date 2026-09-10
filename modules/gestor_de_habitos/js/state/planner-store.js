@@ -162,9 +162,6 @@ function getConfiguredMaterializationRange(planItem, fallbackStart, fallbackEnd)
     if (config.mode === "weekly" || config.mode === "interval_days") {
         return { rangeStart: config.startDate, rangeEnd: config.endDate };
     }
-    if (config.mode === "single_date") {
-        return { rangeStart: config.date, rangeEnd: config.date };
-    }
     const dates = config.entries.map((entry) => entry.date).sort();
     return { rangeStart: dates[0], rangeEnd: dates.at(-1) };
 }

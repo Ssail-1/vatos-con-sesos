@@ -2,6 +2,7 @@ import { isValidClassification } from "../domain/plan-item-classification.js";
 import { getIsoWeekday, isValidDateKey, isValidTimeRange } from "../utils/date-time.js";
 
 const WEEKDAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const EXPLICIT_DATE_UI_MODE = "explicit_date";
 
 function cloneConfig(config) {
     if (config?.mode === "weekly") return { ...config, weekdays: [...config.weekdays], weekdayTimeOverrides: Object.fromEntries(Object.entries(config.weekdayTimeOverrides).map(([key, value]) => [key, { ...value }])) };
@@ -90,10 +91,16 @@ export function validateFormValues(values) {
                 errors.push({ field: `manualEndTime_${index}`, message: `El horario de la fecha ${index + 1} no es válido.` });
             }
         });
-    } else {
-        generationConfig = { mode: "single_date", date: values.date, startTime: values.startTime, endTime: values.endTime };
+    } else if (values.scheduleMode === EXPLICIT_DATE_UI_MODE) {
+        generationConfig = {
+            mode: "manual_dates",
+            entries: [{ date: values.date, startTime: values.startTime, endTime: values.endTime }],
+        };
         if (!isValidDateKey(values.date)) errors.push({ field: "date", message: "Selecciona una fecha válida." });
         if (!isValidTimeRange(values.startTime, values.endTime)) errors.push({ field: "endTime", message: "La hora final debe ser posterior a la inicial." });
+    } else {
+        generationConfig = null;
+        errors.push({ field: "scheduleMode", message: "Selecciona una programación válida." });
     }
     if (values.validateOccurrence && values.scheduleMode === "weekly" && !isValidTimeRange(values.startTime, values.endTime)) {
         errors.push({ field: "endTime", message: "El horario del día seleccionado no es válido." });
@@ -106,7 +113,7 @@ export function createPlanItemFormView(options) {
         activityTypeField, habitTypeField, dateInput, occurrenceDateLabel, startTimeInput, endTimeInput, scheduleMode,
         weeklyFields, scheduleStartDate, weekdayChoices, weeklyDefaultStartTime, weeklyDefaultEndTime,
         indefiniteSchedule, scheduleEndDateField, scheduleEndDate, weekdayOverrides, weekdayOverrideFields,
-        intervalFields, intervalDays, manualDatesField, manualDateEntries, addManualDateButton, singleDateField, occurrenceTimeFields,
+        intervalFields, intervalDays, manualDatesField, manualDateEntries, addManualDateButton, explicitDateField, occurrenceTimeFields,
         recurrenceScopeField, cancelButton, fallbackFocusElement, onValidate, onSubmit, onFallbackFocus } = options;
     const submitButton = form.querySelector("button[type='submit']");
     let formContext = { mode: "create" };
@@ -198,10 +205,11 @@ export function createPlanItemFormView(options) {
     }
 
     function allowedModes() {
+        if (formContext.mode === "insert_before") return [[EXPLICIT_DATE_UI_MODE, "Una fecha"]];
         if (kindInput.value === "habit" || itemTypeInput.value === "anchor") return [["weekly", "Días de la semana"]];
         if (itemTypeInput.value === "periodic") return [["weekly", "Días de la semana"], ["interval_days", "Cada N días"], ["manual_dates", "Fechas específicas"]];
-        if (itemTypeInput.value === "event") return [["single_date", "Una fecha"], ["manual_dates", "Fechas específicas"]];
-        return [["single_date", "Una fecha"]];
+        if (itemTypeInput.value === "event") return [[EXPLICIT_DATE_UI_MODE, "Una fecha"], ["manual_dates", "Fechas específicas"]];
+        return [[EXPLICIT_DATE_UI_MODE, "Una fecha"]];
     }
 
     function saveEditedWeekday() {
@@ -305,12 +313,17 @@ export function createPlanItemFormView(options) {
                 defaultEndTime: endTimeInput.value,
             };
         }
-        return {
-            mode: "single_date",
-            date: dateInput.value,
-            startTime: startTimeInput.value,
-            endTime: endTimeInput.value,
-        };
+        if (scheduleMode.value === EXPLICIT_DATE_UI_MODE) {
+            return {
+                mode: "manual_dates",
+                entries: [{
+                    date: dateInput.value,
+                    startTime: startTimeInput.value,
+                    endTime: endTimeInput.value,
+                }],
+            };
+        }
+        return null;
     }
 
     function currentConfigWithoutSaving() {
@@ -348,7 +361,7 @@ export function createPlanItemFormView(options) {
             renderManualDateEntries();
         }
         const weeklyEdit = ["edit", "edit_without_occurrence"].includes(formContext.mode) && mode === "weekly";
-        singleDateField.hidden = mode !== "single_date" && !weeklyEdit;
+        explicitDateField.hidden = mode !== EXPLICIT_DATE_UI_MODE && !weeklyEdit;
         occurrenceTimeFields.hidden = mode === "manual_dates" || mode === "weekly" && !weeklyEdit;
         updateScopeVisibility();
     }
@@ -386,13 +399,16 @@ export function createPlanItemFormView(options) {
             editingWeekday = activeWeekdays.has(occurrenceWeekday) ? occurrenceWeekday : null;
             renderWeekdays();
         } else if (config.mode === "manual_dates") {
-            originalGenerationConfig = cloneConfig(config);
             manualDateDraft = createManualDateDraft(config.entries);
             renderManualDateEntries();
-            updateSchedule(config.mode);
+            const usesExplicitDateUi = config.entries.length === 1 && allowedModes().some(
+                ([mode]) => mode === EXPLICIT_DATE_UI_MODE,
+            );
+            originalGenerationConfig = usesExplicitDateUi ? null : cloneConfig(config);
+            updateSchedule(usesExplicitDateUi ? EXPLICIT_DATE_UI_MODE : config.mode);
         } else {
             originalGenerationConfig = null;
-            updateSchedule("single_date");
+            updateSchedule();
         }
     }
 
@@ -404,7 +420,6 @@ export function createPlanItemFormView(options) {
             };
         }
         if (config?.mode === "interval_days") return { startTime: config.defaultStartTime, endTime: config.defaultEndTime };
-        if (config?.mode === "single_date") return { startTime: config.startTime, endTime: config.endTime };
         if (config?.mode === "manual_dates") {
             const entry = config.entries.find((candidate) => candidate.date === date) ?? config.entries[0];
             return entry ? { startTime: entry.startTime, endTime: entry.endTime } : { startTime: "", endTime: "" };
@@ -437,7 +452,7 @@ export function createPlanItemFormView(options) {
             referenceMessage.hidden = false;
             updateScopeVisibility();
         }
-        if (context.mode === "insert_before") { updateSchedule("single_date"); startTimeInput.value = context.suggestedStartTime; endTimeInput.value = context.referenceOccurrence.startTime; }
+        if (context.mode === "insert_before") { updateSchedule(EXPLICIT_DATE_UI_MODE); startTimeInput.value = context.suggestedStartTime; endTimeInput.value = context.referenceOccurrence.startTime; }
         dialog.showModal(); nameInput.focus();
     }
 

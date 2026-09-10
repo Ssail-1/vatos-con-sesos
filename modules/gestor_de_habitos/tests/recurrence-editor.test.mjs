@@ -87,7 +87,7 @@ for (const [kind, type] of [
 {
     const store = createPlannerStore([
         item("weekly"),
-        item("blocker", { mode: "single_date", date: "2026-08-25", startTime: "10:30", endTime: "11:30" }),
+        item("blocker", { mode: "manual_dates", entries: [{ date: "2026-08-25", startTime: "10:30", endTime: "11:30" }] }),
     ], [], "2026-08-24");
     const before = store.getOccurrences();
     expectError(() => store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ weekdays: [1, 2, 3, 5], weekdayTimeOverrides: { "2": { startTime: "10:00", endTime: "11:00" } } })), "time_conflict");
@@ -140,7 +140,7 @@ for (const [kind, type] of [
 {
     const store = createPlannerStore([
         item("weekly"),
-        item("blocker", { mode: "single_date", date: "2026-08-27", startTime: "10:30", endTime: "11:30" }),
+        item("blocker", { mode: "manual_dates", entries: [{ date: "2026-08-27", startTime: "10:30", endTime: "11:30" }] }),
     ], [], "2026-08-24");
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();

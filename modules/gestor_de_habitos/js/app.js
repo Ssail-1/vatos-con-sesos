@@ -19,7 +19,7 @@ const elements = Object.fromEntries([
     "occurrenceStartTime", "occurrenceEndTime", "cancelActivityButton", "scheduleMode", "weeklyFields",
     "scheduleStartDate", "weekdayChoices", "indefiniteSchedule", "scheduleEndDateField", "scheduleEndDate",
     "weekdayOverrides", "weekdayOverrideFields", "weeklyDefaultStartTime", "weeklyDefaultEndTime",
-    "intervalFields", "intervalDays", "manualDatesField", "manualDateEntries", "addManualDateButton", "singleDateField",
+    "intervalFields", "intervalDays", "manualDatesField", "manualDateEntries", "addManualDateButton", "explicitDateField",
     "occurrenceTimeFields", "recurrenceScopeField", "overrideDialog", "overrideCandidateSummary",
     "overrideCandidateOccurrences", "overrideConflictList", "overrideConsequence", "overrideError",
     "overrideBackButton", "overrideContinueButton",
