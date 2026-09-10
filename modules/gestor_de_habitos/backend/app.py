@@ -3,6 +3,7 @@
 from flask import Flask, jsonify
 
 import database
+import planner_state_service
 from repositories import plan_item_repository
 
 
@@ -48,6 +49,23 @@ def get_plan_items():
             message="No se pudieron obtener los PlanItems.",
         ), 503
     return jsonify([serialize_plan_item(plan_item) for plan_item in plan_items])
+
+
+@app.get("/api/planner-state")
+def get_planner_state():
+    try:
+        planner_state = planner_state_service.get_planner_state()
+    except planner_state_service.PlannerStateUnavailableError:
+        return jsonify(
+            status="error",
+            message="No se pudo cargar el estado del planner.",
+        ), 503
+    except planner_state_service.PlannerStateConsistencyError:
+        return jsonify(
+            status="error",
+            message="El estado persistido del planner no es válido.",
+        ), 500
+    return jsonify(planner_state)
 
 
 if __name__ == "__main__":

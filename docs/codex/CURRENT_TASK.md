@@ -1,39 +1,40 @@
 # CURRENT TASK
 
-## MVP 05.2 — Persistent PlanItem read
+## MVP 05.3 — Persistent planner state read
 
 ### Objetivo
 
-Introducir la primera lectura real del dominio desde PostgreSQL mediante
-el backend Flask.
+Reconstruir desde PostgreSQL el estado persistente completo que necesita
+el Gestor de hábitos.
 
 ### Alcance
 
-- Crear una capa repository mínima para PlanItems.
-- Leer PlanItems desde PostgreSQL.
-- Exponer `GET /api/plan-items`.
-- Serializar correctamente UUID y timestamps.
-- Mantener disponibles los health checks existentes.
-- Agregar pruebas del repository y del endpoint cuando sea posible.
+- Leer PlanItems.
+- Leer generation_configs.
+- Leer generation_weekdays.
+- Leer generation_date_entries.
+- Leer generation_excluded_dates.
+- Leer occurrences.
+- Reconstruir la forma de dominio que actualmente consume el frontend.
+- Exponer GET /api/planner-state.
+- Mantener los endpoints existentes.
+- Detectar datos relacionales incompletos sin inventarlos.
 
 ### Fuera de alcance
 
-- Crear, editar o eliminar PlanItems.
-- Persistir generationConfig.
-- Persistir occurrences.
-- Conectar todavía el frontend con la API.
+- Escrituras POST/PATCH/DELETE.
+- Integración frontend.
 - Sustituir planner-store.js.
+- Materialización desde API.
 - Autenticación.
 - Multiusuario.
 - Supabase.
 - Deployment.
-- Cambios de esquema salvo defecto real detectado.
 
 ### Restricciones
 
-- SQL parametrizado cuando existan parámetros.
-- No hardcodear credenciales.
-- app.py coordina HTTP.
-- El acceso SQL debe vivir fuera de las vistas/rutas.
-- No introducir ORM ni SQLAlchemy.
-- Mantener arquitectura mínima.
+- PostgreSQL es la fuente persistente.
+- El contrato debe respetar el modelo actual del frontend.
+- No duplicar fuentes de verdad.
+- No modificar migraciones salvo defecto real.
+- No introducir ORM.
