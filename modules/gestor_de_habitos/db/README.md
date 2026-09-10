@@ -15,3 +15,6 @@ Las migraciones viven en:
 
 ```text
 db/migrations/
+├── 001_initial_schema.sql
+└── 002_fix_occurrence_status_context.sql
+```
