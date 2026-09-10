@@ -1,14 +1,18 @@
 """Pruebas sin PostgreSQL ni credenciales: unittest de la biblioteca estándar."""
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import psycopg
+from psycopg.rows import dict_row
 
 from app import app
 import database
+from repositories import plan_item_repository
 
 
 class DatabaseTests(unittest.TestCase):
@@ -70,6 +74,50 @@ class DatabaseTests(unittest.TestCase):
                 database.check_connection()
 
 
+class PlanItemRepositoryTests(unittest.TestCase):
+    def test_list_plan_items_queries_table_in_deterministic_order(self):
+        rows = [
+            {
+                "id": UUID("00000000-0000-0000-0000-000000000001"),
+                "name": "Meditar",
+                "kind": "habit",
+                "subtype": "scheduled",
+                "created_at": datetime(2026, 9, 10, 8, 30, tzinfo=timezone.utc),
+            }
+        ]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor_context = connection.cursor.return_value
+        cursor = cursor_context.__enter__.return_value
+        cursor.fetchall.return_value = rows
+
+        with patch.object(database, "get_connection", return_value=connection):
+            result = plan_item_repository.list_plan_items()
+
+        self.assertEqual(result, rows)
+        connection.cursor.assert_called_once_with(row_factory=dict_row)
+        query = cursor.execute.call_args.args[0]
+        self.assertIn("FROM public.plan_items", query)
+        self.assertIn("ORDER BY created_at, id", query)
+        cursor_context.__exit__.assert_called_once()
+        connection.__exit__.assert_called_once()
+
+    def test_query_errors_are_sanitized_and_resources_are_closed(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor_context = connection.cursor.return_value
+        cursor = cursor_context.__enter__.return_value
+        cursor.execute.side_effect = psycopg.OperationalError("PRIVATE_QUERY_DETAIL")
+
+        with patch.object(database, "get_connection", return_value=connection):
+            with self.assertRaises(plan_item_repository.PlanItemRepositoryError) as error:
+                plan_item_repository.list_plan_items()
+
+        self.assertNotIn("PRIVATE_QUERY_DETAIL", str(error.exception))
+        cursor_context.__exit__.assert_called_once()
+        connection.__exit__.assert_called_once()
+
+
 class HealthTests(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
@@ -103,6 +151,72 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertTrue(response.is_json)
         connect.assert_not_called()
+
+
+class PlanItemEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app.test_client()
+
+    def test_plan_items_serializes_uuid_and_timestamp(self):
+        plan_items = [
+            {
+                "id": UUID("00000000-0000-0000-0000-000000000001"),
+                "name": "Meditar",
+                "kind": "habit",
+                "subtype": "scheduled",
+                "created_at": datetime(
+                    2026, 9, 10, 8, 30, 45, 123456, tzinfo=timezone.utc
+                ),
+            }
+        ]
+        with patch.object(
+            plan_item_repository, "list_plan_items", return_value=plan_items
+        ) as list_items:
+            response = self.client.get("/api/plan-items")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json(),
+            [
+                {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Meditar",
+                    "kind": "habit",
+                    "subtype": "scheduled",
+                    "created_at": "2026-09-10T08:30:45.123456+00:00",
+                }
+            ],
+        )
+        list_items.assert_called_once_with()
+
+    def test_plan_items_returns_empty_list(self):
+        with patch.object(
+            plan_item_repository, "list_plan_items", return_value=[]
+        ):
+            response = self.client.get("/api/plan-items")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), [])
+
+    def test_database_failure_returns_controlled_json(self):
+        with patch.object(
+            plan_item_repository,
+            "list_plan_items",
+            side_effect=plan_item_repository.PlanItemRepositoryError(
+                "PRIVATE_DATABASE_DETAIL"
+            ),
+        ):
+            response = self.client.get("/api/plan-items")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "status": "error",
+                "message": "No se pudieron obtener los PlanItems.",
+            },
+        )
+        self.assertNotIn("PRIVATE_DATABASE_DETAIL", response.get_data(as_text=True))
 
 
 if __name__ == "__main__":

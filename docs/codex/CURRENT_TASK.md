@@ -1,34 +1,39 @@
 # CURRENT TASK
 
-## MVP 05.1 — Backend PostgreSQL connection
+## MVP 05.2 — Persistent PlanItem read
 
 ### Objetivo
 
-Introducir el backend mínimo del Gestor de hábitos y establecer
-una conexión local entre Flask y PostgreSQL.
+Introducir la primera lectura real del dominio desde PostgreSQL mediante
+el backend Flask.
 
 ### Alcance
 
-- Crear entorno Python aislado.
-- Crear backend mínimo con Flask.
-- Configurar credenciales mediante variables de entorno.
-- Conectar con `vcs_dev` usando `vcs_app`.
-- Crear un health check de aplicación y base de datos.
-- Mantener intacto el comportamiento actual del frontend.
+- Crear una capa repository mínima para PlanItems.
+- Leer PlanItems desde PostgreSQL.
+- Exponer `GET /api/plan-items`.
+- Serializar correctamente UUID y timestamps.
+- Mantener disponibles los health checks existentes.
+- Agregar pruebas del repository y del endpoint cuando sea posible.
 
 ### Fuera de alcance
 
-- CRUD completo.
-- Repositories completos.
-- Sustituir `planner-store.js`.
+- Crear, editar o eliminar PlanItems.
+- Persistir generationConfig.
+- Persistir occurrences.
+- Conectar todavía el frontend con la API.
+- Sustituir planner-store.js.
 - Autenticación.
 - Multiusuario.
 - Supabase.
 - Deployment.
-- Cambios al esquema SQL salvo que encontremos un defecto real.
+- Cambios de esquema salvo defecto real detectado.
 
-### Base de datos
+### Restricciones
 
-La estructura inicial reproducible está definida en:
-
-`modules/gestor_de_habitos/db/migrations/001_initial_schema.sql`
+- SQL parametrizado cuando existan parámetros.
+- No hardcodear credenciales.
+- app.py coordina HTTP.
+- El acceso SQL debe vivir fuera de las vistas/rutas.
+- No introducir ORM ni SQLAlchemy.
+- Mantener arquitectura mínima.
