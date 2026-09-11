@@ -1,8 +1,9 @@
 """Aplicación HTTP para exponer el backend mínimo del Gestor de hábitos."""
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 import database
+import plan_item_creation_service
 import planner_state_service
 from repositories import plan_item_repository
 
@@ -49,6 +50,32 @@ def get_plan_items():
             message="No se pudieron obtener los PlanItems.",
         ), 503
     return jsonify([serialize_plan_item(plan_item) for plan_item in plan_items])
+
+
+@app.post("/api/plan-items")
+def create_plan_item():
+    payload = request.get_json(silent=True)
+    try:
+        result = plan_item_creation_service.create_plan_item(payload)
+    except plan_item_creation_service.PlanItemValidationError:
+        return jsonify(
+            status="error",
+            code="invalid_payload",
+            message="El PlanItem enviado no es válido.",
+        ), 400
+    except plan_item_creation_service.PlanItemConflictError as error:
+        return jsonify(
+            status="error",
+            code=error.code,
+            message=str(error),
+        ), 409
+    except plan_item_creation_service.PlanItemCreationUnavailableError:
+        return jsonify(
+            status="error",
+            code="database_unavailable",
+            message="No se pudo crear el PlanItem.",
+        ), 503
+    return jsonify(result), 201
 
 
 @app.get("/api/planner-state")
