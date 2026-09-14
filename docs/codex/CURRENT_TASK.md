@@ -1,984 +1,77 @@
 # CURRENT TASK
 
-## MVP 05.6.1 — Canonical multi-slot model + local frontend/domain
+## MVP 05.6.2 — PostgreSQL migration 003 + relational multi-slot model
 
 ### Documento normativo
 
-La especificación global de esta feature está en:
+La especificación global de multi-slot está en:
 
 `docs/codex/gestor_de_habitos/planeacion/MVP_05_6/MULTI_SLOT_SCHEDULING.md`
-
-Ese documento define la semántica completa de multi-slot.
 
 Este `CURRENT_TASK.md` define únicamente la fase activa:
 
 ```text
-MVP 05.6.1
-Canonical multi-slot model + frontend/domain local
+MVP 05.6.2
+PostgreSQL migration 003 + relational multi-slot model
 ```
+
+MVP 05.6.1 ya dejó implementado el contrato multi-slot local en
+frontend/domain.
+
+En esta fase se adapta exclusivamente PostgreSQL.
 
 ---
 
 # 1. Objetivo
 
-Introducir en el frontend y dominio JavaScript el modelo canónico
-multi-slot.
-
-Un mismo `PlanItem` debe poder tener múltiples horarios que generen
-múltiples occurrences en una misma fecha.
-
-Ejemplo:
+Crear:
 
 ```text
-Uber — lunes
-
-08:00–11:00
-14:00–17:00
-20:00–22:00
+003_multi_slot_scheduling.sql
 ```
 
-En esta fase se modifica únicamente:
+para transformar el esquema persistente MVP 05.5 al modelo relacional
+multi-slot definido para MVP 05.6.
 
-```text
-frontend
-dominio JavaScript
-formularios
-store local
-materializador JavaScript
-validaciones locales
-tests frontend
-```
+La migración debe:
 
-NO se modifica todavía:
-
-```text
-PostgreSQL
-backend Flask
-repositorios Python
-materializador Python
-API persistente
-```
+- preservar datos existentes;
+- introducir `generation_slots`;
+- introducir detalles de slot por modo;
+- introducir exclusiones por slot;
+- relacionar opcionalmente occurrences con su slot de origen;
+- retirar la estructura temporal antigua que ya no será fuente de verdad;
+- conservar las occurrences históricas;
+- ser completamente transaccional.
 
 ---
 
-# 2. Principio principal
+# 2. Alcance de esta fase
 
-La interfaz puede conservar conceptos cómodos de captura:
+Modificar únicamente lo necesario dentro de:
 
 ```text
-horario default
-override por weekday
-"Una fecha"
-"Agregar horario"
-```
-
-pero esos conceptos NO son necesariamente la representación canónica.
-
-La fuente de verdad del dominio debe ser:
-
-```text
-GenerationSlots explícitos
-```
-
----
-
-# 3. Modos canónicos
-
-Continúan existiendo únicamente:
-
-```text
-weekly
-interval_days
-manual_dates
-```
-
-`single_date` NO vuelve a existir.
-
-La opción visual:
-
-```text
-Una fecha
-```
-
-continúa disponible y genera:
-
-```text
-manual_dates
-```
-
----
-
-# 4. Identidad de GenerationSlot
-
-Cada `GenerationSlot` tiene UUID estable.
-
-El UUID nace en frontend cuando el usuario crea el slot.
-
-Usar:
-
-```js
-crypto.randomUUID()
-```
-
-o una abstracción/fallback ya existente en el proyecto si corresponde.
-
-Reglas:
-
-```text
-crear slot
-→ UUID nuevo
-
-editar el mismo slot
-→ conservar UUID
-
-eliminar slot
-→ la identidad desaparece de la configuración
-
-crear después otro horario igual
-→ UUID nuevo
-```
-
-Nunca derivar identidad de:
-
-```text
-hora
-fecha
-weekday
-índice de array
-nombre
-```
-
----
-
-# 5. Decisión arquitectónica de IDs
-
-Esta decisión está cerrada.
-
-El frontend genera:
-
-```text
-GenerationSlot.id
-```
-
-Posteriormente, en MVP 05.6.3, el backend deberá:
-
-```text
-validar ese UUID
-preservarlo
-persistirlo
-devolverlo sin reemplazarlo
-```
-
-NO implementar:
-
-```text
-temporary slot id
-client id → server id remapping
-backend-generated replacement slot UUID
-```
-
-En esta fase no se modifica backend.
-
----
-
-# 6. Contrato canónico — weekly
-
-El estado canónico debe utilizar:
-
-```js
-{
-  mode: "weekly",
-  startDate: "YYYY-MM-DD",
-  endDate: "YYYY-MM-DD" | null,
-  indefinite: boolean,
-
-  slots: [
-    {
-      id: "UUID",
-      isoWeekday: 1,
-      startTime: "08:00",
-      endTime: "11:00"
-    },
-    {
-      id: "UUID",
-      isoWeekday: 1,
-      startTime: "14:00",
-      endTime: "17:00"
-    }
-  ],
-
-  excludedDates?: ["YYYY-MM-DD"],
-  stoppedFromDate?: "YYYY-MM-DD"
-}
-```
-
-En el dominio canónico dejan de ser fuente de verdad:
-
-```text
-weekdays
-defaultStartTime
-defaultEndTime
-weekdayTimeOverrides
-```
-
-Estos conceptos pueden seguir existiendo dentro del formulario/draft
-para conservar la UX actual.
-
----
-
-# 7. Contrato canónico — interval_days
-
-Debe utilizar:
-
-```js
-{
-  mode: "interval_days",
-  startDate: "YYYY-MM-DD",
-  endDate: "YYYY-MM-DD" | null,
-  indefinite: boolean,
-  intervalDays: number,
-
-  slots: [
-    {
-      id: "UUID",
-      startTime: "08:00",
-      endTime: "08:05"
-    },
-    {
-      id: "UUID",
-      startTime: "14:00",
-      endTime: "14:05"
-    }
-  ],
-
-  excludedDates?: ["YYYY-MM-DD"],
-  stoppedFromDate?: "YYYY-MM-DD"
-}
-```
-
-En el dominio canónico dejan de ser fuente de verdad:
-
-```text
-defaultStartTime
-defaultEndTime
-```
-
-El formulario puede seguir usándolos como comodidad de captura si resulta
-útil.
-
----
-
-# 8. Contrato canónico — manual_dates
-
-Debe utilizar:
-
-```js
-{
-  mode: "manual_dates",
-
-  entries: [
-    {
-      id: "UUID",
-      date: "YYYY-MM-DD",
-      startTime: "08:00",
-      endTime: "11:00"
-    },
-    {
-      id: "UUID",
-      date: "YYYY-MM-DD",
-      startTime: "14:00",
-      endTime: "17:00"
-    }
-  ],
-
-  stoppedFromDate?: "YYYY-MM-DD"
-}
-```
-
-Debe permitirse:
-
-```text
-misma fecha
-+
-varios horarios
-```
-
-si no se solapan.
-
-Una sola fecha continúa siendo simplemente:
-
-```text
-manual_dates
-```
-
-con una o varias entries en esa fecha.
-
----
-
-# 9. Occurrence canónica
-
-Se introduce:
-
-```text
-sourceGenerationSlotId
-```
-
-Forma conceptual:
-
-```js
-{
-  id,
-  planItemId,
-  sourceGenerationSlotId,
-  date,
-  startTime,
-  endTime,
-  status,
-  statusContext?
-}
-```
-
-`sourceGenerationSlotId`:
-
-```text
-puede ser null/opcional
-identifica el GenerationSlot que originó la occurrence
-NO es fuente actual de su fecha/hora
-```
-
-La occurrence conserva siempre sus propios:
-
-```text
-date
-startTime
-endTime
-status
-```
-
-No confundir:
-
-```text
-sourceGenerationSlotId
-```
-
-con:
-
-```text
-statusContext.sourceOccurrenceId
-```
-
-Son conceptos distintos.
-
----
-
-# 10. Occurrences ad-hoc
-
-Una occurrence que no proviene de una regla recurrente puede utilizar:
-
-```text
-sourceGenerationSlotId = null
-```
-
-No debe inventarse un GenerationSlot únicamente para darle procedencia.
-
----
-
-# 11. Materialización weekly
-
-Actualizar `materializer.js`.
-
-Por cada fecha candidata:
-
-```text
-obtener isoWeekday
-        ↓
-buscar todos los slots de ese weekday
-        ↓
-crear una occurrence por slot
-```
-
-Ejemplo:
-
-```text
-lunes
-
-S1 08:00–11:00
-S2 14:00–17:00
-S3 20:00–22:00
-```
-
-debe producir tres occurrences.
-
-Cada una debe conservar:
-
-```text
-sourceGenerationSlotId = slot.id
-```
-
----
-
-# 12. Materialización interval_days
-
-Por cada fecha válida según:
-
-```text
-startDate
-+
-intervalDays
-```
-
-crear una occurrence por cada slot.
-
-Ejemplo:
-
-```text
-S1 08:00–08:05
-S2 14:00–14:05
-S3 22:00–22:05
-```
-
-produce tres occurrences por fecha válida.
-
----
-
-# 13. Materialización manual_dates
-
-Cada entry produce una occurrence.
-
-Ejemplo:
-
-```text
-2026-09-15
-
-S1 08:00–11:00
-S2 14:00–17:00
-```
-
-produce dos occurrences para el mismo PlanItem y fecha.
-
-Cada occurrence conserva:
-
-```text
-sourceGenerationSlotId = entry.id
-```
-
----
-
-# 14. Idempotencia local
-
-Un `GenerationSlot` genera como máximo una occurrence por fecha.
-
-La identidad lógica de materialización es:
-
-```text
-sourceGenerationSlotId
-+
-date
-```
-
-El materializador debe evitar duplicar esa combinación.
-
-NO utilizar como identidad única:
-
-```text
-planItemId + date
-```
-
-porque un PlanItem puede tener múltiples occurrences válidas el mismo día.
-
----
-
-# 15. Validación interna de slots
-
-Los slots que aplican a la misma fecha no pueden solaparse.
-
-Los intervalos son semiabiertos.
-
-Válido:
-
-```text
-08:00–11:00
-11:00–14:00
-```
-
-Inválido:
-
-```text
-08:00–11:00
-10:30–14:00
-```
-
-Validar:
-
-```text
-weekly
-→ slots del mismo isoWeekday
-
-interval_days
-→ todos los slots
-
-manual_dates
-→ entries de la misma fecha
-```
-
-La validación interna debe ocurrir antes de materializar.
-
----
-
-# 16. UI weekly
-
-Preservar la experiencia actual:
-
-```text
-seleccionar weekdays
-horario default
-override principal por weekday
-```
-
-Agregar capacidad multi-slot.
-
-Control preferido:
-
-```text
-Agregar horario
-```
-
-Ejemplo:
-
-```text
-LUNES
-
-08:00–11:00
-
-14:00–17:00
-20:00–22:00
-
-[ + Agregar horario ]
-```
-
-Debe ser posible dentro del formulario:
-
-```text
-agregar
-editar
-eliminar
-```
-
-horarios adicionales.
-
----
-
-# 17. Default y overrides
-
-`defaultStartTime`, `defaultEndTime` y los overrides existentes pueden
-seguir utilizándose dentro del draft del formulario.
-
-Ejemplo:
-
-```text
-default
-08:00–11:00
-
-lunes
-override principal 09:00–12:00
-
-horarios adicionales
-14:00–17:00
-20:00–22:00
-```
-
-Al confirmar, el formulario debe normalizar todo a:
-
-```text
-slots[]
-```
-
-PostgreSQL no debe necesitar posteriormente conocer si un slot nació como:
-
-```text
-default
-override
-extra
-```
-
----
-
-# 18. Comportamiento del default
-
-Conservar el comportamiento actual.
-
-Ejemplo:
-
-```text
-lunes
-martes
-miércoles
-jueves
-viernes
-
-default:
-08:00–11:00
-```
-
-puede crear el horario principal equivalente para todos esos weekdays.
-
-Los horarios adicionales NO deben copiarse automáticamente a todos los
-weekdays únicamente porque exista un default.
-
-Deben agregarse explícitamente salvo que exista una acción futura de
-copiado deliberado.
-
----
-
-# 19. Reconstrucción del formulario
-
-Cuando se edite un PlanItem que ya utiliza el contrato canónico multi-slot:
-
-```text
-NO perder slots
-NO perder IDs
-```
-
-Para weekly:
-
-1. agrupar slots por `isoWeekday`;
-2. ordenar los slots del grupo determinísticamente;
-3. elegir un horario principal para presentarlo en la UI actual;
-4. presentar los restantes como horarios adicionales;
-5. conservar cada `slot.id`;
-6. al guardar, reconstruir el conjunto completo sin pérdida.
-
-La noción visual de:
-
-```text
-default
-```
-
-no tiene que persistirse como dato de dominio.
-
----
-
-# 20. UI interval_days
-
-Preservar el formulario actual de intervalo.
-
-Agregar:
-
-```text
-Agregar horario
-```
-
-Ejemplo:
-
-```text
-Cada 1 día
-
-08:00–08:05
-14:00–14:05
-22:00–22:05
-```
-
-Todos los horarios se normalizan a:
-
-```text
-slots[]
-```
-
----
-
-# 21. UI manual_dates
-
-Preservar la experiencia actual de:
-
-```text
-agregar fecha
-Una fecha
-```
-
-Debe permitirse más de un horario en la misma fecha.
-
-Ejemplo:
-
-```text
-2026-09-15
-
-08:00–11:00
-14:00–17:00
-```
-
-Cada entry debe tener y conservar su UUID propio.
-
----
-
-# 22. Identidad estable al editar
-
-Ejemplo:
-
-```text
-slot S2
-14:00–17:00
-```
-
-si el usuario modifica el mismo horario lógico a:
-
-```text
-15:00–18:00
-```
-
-debe permanecer:
-
-```text
-slot S2
-```
-
-No crear un UUID nuevo solo porque cambió el horario.
-
----
-
-# 23. Eliminar y recrear
-
-Si:
-
-```text
-slot S2
-14:00–17:00
-```
-
-es eliminado del formulario, S2 deja de formar parte de la configuración.
-
-Si posteriormente el usuario agrega:
-
-```text
-14:00–17:00
-```
-
-de nuevo:
-
-```text
-debe crearse S9
-```
-
-o cualquier UUID nuevo.
-
-No resucitar S2 por igualdad de valores.
-
----
-
-# 24. Integridad temporal
-
-No rediseñar las reglas existentes de:
-
-```text
-HISTORY_EDIT_WINDOW_DAYS
-frozen history
-reconciliation
-statuses
-```
-
-Actualmente:
-
-```text
-currentDate
-→ editable
-
-ayer
-→ editable
-
-antes de ayer o anterior
-→ frozen
-```
-
-Multi-slot no autoriza reescribir historia.
-
----
-
-# 25. Prioridad
-
-No modificar el modelo actual:
-
-```text
-NORMAL       = 100
-EVENT        = 200
-UNEXPECTED   = 300
-```
-
-Cada occurrence candidata generada por un slot se evalúa individualmente
-con las reglas existentes.
-
----
-
-# 26. Conflictos
-
-No sustituir la lógica de conflictos existente.
-
-Cada occurrence producida por cada slot debe pasar por ella.
-
-Además, los slots de la propia configuración deben ser internamente
-válidos antes de materializar.
-
-Los intervalos contiguos siguen permitidos.
-
----
-
-# 27. excludedDates global
-
-La semántica actual de:
-
-```text
-excludedDates
-```
-
-permanece.
-
-Significa:
-
-```text
-no generar NINGÚN slot del PlanItem en esa fecha
-```
-
-La exclusión individual:
-
-```text
-slot + date
-```
-
-pertenece a una fase posterior y NO se implementa persistentemente en
-05.6.1.
-
----
-
-# 28. stoppedFromDate
-
-La semántica actual se conserva.
-
-```text
-candidateDate >= stoppedFromDate
-→ no generar slots del PlanItem
-```
-
-No introducir `stoppedFromDate` por slot.
-
----
-
-# 29. Alcance de edición en MVP 05.6.1
-
-Esta fase trabaja:
-
-```text
-modelo canónico
-draft/formulario
-materialización local
-identidad local
-validaciones
-tests
-```
-
-NO implementar todavía la semántica persistente completa de:
-
-```text
-eliminar un slot solo este día
-slot excluded dates
-modificar slot future en PostgreSQL
-Apply Future persistente multi-slot
-DELETE/PATCH de slots
-```
-
-Eso corresponde a:
-
-```text
-MVP 05.6.4
-```
-
----
-
-# 30. Apply week / Apply future existentes
-
-No rediseñar estas operaciones en esta fase.
-
-Adaptar únicamente lo estrictamente necesario para que el nuevo modelo
-multi-slot:
-
-```text
-no pierda slots
-no pierda IDs
-no reduzca silenciosamente N slots a 1
-```
-
-Si algún flujo requiere decisiones que pertenecen a MVP 05.6.4:
-
-```text
-detenerse
-preservar integridad
-reportarlo
-```
-
-No inventar una semántica permanente.
-
----
-
-# 31. Compatibilidad temporal con backend
-
-Durante MVP 05.6.1 existe deliberadamente esta diferencia:
-
-```text
-Frontend/domain
-→ nuevo contrato multi-slot
-
-Backend/PostgreSQL
-→ contrato MVP 05.5
-```
-
-Esto es esperado.
-
-El frontend todavía NO está conectado al backend persistente.
-
-NO modificar backend para hacer coincidir ambos contratos en esta fase.
-
-La compatibilidad se restaurará en:
-
-```text
-MVP 05.6.2
-→ PostgreSQL / migración 003
-
-MVP 05.6.3
-→ backend read/create multi-slot + paridad JS/Python
-```
-
----
-
-# 32. Áreas permitidas
-
-Puede modificarse lo necesario dentro del frontend del módulo:
-
-```text
-modules/gestor_de_habitos/
-```
-
-Áreas esperables:
-
-```text
-index.html
-js/app.js
-js/state/
-js/scheduling/
-js/views/
-tests/
-```
-
-No asumir que todos deben modificarse.
-
-Modificar solamente lo necesario.
-
----
-
-# 33. Áreas prohibidas en esta fase
-
-NO modificar:
-
-```text
-modules/gestor_de_habitos/backend/
 modules/gestor_de_habitos/db/
 ```
+
+Principalmente:
+
+```text
+migrations/003_multi_slot_scheduling.sql
+```
+
+Puede actualizarse documentación específica de DB si es necesario para
+reflejar el nuevo esquema.
+
+NO modificar frontend.
+
+NO modificar backend Flask/Python.
+
+NO modificar PostgreSQL `vcs_dev`.
+
+---
+
+# 3. Migraciones anteriores son inmutables
 
 NO modificar:
 
@@ -987,270 +80,1238 @@ NO modificar:
 002_fix_occurrence_status_context.sql
 ```
 
-NO crear todavía:
+La historia debe permanecer:
 
 ```text
-003_multi_slot_scheduling.sql
+001
+→ esquema inicial
+
+002
+→ corrección de status context
+
+003
+→ evolución multi-slot
 ```
 
-NO modificar:
+Cualquier cambio necesario debe estar exclusivamente en `003`.
+
+---
+
+# 4. Modelo relacional objetivo
+
+El núcleo debe evolucionar a:
+
+```text
+plan_items
+    │
+    ├──────────────< occurrences
+    │                    │
+    │                    └── source_generation_slot_id
+    │
+    └── generation_configs
+             │
+             ├────< generation_slots
+             │          │
+             │          ├── generation_slot_weekdays
+             │          ├── generation_slot_dates
+             │          └── generation_slot_excluded_dates
+             │
+             └────< generation_excluded_dates
+```
+
+---
+
+# 5. generation_slots
+
+Crear una tabla conceptual equivalente a:
+
+```text
+generation_slots
+
+id              UUID PRIMARY KEY
+plan_item_id    UUID NOT NULL
+start_time      TIME NOT NULL
+end_time        TIME NOT NULL
+```
+
+Debe relacionarse con la configuración propietaria mediante:
+
+```text
+plan_item_id
+→ generation_configs(plan_item_id)
+```
+
+Usar:
+
+```text
+ON DELETE CASCADE
+```
+
+porque un slot no puede existir sin la configuración de su PlanItem.
+
+Debe existir:
+
+```text
+CHECK (start_time < end_time)
+```
+
+NO crear:
+
+```text
+UNIQUE(plan_item_id, start_time, end_time)
+```
+
+porque el mismo intervalo puede existir en diferentes weekdays o fechas.
+
+---
+
+# 6. generation_slot_weekdays
+
+Crear:
+
+```text
+generation_slot_weekdays
+```
+
+con estructura conceptual:
+
+```text
+slot_id         UUID PRIMARY KEY
+iso_weekday     SMALLINT NOT NULL
+```
+
+FK:
+
+```text
+slot_id
+→ generation_slots(id)
+ON DELETE CASCADE
+```
+
+Constraint:
+
+```text
+iso_weekday BETWEEN 1 AND 7
+```
+
+Cada slot weekly tiene exactamente un weekday.
+
+Las invariantes entre `mode` y presencia de esta fila se validarán
+principalmente en dominio/backend, no mediante triggers en esta fase.
+
+---
+
+# 7. generation_slot_dates
+
+Crear:
+
+```text
+generation_slot_dates
+```
+
+con estructura conceptual:
+
+```text
+slot_id       UUID PRIMARY KEY
+entry_date    DATE NOT NULL
+```
+
+FK:
+
+```text
+slot_id
+→ generation_slots(id)
+ON DELETE CASCADE
+```
+
+Cada slot `manual_dates` tiene exactamente una fecha explícita.
+
+---
+
+# 8. generation_slot_excluded_dates
+
+Crear:
+
+```text
+generation_slot_excluded_dates
+```
+
+con:
+
+```text
+slot_id          UUID NOT NULL
+excluded_date    DATE NOT NULL
+```
+
+PK compuesta:
+
+```text
+(slot_id, excluded_date)
+```
+
+FK:
+
+```text
+slot_id
+→ generation_slots(id)
+ON DELETE CASCADE
+```
+
+Esta tabla representa:
+
+> excluir únicamente este slot en esta fecha.
+
+No sustituye:
+
+```text
+generation_excluded_dates
+```
+
+La tabla existente continúa significando:
+
+> excluir TODO el PlanItem en esta fecha.
+
+---
+
+# 9. occurrences.source_generation_slot_id
+
+Agregar a:
+
+```text
+occurrences
+```
+
+la columna nullable:
+
+```text
+source_generation_slot_id UUID NULL
+```
+
+FK:
+
+```text
+source_generation_slot_id
+→ generation_slots(id)
+ON DELETE SET NULL
+```
+
+La relación representa procedencia.
+
+NO dependencia de la occurrence hacia la configuración.
+
+Una occurrence continúa conservando de forma independiente:
+
+```text
+occurrence_date
+start_time
+end_time
+status
+```
+
+---
+
+# 10. Idempotencia persistente
+
+La invariante del dominio es:
+
+```text
+un GenerationSlot
+→ como máximo una occurrence por fecha
+```
+
+Implementar protección relacional mediante un índice único parcial
+equivalente a:
+
+```sql
+UNIQUE (
+    source_generation_slot_id,
+    occurrence_date
+)
+WHERE source_generation_slot_id IS NOT NULL
+```
+
+NO introducir:
+
+```text
+UNIQUE(plan_item_id, occurrence_date)
+```
+
+porque múltiples slots del mismo PlanItem pueden producir múltiples
+occurrences válidas el mismo día.
+
+Antes de crear el índice, la migración debe garantizar que el backfill
+no produzca duplicados incompatibles.
+
+---
+
+# 11. generation_configs en el nuevo modelo
+
+`generation_configs` conserva los datos estructurales de generación:
+
+```text
+plan_item_id
+mode
+start_date
+end_date
+indefinite
+interval_days
+stopped_from_date
+```
+
+El nuevo modelo deja de utilizar como fuente persistente de verdad:
+
+```text
+default_start_time
+default_end_time
+```
+
+Después de migrar correctamente los datos, estas columnas deben
+eliminarse.
+
+Las constraints existentes que dependan de ellas deben revisarse y
+reemplazarse.
+
+NO adivinar nombres de constraints.
+
+Inspeccionar `001_initial_schema.sql` y operar sobre los nombres reales.
+
+---
+
+# 12. Reemplazar generation_weekdays
+
+La estructura antigua:
+
+```text
+generation_weekdays
+```
+
+contiene actualmente:
+
+```text
+plan_item_id
+iso_weekday
+override_start_time
+override_end_time
+```
+
+Debe utilizarse como fuente para migrar datos weekly.
+
+Después de migrar correctamente:
+
+```text
+generation_weekdays
+```
+
+deja de formar parte del esquema objetivo y debe eliminarse.
+
+Su reemplazo es:
+
+```text
+generation_slots
++
+generation_slot_weekdays
+```
+
+---
+
+# 13. Reemplazar generation_date_entries
+
+La estructura antigua:
+
+```text
+generation_date_entries
+```
+
+debe utilizarse como fuente para migrar `manual_dates`.
+
+Después de migrar correctamente deja de formar parte del esquema objetivo.
+
+Su reemplazo es:
+
+```text
+generation_slots
++
+generation_slot_dates
+```
+
+---
+
+# 14. Migración de datos weekly existentes
+
+Para cada:
+
+```text
+generation_weekdays
+```
+
+existente debe crearse un `GenerationSlot`.
+
+El horario efectivo se obtiene así:
+
+```text
+si existe override válido
+→ override_start_time / override_end_time
+
+si no existe override
+→ generation_configs.default_start_time /
+  generation_configs.default_end_time
+```
+
+Ejemplo legado:
+
+```text
+default:
+08:00–11:00
+
+lunes:
+sin override
+
+martes:
+09:00–12:00 override
+```
+
+debe convertirse a:
+
+```text
+Slot A
+lunes
+08:00–11:00
+
+Slot B
+martes
+09:00–12:00
+```
+
+Cada slot weekly migrado recibe:
+
+```text
+generation_slots
++
+generation_slot_weekdays
+```
+
+---
+
+# 15. IDs para weekly legado
+
+Los registros weekly antiguos no tienen `GenerationSlot.id`.
+
+Por tanto, la migración 003 puede generar UUIDs nuevos para esos datos
+legados.
+
+Esto NO contradice la regla futura de que:
+
+```text
+frontend genera GenerationSlot.id
+```
+
+porque estos son datos creados ANTES de existir la entidad GenerationSlot.
+
+Para datos nuevos después de MVP 05.6.3:
+
+```text
+frontend UUID
+→ backend preserva
+→ PostgreSQL persiste
+```
+
+Para datos legacy migrados por 003:
+
+```text
+migration genera UUID una sola vez
+```
+
+No derivar el UUID de horario o weekday.
+
+Usar una función UUID adecuada disponible en PostgreSQL 16.
+
+No introducir una extensión innecesaria si PostgreSQL ya proporciona la
+función requerida.
+
+---
+
+# 16. Migración de interval_days existentes
+
+Cada configuración legacy:
+
+```text
+mode = interval_days
+```
+
+posee actualmente un solo:
+
+```text
+default_start_time
+default_end_time
+```
+
+Debe convertirse en exactamente un:
+
+```text
+GenerationSlot
+```
+
+con ese intervalo.
+
+No necesita:
+
+```text
+generation_slot_weekdays
+generation_slot_dates
+```
+
+porque la fecha se deriva mediante:
+
+```text
+start_date + interval_days
+```
+
+---
+
+# 17. IDs para interval_days legado
+
+Igual que weekly:
+
+```text
+interval_days legacy
+```
+
+no posee Slot ID.
+
+La migración genera un UUID nuevo para su GenerationSlot.
+
+Ese UUID se convierte desde entonces en su identidad persistente.
+
+---
+
+# 18. Migración de manual_dates existentes
+
+Cada fila existente de:
+
+```text
+generation_date_entries
+```
+
+representa conceptualmente un slot explícito.
+
+Debe convertirse a:
+
+```text
+generation_slots
++
+generation_slot_dates
+```
+
+La fila legacy ya posee:
+
+```text
+id UUID
+```
+
+Preferir reutilizar ese mismo UUID como:
+
+```text
+generation_slots.id
+```
+
+para conservar identidad cuando no exista una razón técnica real que lo
+impida.
+
+Mapeo:
+
+```text
+generation_date_entries.id
+→ generation_slots.id
+
+generation_date_entries.plan_item_id
+→ generation_slots.plan_item_id
+
+start_time/end_time
+→ generation_slots
+
+entry_date
+→ generation_slot_dates
+```
+
+---
+
+# 19. generation_excluded_dates
+
+La tabla existente:
+
+```text
+generation_excluded_dates
+```
+
+se conserva.
+
+Su semántica sigue siendo:
+
+```text
+PlanItem completo
++
+fecha
+→ no generar ninguna occurrence
+```
+
+No migrar sus filas a exclusiones por slot.
+
+No alterar su significado.
+
+---
+
+# 20. Backfill de occurrences
+
+Después de crear los GenerationSlots legacy debe intentarse completar:
+
+```text
+occurrences.source_generation_slot_id
+```
+
+solo cuando la procedencia pueda determinarse de manera segura.
+
+Principio:
+
+```text
+si es inequívoco
+→ asignar slot ID
+
+si existe cualquier ambigüedad
+→ NULL
+```
+
+NO inventar procedencia.
+
+---
+
+# 21. Backfill weekly
+
+El modelo legacy weekly permitía como máximo un horario efectivo por
+weekday para cada PlanItem.
+
+Por tanto, una occurrence weekly puede asociarse a su slot cuando la
+relación legacy lo haga inequívoco.
+
+Considerar:
+
+```text
+plan_item_id
+weekday de occurrence_date
+mode = weekly
+```
+
+y cualquier otra condición necesaria para evitar falsos positivos.
+
+Una occurrence editada individualmente puede tener horario distinto del
+slot original.
+
+No exigir igualdad de horario si la procedencia sigue siendo
+inequívocamente determinable por la estructura legacy.
+
+Si no puede demostrarse con seguridad:
+
+```text
+NULL
+```
+
+---
+
+# 22. Backfill interval_days
+
+El modelo legacy `interval_days` posee exactamente un horario generador
+por PlanItem.
+
+Si la occurrence pertenece inequívocamente a ese PlanItem/configuración:
+
+```text
+source_generation_slot_id
+→ slot interval_days migrado
+```
+
+No inferir relaciones de otro modo.
+
+---
+
+# 23. Backfill manual_dates
+
+`manual_dates` puede contener más de una entry en una misma fecha.
+
+Por tanto, debe utilizarse una estrategia conservadora.
+
+Puede asociarse una occurrence cuando exista una única entry candidata
+inequívoca.
+
+Puede utilizarse:
+
+```text
+plan_item_id
+entry_date
+start/end cuando ayuden a desambiguar
+```
+
+Si una occurrence editada o varios candidatos hacen imposible determinar
+qué entry la originó:
+
+```text
+source_generation_slot_id = NULL
+```
+
+Eso es correcto.
+
+La historia continúa siendo válida aunque se pierda la procedencia.
+
+---
+
+# 24. Occurrences ad-hoc / no asociables
+
+No todas las occurrences legacy tienen que recibir:
+
+```text
+source_generation_slot_id
+```
+
+`NULL` es un estado válido.
+
+La migración prioriza:
+
+```text
+integridad
+```
+
+sobre:
+
+```text
+adivinar procedencia
+```
+
+---
+
+# 25. Constraints de generation_configs
+
+Inspeccionar las constraints reales definidas por 001.
+
+Reemplazar las que dependan del modelo antiguo.
+
+El esquema nuevo debe validar al menos:
+
+## weekly
+
+```text
+start_date IS NOT NULL
+
+interval_days IS NULL
+
+rango finito válido
+OR
+indefinite = true
+```
+
+NO exigir ya:
+
+```text
+default_start_time
+default_end_time
+```
+
+## interval_days
+
+```text
+start_date IS NOT NULL
+interval_days > 0
+
+rango finito válido
+OR
+indefinite = true
+```
+
+NO exigir default times.
+
+## manual_dates
+
+Debe conservar la semántica estructural apropiada:
+
+```text
+start_date IS NULL
+end_date IS NULL
+indefinite = false
+interval_days IS NULL
+```
+
+Los horarios/fechas viven ahora en slots y slot dates.
+
+---
+
+# 26. Invariantes multi-tabla
+
+No introducir triggers para exigir en PostgreSQL cosas como:
+
+```text
+weekly debe tener >= 1 slot
+weekly slot debe tener weekday
+manual slot debe tener date
+interval slot no debe tener weekday/date
+```
+
+Estas invariantes requieren varias tablas y serán protegidas por
+backend/domain en MVP 05.6.3.
+
+PostgreSQL debe proteger correctamente:
+
+```text
+tipos
+FKs
+PKs
+CHECKs locales
+unicidad local
+```
+
+sin sobrecomplicar el esquema.
+
+---
+
+# 27. Eliminación de estructura legacy
+
+Solo DESPUÉS de completar correctamente los backfills necesarios se puede
+retirar:
+
+```text
+generation_weekdays
+generation_date_entries
+generation_configs.default_start_time
+generation_configs.default_end_time
+```
+
+Ordenar las operaciones para no destruir la información antes de usarla.
+
+La migración completa debe estar dentro de una transacción.
+
+Ante cualquier error:
+
+```text
+ROLLBACK
+```
+
+y el esquema legacy debe permanecer íntegro.
+
+---
+
+# 28. Orden de migración
+
+El orden conceptual debe ser seguro.
+
+Algo equivalente a:
+
+```text
+BEGIN
+
+1. crear tablas multi-slot
+2. agregar source_generation_slot_id
+3. crear GenerationSlots desde legacy
+4. crear weekday/date details
+5. backfill sourceGenerationSlotId donde sea seguro
+6. adaptar constraints generation_configs
+7. retirar tablas/columnas legacy
+8. crear FKs/índices/constraints finales necesarios
+9. validar estado final
+
+COMMIT
+```
+
+Codex puede ajustar el orden SQL exacto cuando sea necesario para respetar
+dependencias.
+
+No alterar la semántica para seguir literalmente esta numeración.
+
+---
+
+# 29. Índices
+
+Agregar únicamente índices justificados por:
+
+```text
+FK lookup
+materialización
+idempotencia
+```
+
+El índice único parcial:
+
+```text
+(source_generation_slot_id, occurrence_date)
+WHERE source_generation_slot_id IS NOT NULL
+```
+
+sí forma parte de esta fase.
+
+No crear índices especulativos sin una consulta o integridad concreta que
+los justifique.
+
+---
+
+# 30. No tocar vcs_dev
+
+Codex NO debe ejecutar 003 contra:
 
 ```text
 vcs_dev
 ```
 
+No utilizar las credenciales reales del usuario.
+
+No borrar, truncar ni modificar sus datos.
+
+La aplicación manual sobre `vcs_dev` se hará después de revisar el
+reporte.
+
 ---
 
-# 34. No implementar todavía
+# 31. Datos reales de vcs_dev
+
+Actualmente `vcs_dev` puede contener datos creados durante MVP 05.5.
+
+Eso es deliberado.
+
+NO asumir que la base real está vacía.
+
+La migración debe estar preparada para transformar datos legacy válidos.
+
+No modificar esos datos durante desarrollo de 05.6.2.
+
+---
+
+# 32. Pruebas con PostgreSQL aislado
+
+Cuando el entorno lo permita, utilizar PostgreSQL 16 efímero/aislado.
+
+NO utilizar `vcs_dev`.
+
+Probar al menos dos escenarios:
+
+```text
+A. Base vacía:
+001
+002
+003
+
+B. Base legacy con datos:
+001
+002
+insert fixtures legacy
+003
+```
+
+---
+
+# 33. Fixture legacy weekly
+
+Crear datos de prueba que incluyan:
+
+```text
+weekly
+default time
+varios weekdays
+weekday sin override
+weekday con override
+occurrences relacionadas
+```
+
+Después de 003 verificar:
+
+```text
+un slot por weekday
+horario efectivo correcto
+slot weekday correcto
+plan_item intacto
+occurrences intactas
+source slot backfilled cuando sea seguro
+```
+
+---
+
+# 34. Fixture legacy interval_days
+
+Probar:
+
+```text
+interval_days
+default time
+interval_days > 0
+occurrences
+```
+
+Después:
+
+```text
+exactamente un GenerationSlot
+hora correcta
+sin weekday/date detail
+occurrences preservadas
+source slot correcto cuando sea inequívoco
+```
+
+---
+
+# 35. Fixture legacy manual_dates
+
+Probar:
+
+```text
+una fecha
+varias fechas
+más de una entry en la misma fecha
+occurrences
+```
+
+Verificar:
+
+```text
+cada old entry → GenerationSlot
+UUID de old entry reutilizado
+cada slot → generation_slot_dates
+fechas/horas intactas
+```
+
+También probar una situación ambigua donde:
+
+```text
+source_generation_slot_id
+```
+
+deba quedar `NULL`.
+
+---
+
+# 36. Preservación de historia
+
+Después de 003 verificar explícitamente que ninguna occurrence pierde:
+
+```text
+id
+plan_item_id
+occurrence_date
+start_time
+end_time
+status
+status_reason
+source_occurrence_id
+```
+
+La única columna nueva es:
+
+```text
+source_generation_slot_id
+```
+
+y puede ser NULL.
+
+---
+
+# 37. ON DELETE SET NULL
+
+Probar que eliminar un GenerationSlot en el esquema migrado:
+
+```text
+NO elimina occurrence histórica
+```
+
+Debe resultar:
+
+```text
+occurrence permanece
+source_generation_slot_id → NULL
+```
+
+---
+
+# 38. Exclusión por slot
+
+Probar integridad de:
+
+```text
+generation_slot_excluded_dates
+```
+
+incluyendo:
+
+```text
+PK compuesta
+FK
+ON DELETE CASCADE
+```
+
+Todavía no es necesario poblarla desde datos legacy porque no existía un
+equivalente anterior.
+
+---
+
+# 39. Idempotencia de occurrence
+
+Probar el índice único parcial.
+
+Debe rechazarse:
+
+```text
+mismo source_generation_slot_id
++
+misma occurrence_date
+```
+
+dos veces.
+
+Debe permitirse:
+
+```text
+slot A + 2026-09-15
+slot B + 2026-09-15
+```
+
+para el mismo PlanItem.
+
+Debe permitirse también más de una occurrence con:
+
+```text
+source_generation_slot_id = NULL
+```
+
+cuando las demás reglas lo permitan.
+
+---
+
+# 40. Esquema final esperado
+
+Después de 003 deben existir al menos:
+
+```text
+plan_items
+generation_configs
+generation_slots
+generation_slot_weekdays
+generation_slot_dates
+generation_excluded_dates
+generation_slot_excluded_dates
+occurrences
+```
+
+No deben continuar como fuente activa:
+
+```text
+generation_weekdays
+generation_date_entries
+```
+
+Ni deben continuar las columnas:
+
+```text
+generation_configs.default_start_time
+generation_configs.default_end_time
+```
+
+---
+
+# 41. Backend deliberadamente incompatible
+
+Al terminar MVP 05.6.2:
+
+```text
+Frontend
+→ multi-slot
+
+PostgreSQL
+→ multi-slot
+
+Backend Python
+→ todavía MVP 05.5
+```
+
+Esta incompatibilidad temporal es ESPERADA.
+
+NO modificar backend para resolverla.
+
+MVP 05.6.3 se encargará de:
+
+```text
+GET planner-state multi-slot
+POST plan-items multi-slot
+Python materializer
+JS/Python parity
+```
+
+---
+
+# 42. Frontend no se modifica
+
+MVP 05.6.1 ya está cerrado.
+
+NO modificar:
+
+```text
+index.html
+CSS
+JavaScript
+frontend tests
+```
+
+para adaptar esta migración.
+
+Si se detecta una incompatibilidad conceptual real con el contrato
+frontend, detenerse y reportarla antes de cambiar la especificación.
+
+---
+
+# 43. No implementar todavía
 
 Fuera de alcance:
 
 ```text
 Flask multi-slot
 Python materializer multi-slot
-GET planner-state multi-slot
 POST multi-slot
+GET planner-state multi-slot
 PATCH
 DELETE persistente
-PostgreSQL slot tables
-slot exclusions persistentes
+Apply Future persistente multi-slot
+slot editing API
 auth
 multiusuario
 Supabase
 deployment
-notificaciones
-timezone por usuario
-nuevo sistema de estadísticas
 ```
 
 ---
 
-# 35. Pruebas obligatorias
+# 44. Validaciones requeridas
 
-Agregar/actualizar cobertura como mínimo para:
+Además de pruebas PostgreSQL, ejecutar:
 
 ```text
-weekly con 1 slot
-
-weekly con varios slots en el mismo weekday
-
-weekly con distintos slots según weekday
-
-interval_days con múltiples slots
-
-manual_dates con múltiples entries en la misma fecha
-
-"Una fecha" sigue produciendo manual_dates
-
-slots contiguos permitidos
-
-slots solapados rechazados
-
-UUID de slot generado
-
-UUID de slot estable tras editar
-
-UUID nuevo tras eliminar/recrear
-
-sourceGenerationSlotId correcto
-
-varias occurrences mismo PlanItem/misma fecha
-
-idempotencia por sourceGenerationSlotId + date
-
-excludedDates global
-
-stoppedFromDate
-
-conflictos existentes
-
-prioridades existentes
-
-temporal integrity
-
-deletion management
-
-recurrence editor
-
-formularios
+git diff --check
 ```
 
-Ejecutar todas las suites frontend relevantes.
+Si existen herramientas SQL locales apropiadas, validar sintaxis sin
+tocar `vcs_dev`.
 
----
-
-# 36. Regresión backend
-
-Ejecutar las pruebas backend existentes como regresión.
-
-El backend NO debe modificarse para adaptarse al nuevo contrato en esta
+No modificar dependencias del proyecto únicamente para ejecutar esta
 fase.
 
-Si las pruebas backend existentes continúan pasando:
+---
+
+# 45. CURRENT_TASK y documentación
+
+No reescribir la especificación global por iniciativa propia.
+
+Si durante implementación aparece un defecto real en:
 
 ```text
-reportarlo
+MULTI_SLOT_SCHEDULING.md
 ```
 
-Si aparece una incompatibilidad únicamente porque el frontend ya utiliza
-el nuevo contrato pero ambos todavía no están integrados:
+detenerse y reportarlo.
 
-```text
-reportarla
-```
-
-No resolverla modificando backend.
+No redefinir silenciosamente la arquitectura mediante SQL.
 
 ---
 
-# 37. Verificación visual
-
-Comprobar al menos:
-
-```text
-1440 × 900
-390 × 844
-```
-
-Validar:
-
-```text
-múltiples horarios legibles
-Agregar horario usable
-edición/eliminación dentro del draft
-sin overflow
-dark/gold preservado
-responsive preservado
-labels/control accesibles
-default/override sigue entendible
-Una fecha sigue funcionando
-```
-
----
-
-# 38. Caso principal — Uber
-
-Debe poder representarse localmente UN solo PlanItem:
-
-```text
-Uber
-```
-
-con:
-
-```text
-lunes
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-martes
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-miércoles
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-jueves
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-viernes
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-sábado
-08:00–21:00
-
-domingo
-08:00–21:00
-```
-
-sin crear varios PlanItems.
-
-Cada horario genera su occurrence independiente.
-
----
-
-# 39. Caso — Medicamento
-
-Debe poder representarse:
-
-```text
-Medicamento
-
-interval_days = 1
-
-08:00–08:05
-14:00–14:05
-22:00–22:05
-```
-
-Todos los slots aplican en cada fecha válida.
-
----
-
-# 40. Caso — Manual dates
-
-Debe permitirse:
-
-```text
-2026-09-15
-
-08:00–11:00
-14:00–17:00
-```
-
-para un solo PlanItem.
-
-Cada entry tiene UUID independiente.
-
----
-
-# 41. Invariantes de esta fase
-
-Al terminar MVP 05.6.1 debe cumplirse:
-
-```text
-Un PlanItem puede tener múltiples slots.
-
-Los slots tienen UUID estable.
-
-El UUID nace en frontend.
-
-weekly utiliza slots explícitos.
-
-interval_days utiliza slots explícitos.
-
-manual_dates utiliza entries con UUID.
-
-Una occurrence puede recordar su sourceGenerationSlotId.
-
-Una occurrence sigue teniendo datos propios.
-
-Un PlanItem puede tener múltiples occurrences el mismo día.
-
-No se utiliza planItemId + date como unicidad.
-
-Un slot genera como máximo una occurrence por fecha.
-
-default/override son UX, no dominio canónico.
-
-single_date no existe.
-
-La persistencia todavía NO está adaptada.
-
-Backend y PostgreSQL permanecen sin cambios.
-```
-
----
-
-# 42. Git
+# 46. Git
 
 Codex NO debe:
 
@@ -1265,25 +1326,92 @@ El usuario controla Git.
 
 ---
 
-# 43. Reporte requerido
+# 47. Criterios de aceptación
+
+MVP 05.6.2 se considera completo cuando:
+
+```text
+001 + 002 + 003
+```
+
+pueden construir desde cero el esquema multi-slot.
+
+Además:
+
+```text
+una DB MVP 05.5 válida
++
+003
+```
+
+debe migrar al nuevo modelo sin perder datos.
+
+Debe cumplirse:
+
+```text
+weekly legacy
+→ slots por weekday
+
+interval_days legacy
+→ slot
+
+manual_dates legacy
+→ slots con fecha
+
+occurrences
+→ preservadas
+
+source_generation_slot_id
+→ backfilled solo cuando sea seguro
+
+legacy time columns
+→ retiradas
+
+legacy generation tables
+→ retiradas
+
+global exclusions
+→ preservadas
+
+slot exclusions
+→ disponibles
+
+history
+→ preservada
+```
+
+---
+
+# 48. Reporte requerido
 
 Al terminar, reportar:
 
-1. archivos modificados;
-2. contrato canónico final de `weekly`;
-3. contrato canónico final de `interval_days`;
-4. contrato canónico final de `manual_dates`;
-5. cómo se generan los UUID de slots;
-6. cómo se conservan durante edición;
-7. cómo default/override se normaliza a slots;
-8. cómo funciona `Agregar horario`;
-9. cómo se reconstruye un formulario desde slots;
-10. cómo materializa cada modo;
-11. cómo funciona la idempotencia;
-12. tests ejecutados;
-13. resultados;
-14. verificación visual;
-15. flujos que quedaron deliberadamente pendientes para MVP 05.6.4;
-16. cualquier incompatibilidad o riesgo detectado.
+1. archivos creados/modificados;
+2. estructura exacta final de `generation_slots`;
+3. estructura exacta de `generation_slot_weekdays`;
+4. estructura exacta de `generation_slot_dates`;
+5. estructura exacta de `generation_slot_excluded_dates`;
+6. cambio exacto en `occurrences`;
+7. índice de idempotencia creado;
+8. constraints modificadas en `generation_configs`;
+9. cómo se migran weekly legacy;
+10. cómo se migran interval_days legacy;
+11. cómo se migran manual_dates legacy;
+12. política exacta de UUID durante migración;
+13. estrategia exacta de backfill de `source_generation_slot_id`;
+14. situaciones donde queda NULL;
+15. qué objetos legacy se eliminan;
+16. pruebas ejecutadas;
+17. resultados de migración desde DB vacía;
+18. resultados de migración con fixtures legacy;
+19. evidencia de preservación de occurrences;
+20. cualquier limitación o riesgo encontrado.
 
-No hacer commit.
+Confirmar explícitamente:
+
+```text
+vcs_dev no fue modificado
+backend no fue modificado
+frontend no fue modificado
+no se hizo commit/push/merge
+```
