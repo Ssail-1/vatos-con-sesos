@@ -1,30 +1,15 @@
 import assert from "node:assert/strict";
 import { materializeOccurrenceDrafts } from "../js/scheduling/materializer.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
+import { explicitDate, intervalConfig, manualConfig, weeklyConfig } from "./helpers/generation-configs.mjs";
 
 const REFERENCE_DATE = "2026-09-29";
-const allWeekdays = [1, 2, 3, 4, 5, 6, 7];
-
-function weeklyConfig(overrides = {}) {
-    return {
-        mode: "weekly",
-        startDate: "2026-09-20",
-        endDate: null,
-        indefinite: true,
-        weekdays: allWeekdays,
-        defaultStartTime: "08:00",
-        defaultEndTime: "09:00",
-        weekdayTimeOverrides: {},
-        ...overrides,
-    };
-}
-
-function planItem(id, generationConfig = weeklyConfig(), activityType = "periodic") {
+function planItem(id, generationConfig = weeklyConfig({ startDate: "2026-09-20", days: [1, 2, 3, 4, 5, 6, 7] }), activityType = "periodic") {
     return { id, name: id, kind: "activity", activityType, generationConfig };
 }
 
 function explicitDateConfig(date, startTime = "08:00", endTime = "09:00", controls = {}) {
-    return { mode: "manual_dates", entries: [{ date, startTime, endTime }], ...controls };
+    return explicitDate(date, startTime, endTime, controls);
 }
 
 function expectCode(action, code) {
@@ -143,7 +128,7 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
         ["2026-10-04", "14:00", "15:00"],
         ["2026-10-05", "15:00", "16:00"],
     ].map(([date, startTime, endTime]) => ({ date, startTime, endTime }));
-    const config = { mode: "manual_dates", entries, excludedDates: ["2026-10-06"] };
+    const config = manualConfig(entries, { excludedDates: ["2026-10-06"] });
     const statuses = new Map([
         ["2026-09-27", "completed"],
         ["2026-09-28", "completed"],
@@ -175,13 +160,10 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
 
 // Stop es válido sin occurrence exacta, desde futuro, y universal para todos los modos.
 {
-    const config = {
-        mode: "manual_dates",
-        entries: [
+    const config = manualConfig([
             { date: REFERENCE_DATE, startTime: "08:00", endTime: "09:00" },
             { date: "2026-09-30", startTime: "08:00", endTime: "09:00" },
-        ],
-    };
+    ]);
     const store = createPlannerStore(
         [planItem("stop-current", config)],
         [{ planItemId: "stop-current", date: "2026-09-30", status: "cancelled" }],
@@ -202,13 +184,10 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
 }
 
 {
-    const config = {
-        mode: "manual_dates",
-        entries: [
+    const config = manualConfig([
             { date: "2026-09-28", startTime: "08:00", endTime: "09:00" },
             { date: "2026-09-30", startTime: "08:00", endTime: "09:00" },
-        ],
-    };
+    ]);
     const store = createPlannerStore(
         [planItem("stop-yesterday", config)],
         [{ planItemId: "stop-yesterday", date: "2026-09-28", status: "cancelled" }],
@@ -222,17 +201,11 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
 
 const modeCases = [
     ["weekly", weeklyConfig()],
-    ["interval", {
-        mode: "interval_days", startDate: "2026-09-29", endDate: null, indefinite: true,
-        intervalDays: 2, defaultStartTime: "08:00", defaultEndTime: "09:00",
-    }],
-    ["manual", {
-        mode: "manual_dates",
-        entries: [
+    ["interval", intervalConfig({ startDate: "2026-09-29", intervalDays: 2 })],
+    ["manual", manualConfig([
             { date: "2026-09-29", startTime: "08:00", endTime: "09:00" },
             { date: "2026-10-03", startTime: "08:00", endTime: "09:00" },
-        ],
-    }],
+    ])],
     ["explicit", explicitDateConfig("2026-10-03")],
 ];
 for (const [id, config] of modeCases) {
@@ -269,7 +242,7 @@ for (const [id, config] of modeCases) {
     store.applyGenerationConfigFromDate(
         "preserved-controls",
         REFERENCE_DATE,
-        weeklyConfig({ defaultStartTime: "10:00", defaultEndTime: "11:00" }),
+        weeklyConfig({ startTime: "10:00", endTime: "11:00" }),
     );
     const updated = store.getPlanItemById("preserved-controls").generationConfig;
     assert.deepEqual(updated.excludedDates, ["2026-09-30"]);

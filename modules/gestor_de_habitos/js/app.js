@@ -19,8 +19,9 @@ const elements = Object.fromEntries([
     "occurrenceStartTime", "occurrenceEndTime", "cancelActivityButton", "scheduleMode", "weeklyFields",
     "scheduleStartDate", "weekdayChoices", "indefiniteSchedule", "scheduleEndDateField", "scheduleEndDate",
     "weekdayOverrides", "weekdayOverrideFields", "weeklyDefaultStartTime", "weeklyDefaultEndTime",
-    "intervalFields", "intervalDays", "manualDatesField", "manualDateEntries", "addManualDateButton", "explicitDateField",
-    "occurrenceTimeFields", "recurrenceScopeField", "overrideDialog", "overrideCandidateSummary",
+    "intervalFields", "intervalDays", "intervalAdditionalSlots", "addIntervalSlotButton", "manualDatesField",
+    "manualDateEntries", "addManualDateButton", "explicitDateField",
+    "occurrenceTimeAnchor", "occurrenceTimeFields", "recurrenceScopeField", "overrideDialog", "overrideCandidateSummary",
     "overrideCandidateOccurrences", "overrideConflictList", "overrideConsequence", "overrideError",
     "overrideBackButton", "overrideContinueButton",
     "deletionDialog", "deletionSummary", "deleteOccurrenceButton", "deleteOccurrenceDetails",
@@ -138,7 +139,9 @@ const matrixView = createPlannerMatrixView({
         const index = daily.findIndex(({ id }) => id === occurrence.id);
         planItemFormView.openInsertBefore(item, occurrence, index > 0 ? daily[index - 1].endTime : "", opener);
     },
-    onEdit: (item, occurrence, opener, selectedDateKey) => planItemFormView.openEdit(item, occurrence, selectedDateKey, opener),
+    onEdit: (item, occurrence, opener, selectedDateKey, scheduleOnly) => (
+        planItemFormView.openEdit(item, occurrence, selectedDateKey, opener, scheduleOnly)
+    ),
     onDelete: (item, opener, selectedDateKey) => {
         const options = plannerStore.getDeletionOptions(item.id, selectedDateKey);
         deletionDialogView.open(options, {
@@ -219,6 +222,17 @@ const planItemFormView = createPlanItemFormView({
                     result.planItem,
                     context.occurrenceId,
                     result.occurrence,
+                );
+            }
+            selectedPlanItemId = context.planItemId;
+        } else if (context.mode === "edit_schedule") {
+            if (result.recurrenceChanged && result.scope === "week") {
+                plannerStore.applyWeeklyToWeek(context.planItemId, context.selectedDate, result.generationConfig);
+            } else if (result.recurrenceChanged && result.scope === "future") {
+                futureFeedback = applyFuturePlanning(
+                    context.planItemId,
+                    context.selectedDate,
+                    result.generationConfig,
                 );
             }
             selectedPlanItemId = context.planItemId;

@@ -103,20 +103,26 @@ export function buildPlannerRows(planItems, occurrences, selectedDateKey, showAl
             const itemOccurrences = occurrencesByPlanItem.get(planItem.id) ?? [];
             const selectedOccurrences = itemOccurrences.filter(
                 (occurrence) => occurrence.date === selectedDateKey,
-            );
+            ).sort((first, second) => first.startTime.localeCompare(second.startTime));
             const selectedOccurrence = selectedOccurrences.length === 1 ? selectedOccurrences[0] : null;
-            return { planItem, occurrences: itemOccurrences, selectedOccurrence, selectedDateAmbiguous: selectedOccurrences.length > 1 };
+            return {
+                planItem,
+                occurrences: itemOccurrences,
+                selectedOccurrences,
+                selectedOccurrence,
+                selectedDateAmbiguous: selectedOccurrences.length > 1,
+            };
         })
-        .filter((row) => row.occurrences.length > 0 && (showAllMonthRecords || row.selectedOccurrence))
+        .filter((row) => row.occurrences.length > 0 && (showAllMonthRecords || row.selectedOccurrences.length > 0))
         .sort((first, second) => {
-            const firstTime = first.selectedOccurrence?.startTime ?? first.occurrences[0].startTime;
-            const secondTime = second.selectedOccurrence?.startTime ?? second.occurrences[0].startTime;
+            const firstTime = first.selectedOccurrences[0]?.startTime ?? first.occurrences[0].startTime;
+            const secondTime = second.selectedOccurrences[0]?.startTime ?? second.occurrences[0].startTime;
             return firstTime.localeCompare(secondTime) || first.planItem.name.localeCompare(second.planItem.name);
         });
 }
 
 function createPlanItemRow(rowData, position, context) {
-    const { planItem, occurrences, selectedOccurrence, selectedDateAmbiguous } = rowData;
+    const { planItem, occurrences, selectedOccurrences, selectedOccurrence, selectedDateAmbiguous } = rowData;
     const row = document.createElement("tr");
     const nameCell = document.createElement("th");
     const nameContent = document.createElement("span");
@@ -172,16 +178,24 @@ function createPlanItemRow(rowData, position, context) {
             selectedDateFrozen
                 ? `${planItem.name}: historial congelado, solo lectura`
                 : selectedDateAmbiguous
-                ? `${planItem.name} tiene varias occurrences ambiguas en la fecha seleccionada`
+                ? `Editar planificación completa de ${planItem.name}; la fecha seleccionada tiene varios horarios`
                 : selectedOccurrence
                 ? `Editar ${planItem.name} en la fecha seleccionada`
                 : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
-        editButton.disabled = selectedDateAmbiguous || selectedDateFrozen;
+        editButton.disabled = selectedDateFrozen;
         editButton.title = editButton.getAttribute("aria-label");
         editButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            if (!editButton.disabled) context.onEdit(planItem, selectedOccurrence, editButton, formatDateKey(context.selectedDate));
+            if (!editButton.disabled) {
+                context.onEdit(
+                    planItem,
+                    selectedOccurrence,
+                    editButton,
+                    formatDateKey(context.selectedDate),
+                    selectedDateAmbiguous,
+                );
+            }
         });
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
@@ -214,12 +228,18 @@ function createPlanItemRow(rowData, position, context) {
 
     row.append(
         createTextCell("td", "position-column activity-position", String(position)),
-        createTextCell("td", "time-column activity-time", selectedOccurrence?.startTime ?? "—"),
+        createTextCell(
+            "td",
+            "time-column activity-time",
+            selectedOccurrences.length ? selectedOccurrences.map(({ startTime }) => startTime).join(" · ") : "—",
+        ),
         createTextCell(
             "td",
             "duration-column activity-duration",
-            selectedOccurrence
-                ? calculateDuration(selectedOccurrence.startTime, selectedOccurrence.endTime)
+            selectedOccurrences.length
+                ? selectedOccurrences.map((occurrence) => (
+                    calculateDuration(occurrence.startTime, occurrence.endTime)
+                )).join(" · ")
                 : "—",
         ),
         nameCell,
@@ -246,22 +266,22 @@ function createPlanItemRow(rowData, position, context) {
             marker.setAttribute("aria-label", `${planItem.name} no está programado para ${formatSelectedDate(date)}.`);
             marker.title = marker.getAttribute("aria-label");
             cell.append(marker);
-        } else if (dailyOccurrences.length === 1) {
+        } else {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";
-            dailyOccurrences.forEach((occurrence) =>
-                controls.append(createStatusButton(planItem, occurrence, date, context.currentDate, context.onStatusChange)),
-            );
+            dailyOccurrences
+                .sort((first, second) => first.startTime.localeCompare(second.startTime))
+                .forEach((occurrence) =>
+                    controls.append(createStatusButton(planItem, occurrence, date, context.currentDate, context.onStatusChange)),
+                );
+            if (dailyOccurrences.length > 1) {
+                controls.classList.add("multiple-occurrence-controls");
+                controls.setAttribute(
+                    "aria-label",
+                    `${dailyOccurrences.length} horarios de ${planItem.name} para ${formatSelectedDate(date)}`,
+                );
+            }
             cell.append(controls);
-        } else {
-            const marker = document.createElement("span");
-            cell.classList.add("ambiguous-occurrence-cell");
-            marker.textContent = "!";
-            marker.setAttribute("role", "img");
-            marker.setAttribute("aria-label", `${planItem.name} tiene varias occurrences en ${formatSelectedDate(date)}. Edítalas individualmente fuera de la matriz.`);
-            marker.title = marker.getAttribute("aria-label");
-            cell.append(marker);
-            context.onAmbiguity?.(marker.getAttribute("aria-label"));
         }
         row.append(cell);
     });

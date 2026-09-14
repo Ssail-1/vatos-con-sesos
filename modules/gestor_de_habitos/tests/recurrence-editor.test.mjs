@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
+import { manualConfig, weeklyConfig as weekly } from "./helpers/generation-configs.mjs";
 
-const weekly = (overrides = {}) => ({
-    mode: "weekly", startDate: "2026-08-01", endDate: null, indefinite: true,
-    weekdays: [1, 3, 5], defaultStartTime: "08:00", defaultEndTime: "09:00",
-    weekdayTimeOverrides: {}, ...overrides,
-});
 const item = (id, config = weekly()) => ({ id, name: id, kind: "activity", activityType: "periodic", generationConfig: config });
 const classifiedItem = (id, kind, type) => ({
     id,
@@ -19,7 +15,7 @@ function expectError(action, code) {
     assert.throws(action, (error) => error instanceof PlannerStoreError && error.code === code);
 }
 
-const revisedWeekly = weekly({ defaultStartTime: "10:00", defaultEndTime: "11:00" });
+const revisedWeekly = weekly({ startTime: "10:00", endTime: "11:00" });
 
 for (const [kind, type] of [
     ["habit", "scheduled"],
@@ -67,8 +63,8 @@ for (const [kind, type] of [
     const wednesday = store.getOccurrencesForDate("2026-08-26")[0];
     const friday = store.getOccurrencesForDate("2026-08-28")[0];
     store.applyWeeklyToWeek("weekly", "2026-08-26", weekly({
-        weekdays: [1, 2, 3, 5],
-        weekdayTimeOverrides: { "2": { startTime: "10:00", endTime: "11:00" } },
+        days: [1, 2, 3, 5],
+        perDayTimes: { "2": { startTime: "10:00", endTime: "11:00" } },
     }));
     assert.deepEqual(store.getPlanItemById("weekly").generationConfig, originalConfig, "Apply week no cambia generationConfig");
     assert.equal(store.getOccurrencesForDate("2026-08-25")[0].startTime, "10:00", "añade weekday con override");
@@ -79,7 +75,7 @@ for (const [kind, type] of [
 
 {
     const store = createPlannerStore([item("weekly")], [], "2026-08-24");
-    store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ weekdays: [1, 5], defaultStartTime: "07:00", defaultEndTime: "08:00" }));
+    store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ days: [1, 5], startTime: "07:00", endTime: "08:00" }));
     assert.equal(store.getOccurrencesForDate("2026-08-26").length, 0, "retira weekday pending");
     assert.equal(store.getOccurrencesForDate("2026-08-24")[0].startTime, "07:00", "cambia horario semanal");
 }
@@ -87,21 +83,18 @@ for (const [kind, type] of [
 {
     const store = createPlannerStore([
         item("weekly"),
-        item("blocker", { mode: "manual_dates", entries: [{ date: "2026-08-25", startTime: "10:30", endTime: "11:30" }] }),
+        item("blocker", manualConfig([{ date: "2026-08-25", startTime: "10:30", endTime: "11:30" }])),
     ], [], "2026-08-24");
     const before = store.getOccurrences();
-    expectError(() => store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ weekdays: [1, 2, 3, 5], weekdayTimeOverrides: { "2": { startTime: "10:00", endTime: "11:00" } } })), "time_conflict");
+    expectError(() => store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ days: [1, 2, 3, 5], perDayTimes: { "2": { startTime: "10:00", endTime: "11:00" } } })), "time_conflict");
     assert.deepEqual(store.getOccurrences(), before, "Apply week debe ser atómico");
 }
 
 {
-    const store = createPlannerStore([item("ambiguous", {
-        mode: "manual_dates",
-        entries: [
+    const store = createPlannerStore([item("ambiguous", manualConfig([
             { date: "2026-08-24", startTime: "08:00", endTime: "09:00" },
             { date: "2026-08-24", startTime: "10:00", endTime: "11:00" },
-        ],
-    })], [], "2026-08-24");
+    ]))], [], "2026-08-24");
     const before = store.getOccurrences();
     expectError(() => store.applyWeeklyToWeek("ambiguous", "2026-08-24", weekly()), "ambiguous_week");
     assert.deepEqual(store.getOccurrences(), before, "la ambigüedad no modifica occurrences");
@@ -121,11 +114,11 @@ for (const [kind, type] of [
     const cancelled = store.getOccurrencesForDate("2026-09-02")[0];
     const horizon = store.getMaterializedThrough();
     const result = store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({
-        weekdays: [2, 4], defaultStartTime: "10:00", defaultEndTime: "11:00",
-        weekdayTimeOverrides: { "4": { startTime: "12:00", endTime: "13:00" } },
+        days: [2, 4], startTime: "10:00", endTime: "11:00",
+        perDayTimes: { "4": { startTime: "12:00", endTime: "13:00" } },
     }));
     assert.equal(result.planItem.generationConfig.startDate, "2026-08-25");
-    assert.deepEqual(result.planItem.generationConfig.weekdays, [2, 4]);
+    assert.deepEqual([...new Set(result.planItem.generationConfig.slots.map(({ isoWeekday }) => isoWeekday))], [2, 4]);
     assert.equal(store.getOccurrenceById(past.id).date, "2026-08-24", "preserva pasado");
     for (const [occurrence, status] of [[completed, "completed"], [notCompleted, "not_completed"], [inProgress, "in_progress"], [cancelled, "cancelled"]]) {
         assert.equal(store.getOccurrenceById(occurrence.id).status, status, `preserva ${status}`);
@@ -140,23 +133,23 @@ for (const [kind, type] of [
 {
     const store = createPlannerStore([
         item("weekly"),
-        item("blocker", { mode: "manual_dates", entries: [{ date: "2026-08-27", startTime: "10:30", endTime: "11:30" }] }),
+        item("blocker", manualConfig([{ date: "2026-08-27", startTime: "10:30", endTime: "11:30" }])),
     ], [], "2026-08-24");
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();
-    expectError(() => store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({ weekdays: [2, 4], defaultStartTime: "10:00", defaultEndTime: "11:00" })), "time_conflict");
+    expectError(() => store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({ days: [2, 4], startTime: "10:00", endTime: "11:00" })), "time_conflict");
     assert.deepEqual(store.getPlanItems(), beforeItems, "Apply future no cambia config si falla");
     assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply future no retira pending si falla");
 }
 
 {
     const store = createPlannerStore([item("weekly")], [], "2026-08-24");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ weekdayTimeOverrides: { "5": { startTime: "09:00", endTime: "10:00" } } }));
-    assert.deepEqual(store.getPlanItemById("weekly").generationConfig.weekdayTimeOverrides["5"], { startTime: "09:00", endTime: "10:00" }, "crea override");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ weekdayTimeOverrides: { "5": { startTime: "10:00", endTime: "11:00" } } }));
-    assert.equal(store.getPlanItemById("weekly").generationConfig.weekdayTimeOverrides["5"].startTime, "10:00", "actualiza override");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ weekdayTimeOverrides: {} }));
-    assert.equal("5" in store.getPlanItemById("weekly").generationConfig.weekdayTimeOverrides, false, "elimina override redundante");
+    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ perDayTimes: { "5": { startTime: "09:00", endTime: "10:00" } } }));
+    assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "09:00", "crea horario diferente");
+    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ perDayTimes: { "5": { startTime: "10:00", endTime: "11:00" } } }));
+    assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "10:00", "actualiza horario diferente");
+    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly());
+    assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "08:00", "restaura el horario general visual");
 }
 
 console.log("recurrence-editor.test.mjs: todas las pruebas pasaron");

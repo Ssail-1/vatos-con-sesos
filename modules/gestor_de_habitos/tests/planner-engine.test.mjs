@@ -2,27 +2,10 @@ import assert from "node:assert/strict";
 import { blocksSchedule } from "../js/domain/occurrence-status.js";
 import { materializeOccurrenceDrafts, validateGenerationConfig } from "../js/scheduling/materializer.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
+import { explicitDate, intervalConfig, manualConfig, weeklyConfig } from "./helpers/generation-configs.mjs";
 
 function activity(id, generationConfig, activityType = "periodic") {
     return { id, name: id, kind: "activity", activityType, generationConfig };
-}
-
-function explicitDate(date, startTime, endTime) {
-    return { mode: "manual_dates", entries: [{ date, startTime, endTime }] };
-}
-
-function weekly(overrides = {}) {
-    return {
-        mode: "weekly",
-        startDate: "2026-08-01",
-        endDate: null,
-        indefinite: true,
-        weekdays: [1, 3, 5],
-        defaultStartTime: "08:00",
-        defaultEndTime: "09:00",
-        weekdayTimeOverrides: {},
-        ...overrides,
-    };
 }
 
 function expectStoreError(action, code) {
@@ -32,7 +15,7 @@ function expectStoreError(action, code) {
 {
     const planItem = activity(
         "weekly",
-        weekly({ weekdayTimeOverrides: { "5": { startTime: "10:00", endTime: "11:30" } } }),
+        weeklyConfig({ perDayTimes: { "5": { startTime: "10:00", endTime: "11:30" } } }),
     );
     const drafts = materializeOccurrenceDrafts(planItem, "2026-08-03", "2026-08-09");
     assert.deepEqual(
@@ -46,15 +29,11 @@ function expectStoreError(action, code) {
 }
 
 {
-    const planItem = activity("interval", {
-        mode: "interval_days",
+    const planItem = activity("interval", intervalConfig({
         startDate: "2026-08-20",
-        endDate: null,
-        indefinite: true,
         intervalDays: 20,
-        defaultStartTime: "12:00",
-        defaultEndTime: "13:00",
-    });
+        times: [{ startTime: "12:00", endTime: "13:00" }],
+    }));
     assert.deepEqual(
         materializeOccurrenceDrafts(planItem, "2026-08-01", "2026-10-01").map(({ date }) => date),
         ["2026-08-20", "2026-09-09", "2026-09-29"],
@@ -62,31 +41,31 @@ function expectStoreError(action, code) {
 }
 
 {
-    const manual = activity("manual", {
-        mode: "manual_dates",
-        entries: [
+    const manual = activity("manual", manualConfig([
             { date: "2026-09-01", startTime: "10:00", endTime: "11:00" },
             { date: "2026-11-20", startTime: "16:00", endTime: "17:30" },
-        ],
-    });
+    ]));
     const explicitItem = activity("explicit", explicitDate("2027-07-10", "09:00", "23:00"), "event");
     assert.equal(materializeOccurrenceDrafts(manual, "2026-01-01", "2026-12-31").length, 2);
     assert.equal(materializeOccurrenceDrafts(explicitItem, "2027-01-01", "2027-12-31").length, 1);
     assert.equal(materializeOccurrenceDrafts(explicitItem, "2026-01-01", "2026-12-31").length, 0);
 }
 
-assert.throws(() => validateGenerationConfig(weekly({ weekdays: [1, 1, 3] })));
-assert.throws(() => validateGenerationConfig(weekly({ weekdays: [] })));
-assert.throws(() => validateGenerationConfig(weekly({ weekdays: [1, 8] })));
-assert.throws(() => validateGenerationConfig(weekly({ weekdayTimeOverrides: { "2": { startTime: "08:00", endTime: "09:00" } } })));
-assert.throws(() => validateGenerationConfig(weekly({ endDate: "2026-12-31", indefinite: true })));
-assert.throws(() => validateGenerationConfig(weekly({ indefinite: undefined })));
+const duplicateIdConfig = weeklyConfig();
+duplicateIdConfig.slots[1].id = duplicateIdConfig.slots[0].id;
+assert.throws(() => validateGenerationConfig(duplicateIdConfig));
+assert.throws(() => validateGenerationConfig(weeklyConfig({ days: [] })));
+assert.throws(() => validateGenerationConfig(weeklyConfig({ days: [1, 8] })));
+assert.throws(() => validateGenerationConfig(weeklyConfig({ endDate: "2026-12-31", indefinite: true })));
+const missingIndefiniteConfig = weeklyConfig();
+missingIndefiniteConfig.indefinite = undefined;
+assert.throws(() => validateGenerationConfig(missingIndefiniteConfig));
 assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: [] }));
 
 {
     const finite = activity(
         "finite",
-        weekly({ startDate: "2026-08-05", endDate: "2026-08-10", indefinite: false }),
+        weeklyConfig({ startDate: "2026-08-05", endDate: "2026-08-10", indefinite: false }),
     );
     assert.deepEqual(
         materializeOccurrenceDrafts(finite, "2026-08-01", "2026-08-31").map(({ date }) => date),
@@ -95,7 +74,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
 }
 
 {
-    const store = createPlannerStore([activity("repeat", weekly())], [], "2026-08-23");
+    const store = createPlannerStore([activity("repeat", weeklyConfig())], [], "2026-08-23");
     const before = store.getOccurrences().length;
     const created = store.materializePlanItem("repeat", "2026-08-01", "2026-09-30");
     assert.equal(created.length, 0);
@@ -200,13 +179,10 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
         name: "Dos veces",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: {
-            mode: "manual_dates",
-            entries: [
+        generationConfig: manualConfig([
                 { date: "2026-08-25", startTime: "08:00", endTime: "09:00" },
                 { date: "2026-08-25", startTime: "20:00", endTime: "21:00" },
-            ],
-        },
+        ]),
     });
     assert.equal(result.occurrences.length, 2);
     const occurrence = result.occurrences[0];
@@ -222,7 +198,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
 }
 
 {
-    const store = createPlannerStore([activity("recurring", weekly())], [], "2026-08-23");
+    const store = createPlannerStore([activity("recurring", weeklyConfig())], [], "2026-08-23");
     store.addPlanItem({
         name: "Evento futuro",
         kind: "activity",
@@ -244,7 +220,7 @@ assert.throws(() => validateGenerationConfig({ mode: "manual_dates", entries: []
     assert.deepEqual(Object.keys(result.planItem).sort(), ["generationConfig", "habitType", "id", "kind", "name"]);
     assert.deepEqual(
         Object.keys(result.occurrences[0]).sort(),
-        ["date", "endTime", "id", "planItemId", "startTime", "status"],
+        ["date", "endTime", "id", "planItemId", "sourceGenerationSlotId", "startTime", "status"],
     );
     const renamed = store.updatePlanItemAndOccurrence(
         result.planItem.id,

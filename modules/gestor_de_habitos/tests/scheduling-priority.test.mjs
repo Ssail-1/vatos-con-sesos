@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { getSchedulingPriority, SCHEDULING_PRIORITY } from "../js/domain/scheduling-priority.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
+import { explicitDate, manualConfig } from "./helpers/generation-configs.mjs";
 
-const explicitDate = (date, startTime, endTime) => ({ mode: "manual_dates", entries: [{ date, startTime, endTime }] });
 const plan = (id, type, startTime = "08:00", endTime = "10:00", date = "2026-08-27") => ({
     id, name: id, kind: "activity", activityType: type, generationConfig: explicitDate(date, startTime, endTime),
 });
@@ -148,10 +148,10 @@ for (const status of ["cancelled", "not_completed"]) {
     ], [], "2026-08-27");
     const manual = {
         name: "multi-event", kind: "activity", activityType: "event",
-        generationConfig: { mode: "manual_dates", entries: [
+        generationConfig: manualConfig([
             { date: "2026-08-26", startTime: "09:00", endTime: "09:30" },
             { date: "2026-08-27", startTime: "09:00", endTime: "09:30" },
-        ] },
+        ]),
     };
     const prepared = store.preparePlanItemCreation(manual);
     assert.equal(prepared.conflicts.length, 2);
@@ -164,10 +164,10 @@ for (const status of ["cancelled", "not_completed"]) {
     const store = createPlannerStore([], [], "2026-08-27");
     assert.throws(() => store.preparePlanItemCreation({
         name: "invalid", kind: "activity", activityType: "event",
-        generationConfig: { mode: "manual_dates", entries: [
+        generationConfig: manualConfig([
             { date: "2026-08-27", startTime: "09:00", endTime: "10:00" },
             { date: "invalid", startTime: "09:00", endTime: "10:00" },
-        ] },
+        ]),
     }));
     assert.equal(store.getPlanItems().length, 0);
     assert.equal(store.getOccurrences().length, 0);

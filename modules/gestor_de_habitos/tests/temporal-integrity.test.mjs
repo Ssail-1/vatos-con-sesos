@@ -9,8 +9,8 @@ import {
 } from "../js/domain/temporal-integrity.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
 import { buildPlannerRows } from "../js/views/planner-matrix.js";
+import { explicitDate, weeklyConfig } from "./helpers/generation-configs.mjs";
 
-const explicitDate = (date, startTime = "08:00", endTime = "09:00") => ({ mode: "manual_dates", entries: [{ date, startTime, endTime }] });
 const activity = (id, date, startTime = "08:00", endTime = "09:00", activityType = "periodic") => ({
     id,
     name: id,
@@ -85,16 +85,10 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
         name: "frozen-weekly",
         kind: "activity",
         activityType: "periodic",
-        generationConfig: {
-            mode: "weekly",
+        generationConfig: weeklyConfig({
             startDate: "2026-09-01",
-            endDate: null,
-            indefinite: true,
-            weekdays: [7],
-            defaultStartTime: "08:00",
-            defaultEndTime: "09:00",
-            weekdayTimeOverrides: {},
-        },
+            days: [7],
+        }),
     };
     const store = createPlannerStore([frozenWeekly], [], "2026-09-29");
     const occurrence = store.getOccurrencesForDate("2026-09-27")[0];

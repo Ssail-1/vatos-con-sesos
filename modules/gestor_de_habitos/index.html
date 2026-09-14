@@ -165,9 +165,15 @@
                     </div>
                     <label class="checkbox-field"><input id="indefiniteSchedule" name="indefinite" type="checkbox" checked /> Indefinidamente</label>
                     <div id="scheduleEndDateField" class="form-field" hidden><label for="scheduleEndDate">Fecha final</label><input id="scheduleEndDate" name="endDate" type="date" /></div>
-                    <details id="weekdayOverrides"><summary>Horarios diferentes por día</summary><div id="weekdayOverrideFields"></div></details>
+                    <details id="weekdayOverrides"><summary>Horarios por día</summary><div id="weekdayOverrideFields"></div></details>
                 </div>
-                <div id="intervalFields" class="schedule-fields" hidden><div class="form-field"><label for="intervalDays">Repetir cada</label><div class="inline-field"><input id="intervalDays" name="intervalDays" type="number" min="1" value="2" /><span>días</span></div></div></div>
+                <div id="intervalFields" class="schedule-fields" hidden>
+                    <div class="form-field"><label for="intervalDays">Repetir cada</label><div class="inline-field"><input id="intervalDays" name="intervalDays" type="number" min="1" value="2" /><span>días</span></div></div>
+                    <div id="intervalAdditionalSlots" class="generation-slot-list"></div>
+                    <button id="addIntervalSlotButton" class="manual-date-add-button" type="button">
+                        <span aria-hidden="true">+</span> Agregar horario
+                    </button>
+                </div>
                 <fieldset id="manualDatesField" class="manual-dates-fieldset" hidden>
                     <legend>Fechas específicas</legend>
                     <div id="manualDateEntries" class="manual-date-entries"></div>
@@ -177,6 +183,7 @@
                 </fieldset>
                 <div id="explicitDateField" class="form-field"><label id="occurrenceDateLabel" for="occurrenceDate">Fecha</label><input id="occurrenceDate" name="date" type="date" required /></div>
 
+                <div id="occurrenceTimeAnchor" hidden></div>
                 <div id="occurrenceTimeFields" class="time-fields">
                     <div class="form-field">
                         <label for="occurrenceStartTime">Hora de inicio</label>

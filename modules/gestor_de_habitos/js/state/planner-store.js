@@ -1,4 +1,5 @@
 import { isValidClassification, getPlanItemType } from "../domain/plan-item-classification.js";
+import { cloneGenerationConfig, isGenerationSlotId } from "../domain/generation-slots.js";
 import {
     DELETION_REASONS,
     getEarlierStoppedFromDate,
@@ -43,27 +44,6 @@ export class PlannerStoreError extends Error {
     }
 }
 
-function cloneGenerationConfig(config) {
-    if (config === null) return null;
-    const clonedControls = config.excludedDates
-        ? { excludedDates: [...config.excludedDates] }
-        : {};
-    if (config.mode === "weekly") {
-        return {
-            ...config,
-            ...clonedControls,
-            weekdays: [...config.weekdays].sort((first, second) => first - second),
-            weekdayTimeOverrides: Object.fromEntries(
-                Object.entries(config.weekdayTimeOverrides).map(([key, value]) => [key, { ...value }]),
-            ),
-        };
-    }
-    if (config.mode === "manual_dates") {
-        return { ...config, ...clonedControls, entries: config.entries.map((entry) => ({ ...entry })) };
-    }
-    return { ...config, ...clonedControls };
-}
-
 function preserveGenerationControls(existingConfig, nextConfig) {
     const candidate = cloneGenerationConfig(nextConfig);
     if (candidate === null || existingConfig === null) return candidate;
@@ -85,6 +65,22 @@ function cloneOccurrence(occurrence) {
         ...occurrence,
         ...(occurrence.statusContext ? { statusContext: { ...occurrence.statusContext } } : {}),
     };
+}
+
+function getGenerationSlotIds(planItem) {
+    const config = planItem.generationConfig;
+    if (config === null) return [];
+    return (config.mode === "manual_dates" ? config.entries : config.slots).map(({ id }) => id);
+}
+
+function generationConfigHasMultipleSlotsPerDate(config) {
+    if (config?.mode === "interval_days") return config.slots.length > 1;
+    const groupingValues = config?.mode === "weekly"
+        ? config.slots.map(({ isoWeekday }) => isoWeekday)
+        : config?.mode === "manual_dates"
+            ? config.entries.map(({ date }) => date)
+            : [];
+    return new Set(groupingValues).size !== groupingValues.length;
 }
 
 function normalizePlanItemDraft(draft) {
@@ -121,6 +117,11 @@ function validateOccurrenceDraft(draft) {
         !isValidDateKey(draft.date) ||
         !isValidTimeRange(draft.startTime, draft.endTime) ||
         !isValidOccurrenceStatus(draft.status) ||
+        (
+            draft.sourceGenerationSlotId !== undefined &&
+            draft.sourceGenerationSlotId !== null &&
+            !isGenerationSlotId(draft.sourceGenerationSlotId)
+        ) ||
         draft.statusContext !== undefined && (
             draft.statusContext?.reason !== PRIORITY_OVERRIDE_REASON ||
             typeof draft.statusContext.sourceOccurrenceId !== "string" ||
@@ -142,6 +143,9 @@ function createUniqueId(prefix, collection, sequence) {
 }
 
 function occurrenceKey(occurrence) {
+    if (occurrence.sourceGenerationSlotId) {
+        return [occurrence.sourceGenerationSlotId, occurrence.date].join("|");
+    }
     return [occurrence.planItemId, occurrence.date, occurrence.startTime, occurrence.endTime].join("|");
 }
 
@@ -188,6 +192,27 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     planItems.forEach(validatePlanItem);
     if (new Set(planItems.map((item) => item.id)).size !== planItems.length) {
         throw new PlannerStoreError("duplicate_plan_item_id", "Los IDs de PlanItem deben ser únicos.");
+    }
+    const initialSlotIds = planItems.flatMap(getGenerationSlotIds);
+    if (new Set(initialSlotIds).size !== initialSlotIds.length) {
+        throw new PlannerStoreError(
+            "duplicate_generation_slot_id",
+            "Cada GenerationSlot debe tener identidad única entre todos los PlanItems.",
+        );
+    }
+
+    function validateGenerationSlotOwnership(candidatePlanItem, replacedPlanItemId = null) {
+        const occupiedIds = new Set(
+            planItems
+                .filter(({ id }) => id !== replacedPlanItemId)
+                .flatMap(getGenerationSlotIds),
+        );
+        if (getGenerationSlotIds(candidatePlanItem).some((id) => occupiedIds.has(id))) {
+            throw new PlannerStoreError(
+                "duplicate_generation_slot_id",
+                "El UUID de un GenerationSlot ya pertenece a otro PlanItem.",
+            );
+        }
     }
 
     function assignOccurrenceIds(drafts) {
@@ -428,6 +453,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             generationConfig: preserveGenerationControls(planItem.generationConfig, generationConfig),
         };
         validatePlanItem(candidatePlanItem);
+        validateGenerationSlotOwnership(candidatePlanItem, planItem.id);
         const removableIds = new Set(removableOccurrences.map(({ id }) => id));
         const preservedOccurrences = occurrences.filter(({ id }) => !removableIds.has(id));
         const preservedDates = new Set(
@@ -477,6 +503,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     function preparePlanItemCreation(planItemDraft) {
         const normalized = normalizePlanItemDraft(planItemDraft);
         validatePlanItem(normalized);
+        validateGenerationSlotOwnership(normalized);
         const preview = { id: "__candidate_plan_item__", ...normalized };
         const explicitDate = getLatestExplicitDate([preview]);
         const previewHorizon = explicitDate && explicitDate > materializedThrough ? getMonthEnd(explicitDate) : materializedThrough;
@@ -713,8 +740,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceDraft?.endTime,
                 status: "pending",
             };
-            validateOccurrenceDraft(candidate);
-            validateDraftSet([candidate]);
             const excludedDates = planItem.generationConfig?.excludedDates ?? [];
             const restoredConfig = planItem.generationConfig === null
                 ? null
@@ -725,6 +750,20 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                         : {}),
                 };
             const candidatePlanItem = { ...planItem, generationConfig: restoredConfig };
+            if (restoredConfig !== null) {
+                const matchingSlotDrafts = materializeOccurrenceDrafts(
+                    candidatePlanItem,
+                    candidate.date,
+                    candidate.date,
+                ).filter((draft) => (
+                    draft.startTime === candidate.startTime && draft.endTime === candidate.endTime
+                ));
+                if (matchingSlotDrafts.length === 1) {
+                    candidate.sourceGenerationSlotId = matchingSlotDrafts[0].sourceGenerationSlotId;
+                }
+            }
+            validateOccurrenceDraft(candidate);
+            validateDraftSet([candidate]);
             validatePlanItem(candidatePlanItem);
             const created = assignOccurrenceIds([candidate])[0];
             const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
@@ -822,10 +861,32 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 throw new PlannerStoreError("invalid_generation_config", "La excepción semanal requiere configuración weekly.");
             }
             validateGenerationConfig(generationConfig);
+            if (generationConfigHasMultipleSlotsPerDate(generationConfig)) {
+                throw new PlannerStoreError(
+                    "ambiguous_week",
+                    "Apply week no modifica todavía una configuración que produce varios horarios por fecha.",
+                );
+            }
             const weekStart = addDays(anchorDate, 1 - getIsoWeekday(anchorDate));
             const weekEnd = addDays(weekStart, 6);
             const historyCutoff = getHistoryCutoff(referenceDate, historyEditWindowDays);
             const mutableWeekStart = weekStart < historyCutoff ? historyCutoff : weekStart;
+            const occurrenceCountByDate = new Map();
+            occurrences
+                .filter((occurrence) => (
+                    occurrence.planItemId === planItemId
+                    && occurrence.date >= mutableWeekStart
+                    && occurrence.date <= weekEnd
+                ))
+                .forEach(({ date }) => {
+                    occurrenceCountByDate.set(date, (occurrenceCountByDate.get(date) ?? 0) + 1);
+                });
+            if ([...occurrenceCountByDate.values()].some((count) => count > 1)) {
+                throw new PlannerStoreError(
+                    "ambiguous_week",
+                    "Hay varios horarios del mismo registro en una fecha; esta edición multi-slot requiere un alcance posterior.",
+                );
+            }
             const pendingByDate = new Map();
             occurrences
                 .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= mutableWeekStart && occurrence.date <= weekEnd)
@@ -834,9 +895,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                     sameDate.push(occurrence);
                     pendingByDate.set(occurrence.date, sameDate);
                 });
-            if ([...pendingByDate.values()].some((sameDate) => sameDate.length > 1)) {
-                throw new PlannerStoreError("ambiguous_week", "Hay varias occurrences pending del mismo registro en una fecha; edítalas individualmente.");
-            }
             const removable = [...pendingByDate.values()].flat();
             const { preservedOccurrences, drafts } = buildWeeklyCandidate(planItem, generationConfig, mutableWeekStart, weekEnd, removable);
             const reusableByDate = new Map(removable.map((occurrence) => [occurrence.date, occurrence]));
@@ -863,19 +921,27 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 }
             }
             validateGenerationConfig(normalizedConfig);
+            if (generationConfigHasMultipleSlotsPerDate(normalizedConfig)) {
+                throw new PlannerStoreError(
+                    "ambiguous_future",
+                    "Apply future no modifica todavía una configuración que produce varios horarios por fecha.",
+                );
+            }
+            const occurrenceCountByDate = new Map();
+            occurrences
+                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= effectiveDate)
+                .forEach(({ date }) => {
+                    occurrenceCountByDate.set(date, (occurrenceCountByDate.get(date) ?? 0) + 1);
+                });
+            if ([...occurrenceCountByDate.values()].some((count) => count > 1)) {
+                throw new PlannerStoreError(
+                    "ambiguous_future",
+                    "Hay varios horarios del mismo registro en una fecha; Apply future multi-slot pertenece a una fase posterior.",
+                );
+            }
             const removable = occurrences.filter(
                 (occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= effectiveDate,
             );
-            const pendingCountByDate = new Map();
-            removable.forEach(({ date }) => {
-                pendingCountByDate.set(date, (pendingCountByDate.get(date) ?? 0) + 1);
-            });
-            if ([...pendingCountByDate.values()].some((count) => count > 1)) {
-                throw new PlannerStoreError(
-                    "ambiguous_future",
-                    "Hay varias occurrences pending del mismo registro en una fecha; edítalas individualmente.",
-                );
-            }
             const preservedEffectiveDateOccurrences = occurrences
                 .filter(
                     (occurrence) =>
@@ -906,6 +972,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             reconcileTemporalState();
             const normalized = normalizePlanItemDraft(planItemDraft);
             validatePlanItem(normalized);
+            validateGenerationSlotOwnership(normalized);
             idSequence += 1;
             const candidate = {
                 id: createUniqueId("plan-item", planItems, idSequence),

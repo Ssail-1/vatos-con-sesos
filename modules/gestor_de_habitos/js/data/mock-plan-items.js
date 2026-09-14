@@ -1,12 +1,16 @@
-const weekly = (weekdays, defaultStartTime, defaultEndTime, weekdayTimeOverrides = {}) => ({
+import { createGenerationSlotId } from "../domain/generation-slots.js";
+
+const weekly = (days, startTime, endTime, perDayTimes = {}) => ({
     mode: "weekly",
     startDate: "2026-08-01",
     endDate: null,
     indefinite: true,
-    weekdays,
-    defaultStartTime,
-    defaultEndTime,
-    weekdayTimeOverrides,
+    slots: days.map((isoWeekday) => ({
+        id: createGenerationSlotId(),
+        isoWeekday,
+        startTime: perDayTimes[String(isoWeekday)]?.startTime ?? startTime,
+        endTime: perDayTimes[String(isoWeekday)]?.endTime ?? endTime,
+    })),
 });
 
 // Fixtures inmutables: el store crea copias protegidas al iniciar cada sesión.
