@@ -28,8 +28,6 @@ _QUERIES = (
             start_date,
             end_date,
             indefinite,
-            default_start_time,
-            default_end_time,
             interval_days,
             stopped_from_date
         FROM public.generation_configs
@@ -37,23 +35,35 @@ _QUERIES = (
         """,
     ),
     (
-        "generation_weekdays",
+        "generation_slots",
         """
-        SELECT
-            plan_item_id,
-            iso_weekday,
-            override_start_time,
-            override_end_time
-        FROM public.generation_weekdays
-        ORDER BY plan_item_id, iso_weekday
+        SELECT id, plan_item_id, start_time, end_time
+        FROM public.generation_slots
+        ORDER BY plan_item_id, start_time, end_time, id
         """,
     ),
     (
-        "generation_date_entries",
+        "generation_slot_weekdays",
         """
-        SELECT id, plan_item_id, entry_date, start_time, end_time
-        FROM public.generation_date_entries
-        ORDER BY plan_item_id, entry_date, start_time, end_time, id
+        SELECT slot_id, iso_weekday
+        FROM public.generation_slot_weekdays
+        ORDER BY slot_id
+        """,
+    ),
+    (
+        "generation_slot_dates",
+        """
+        SELECT slot_id, entry_date
+        FROM public.generation_slot_dates
+        ORDER BY slot_id
+        """,
+    ),
+    (
+        "generation_slot_excluded_dates",
+        """
+        SELECT slot_id, excluded_date
+        FROM public.generation_slot_excluded_dates
+        ORDER BY slot_id, excluded_date
         """,
     ),
     (
@@ -75,7 +85,8 @@ _QUERIES = (
             end_time,
             status,
             status_reason,
-            source_occurrence_id
+            source_occurrence_id,
+            source_generation_slot_id
         FROM public.occurrences
         ORDER BY occurrence_date, start_time, end_time, id
         """,
@@ -84,15 +95,19 @@ _QUERIES = (
 
 
 def read_planner_state_rows():
-    """Lee todas las tablas del estado usando una sola conexión."""
+    """Lee todas las tablas con una sola vista repeatable-read y read-only."""
     try:
         with database.get_connection() as connection:
-            with connection.cursor(row_factory=dict_row) as cursor:
-                result = {}
-                for collection_name, query in _QUERIES:
-                    cursor.execute(query)
-                    result[collection_name] = cursor.fetchall()
-                return result
+            with connection.transaction():
+                with connection.cursor(row_factory=dict_row) as cursor:
+                    cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                    )
+                    result = {}
+                    for collection_name, query in _QUERIES:
+                        cursor.execute(query)
+                        result[collection_name] = cursor.fetchall()
+                    return result
     except (database.DatabaseConnectionError, psycopg.Error):
         # Los detalles del driver pueden contener datos privados de conexión.
         raise PlannerStateRepositoryError(

@@ -17,9 +17,11 @@ from repositories import planner_state_repository
 COLLECTIONS = (
     "plan_items",
     "generation_configs",
-    "generation_weekdays",
-    "generation_date_entries",
+    "generation_slots",
+    "generation_slot_weekdays",
+    "generation_slot_dates",
     "generation_excluded_dates",
+    "generation_slot_excluded_dates",
     "occurrences",
 )
 
@@ -49,8 +51,6 @@ def generation_config_row(number, mode, **changes):
         "start_date": None,
         "end_date": None,
         "indefinite": False,
-        "default_start_time": None,
-        "default_end_time": None,
         "interval_days": None,
         "stopped_from_date": None,
     }
@@ -59,8 +59,6 @@ def generation_config_row(number, mode, **changes):
             {
                 "start_date": date(2026, 9, 1),
                 "indefinite": True,
-                "default_start_time": time(8, 0),
-                "default_end_time": time(9, 0),
             }
         )
     if mode == "interval_days":
@@ -69,14 +67,17 @@ def generation_config_row(number, mode, **changes):
     return row
 
 
-def manual_entry_row(entry_id, plan_item_id, entry_date, start, end):
+def slot_row(slot_number, plan_item_id, start, end):
     return {
-        "id": uuid(entry_id),
+        "id": UUID(f"00000000-0000-4000-8000-{slot_number:012d}"),
         "plan_item_id": uuid(plan_item_id),
-        "entry_date": entry_date,
         "start_time": start,
         "end_time": end,
     }
+
+
+def slot_uuid(slot_number):
+    return UUID(f"00000000-0000-4000-8000-{slot_number:012d}")
 
 
 def occurrence_row(
@@ -88,6 +89,7 @@ def occurrence_row(
     status="pending",
     reason=None,
     source_id=None,
+    source_slot=None,
 ):
     return {
         "id": uuid(occurrence_id),
@@ -98,6 +100,9 @@ def occurrence_row(
         "status": status,
         "status_reason": reason,
         "source_occurrence_id": uuid(source_id) if source_id else None,
+        "source_generation_slot_id": slot_uuid(source_slot)
+        if source_slot
+        else None,
     }
 
 
@@ -108,18 +113,22 @@ class PlannerStateRepositoryTests(unittest.TestCase):
         cursor_context = connection.cursor.return_value
         cursor = cursor_context.__enter__.return_value
         cursor.fetchall.side_effect = [[] for _ in COLLECTIONS]
+        transaction = connection.transaction.return_value
 
         with patch.object(database, "get_connection", return_value=connection) as connect:
             result = planner_state_repository.read_planner_state_rows()
 
         self.assertEqual(result, empty_rows())
         connect.assert_called_once_with()
+        connection.transaction.assert_called_once_with()
         connection.cursor.assert_called_once_with(row_factory=dict_row)
-        self.assertEqual(cursor.execute.call_count, len(COLLECTIONS))
+        self.assertEqual(cursor.execute.call_count, len(COLLECTIONS) + 1)
+        self.assertIn("REPEATABLE READ READ ONLY", cursor.execute.call_args_list[0].args[0])
         executed_sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
         for table in COLLECTIONS:
             self.assertIn(f"public.{table}", executed_sql)
         cursor_context.__exit__.assert_called_once()
+        transaction.__exit__.assert_called_once()
         connection.__exit__.assert_called_once()
 
     def test_database_error_is_sanitized_and_resources_are_closed(self):
@@ -147,7 +156,7 @@ class PlannerStateMappingTests(unittest.TestCase):
             {"planItems": [], "occurrences": []},
         )
 
-    def test_weekly_with_weekdays_overrides_exclusions_and_stop(self):
+    def test_weekly_with_multiple_slots_exclusions_and_stop(self):
         rows = empty_rows()
         rows["plan_items"] = [
             plan_item_row(1, kind="habit", subtype="scheduled", name="Meditar")
@@ -157,19 +166,15 @@ class PlannerStateMappingTests(unittest.TestCase):
                 1, "weekly", stopped_from_date=date(2026, 10, 1)
             )
         ]
-        rows["generation_weekdays"] = [
-            {
-                "plan_item_id": uuid(1),
-                "iso_weekday": 5,
-                "override_start_time": time(10, 15),
-                "override_end_time": time(11, 30),
-            },
-            {
-                "plan_item_id": uuid(1),
-                "iso_weekday": 1,
-                "override_start_time": None,
-                "override_end_time": None,
-            },
+        rows["generation_slots"] = [
+            slot_row(12, 1, time(14, 0), time(15, 0)),
+            slot_row(11, 1, time(8, 0), time(9, 0)),
+            slot_row(15, 1, time(10, 15), time(11, 30)),
+        ]
+        rows["generation_slot_weekdays"] = [
+            {"slot_id": slot_uuid(12), "iso_weekday": 1},
+            {"slot_id": slot_uuid(11), "iso_weekday": 1},
+            {"slot_id": slot_uuid(15), "iso_weekday": 5},
         ]
         rows["generation_excluded_dates"] = [
             {"plan_item_id": uuid(1), "excluded_date": date(2026, 9, 22)},
@@ -191,12 +196,26 @@ class PlannerStateMappingTests(unittest.TestCase):
                         "startDate": "2026-09-01",
                         "endDate": None,
                         "indefinite": True,
-                        "weekdays": [1, 5],
-                        "defaultStartTime": "08:00",
-                        "defaultEndTime": "09:00",
-                        "weekdayTimeOverrides": {
-                            "5": {"startTime": "10:15", "endTime": "11:30"}
-                        },
+                        "slots": [
+                            {
+                                "id": str(slot_uuid(11)),
+                                "isoWeekday": 1,
+                                "startTime": "08:00",
+                                "endTime": "09:00",
+                            },
+                            {
+                                "id": str(slot_uuid(12)),
+                                "isoWeekday": 1,
+                                "startTime": "14:00",
+                                "endTime": "15:00",
+                            },
+                            {
+                                "id": str(slot_uuid(15)),
+                                "isoWeekday": 5,
+                                "startTime": "10:15",
+                                "endTime": "11:30",
+                            },
+                        ],
                         "excludedDates": ["2026-09-15", "2026-09-22"],
                         "stoppedFromDate": "2026-10-01",
                     },
@@ -214,9 +233,11 @@ class PlannerStateMappingTests(unittest.TestCase):
                 end_date=date(2026, 10, 31),
                 indefinite=False,
                 interval_days=4,
-                default_start_time=time(12, 0),
-                default_end_time=time(13, 30),
             )
+        ]
+        rows["generation_slots"] = [
+            slot_row(21, 2, time(12, 0), time(13, 30)),
+            slot_row(22, 2, time(16, 0), time(17, 0)),
         ]
 
         result = planner_state_service.build_planner_state(rows)
@@ -229,8 +250,18 @@ class PlannerStateMappingTests(unittest.TestCase):
                 "endDate": "2026-10-31",
                 "indefinite": False,
                 "intervalDays": 4,
-                "defaultStartTime": "12:00",
-                "defaultEndTime": "13:30",
+                "slots": [
+                    {
+                        "id": str(slot_uuid(21)),
+                        "startTime": "12:00",
+                        "endTime": "13:30",
+                    },
+                    {
+                        "id": str(slot_uuid(22)),
+                        "startTime": "16:00",
+                        "endTime": "17:00",
+                    },
+                ],
             },
         )
 
@@ -242,13 +273,13 @@ class PlannerStateMappingTests(unittest.TestCase):
                 3, "manual_dates", stopped_from_date=date(2026, 12, 1)
             )
         ]
-        rows["generation_date_entries"] = [
-            manual_entry_row(
-                32, 3, date(2026, 11, 20), time(16, 0), time(17, 30)
-            ),
-            manual_entry_row(
-                31, 3, date(2026, 9, 1), time(10, 0), time(11, 0)
-            ),
+        rows["generation_slots"] = [
+            slot_row(32, 3, time(16, 0), time(17, 30)),
+            slot_row(31, 3, time(10, 0), time(11, 0)),
+        ]
+        rows["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(32), "entry_date": date(2026, 11, 20)},
+            {"slot_id": slot_uuid(31), "entry_date": date(2026, 9, 1)},
         ]
 
         result = planner_state_service.build_planner_state(rows)
@@ -259,11 +290,13 @@ class PlannerStateMappingTests(unittest.TestCase):
                 "mode": "manual_dates",
                 "entries": [
                     {
+                        "id": str(slot_uuid(31)),
                         "date": "2026-09-01",
                         "startTime": "10:00",
                         "endTime": "11:00",
                     },
                     {
+                        "id": str(slot_uuid(32)),
                         "date": "2026-11-20",
                         "startTime": "16:00",
                         "endTime": "17:30",
@@ -283,9 +316,13 @@ class PlannerStateMappingTests(unittest.TestCase):
             generation_config_row(4, "manual_dates"),
             generation_config_row(5, "manual_dates"),
         ]
-        rows["generation_date_entries"] = [
-            manual_entry_row(41, 4, date(2026, 9, 10), time(8, 0), time(10, 0)),
-            manual_entry_row(51, 5, date(2026, 9, 10), time(9, 0), time(9, 30)),
+        rows["generation_slots"] = [
+            slot_row(41, 4, time(8, 0), time(10, 0)),
+            slot_row(51, 5, time(9, 0), time(9, 30)),
+        ]
+        rows["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(41), "entry_date": date(2026, 9, 10)},
+            {"slot_id": slot_uuid(51), "entry_date": date(2026, 9, 10)},
         ]
         rows["occurrences"] = [
             occurrence_row(
@@ -297,9 +334,15 @@ class PlannerStateMappingTests(unittest.TestCase):
                 status="cancelled",
                 reason="priority_override",
                 source_id=501,
+                source_slot=41,
             ),
             occurrence_row(
-                501, 5, date(2026, 9, 10), time(9, 0), time(9, 30)
+                501,
+                5,
+                date(2026, 9, 10),
+                time(9, 0),
+                time(9, 30),
+                source_slot=51,
             ),
         ]
 
@@ -318,6 +361,7 @@ class PlannerStateMappingTests(unittest.TestCase):
                     "startTime": "08:00",
                     "endTime": "10:00",
                     "status": "cancelled",
+                    "sourceGenerationSlotId": str(slot_uuid(41)),
                     "statusContext": {
                         "reason": "priority_override",
                         "sourceOccurrenceId": str(uuid(501)),
@@ -330,6 +374,7 @@ class PlannerStateMappingTests(unittest.TestCase):
                     "startTime": "09:00",
                     "endTime": "09:30",
                     "status": "pending",
+                    "sourceGenerationSlotId": str(slot_uuid(51)),
                 },
             ],
         )
@@ -359,12 +404,176 @@ class PlannerStateMappingTests(unittest.TestCase):
         rows = empty_rows()
         rows["plan_items"] = [plan_item_row(8)]
         rows["generation_configs"] = [generation_config_row(8, "interval_days")]
-        rows["generation_configs"][0]["default_start_time"] = time(8, 0, 1)
+        rows["generation_slots"] = [
+            slot_row(81, 8, time(8, 0, 1), time(9, 0))
+        ]
 
         with self.assertRaises(
             planner_state_service.PlannerStateConsistencyError
         ):
             planner_state_service.build_planner_state(rows)
+
+    def test_rejects_incompatible_slot_details_and_overlaps(self):
+        cases = []
+
+        weekly_without_slots = empty_rows()
+        weekly_without_slots["plan_items"] = [plan_item_row(19)]
+        weekly_without_slots["generation_configs"] = [
+            generation_config_row(19, "weekly")
+        ]
+        cases.append(weekly_without_slots)
+
+        weekly_missing_detail = empty_rows()
+        weekly_missing_detail["plan_items"] = [plan_item_row(9)]
+        weekly_missing_detail["generation_configs"] = [
+            generation_config_row(9, "weekly")
+        ]
+        weekly_missing_detail["generation_slots"] = [
+            slot_row(91, 9, time(8, 0), time(9, 0))
+        ]
+        cases.append(weekly_missing_detail)
+
+        weekly_with_date = empty_rows()
+        weekly_with_date["plan_items"] = [plan_item_row(16)]
+        weekly_with_date["generation_configs"] = [
+            generation_config_row(16, "weekly")
+        ]
+        weekly_with_date["generation_slots"] = [
+            slot_row(161, 16, time(8, 0), time(9, 0))
+        ]
+        weekly_with_date["generation_slot_weekdays"] = [
+            {"slot_id": slot_uuid(161), "iso_weekday": 1}
+        ]
+        weekly_with_date["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(161), "entry_date": date(2026, 9, 15)}
+        ]
+        cases.append(weekly_with_date)
+
+        interval_without_slots = empty_rows()
+        interval_without_slots["plan_items"] = [plan_item_row(17)]
+        interval_without_slots["generation_configs"] = [
+            generation_config_row(17, "interval_days")
+        ]
+        cases.append(interval_without_slots)
+
+        interval_with_detail = empty_rows()
+        interval_with_detail["plan_items"] = [plan_item_row(10)]
+        interval_with_detail["generation_configs"] = [
+            generation_config_row(10, "interval_days")
+        ]
+        interval_with_detail["generation_slots"] = [
+            slot_row(101, 10, time(8, 0), time(9, 0))
+        ]
+        interval_with_detail["generation_slot_weekdays"] = [
+            {"slot_id": slot_uuid(101), "iso_weekday": 1}
+        ]
+        cases.append(interval_with_detail)
+
+        manual_with_weekday = empty_rows()
+        manual_with_weekday["plan_items"] = [plan_item_row(11)]
+        manual_with_weekday["generation_configs"] = [
+            generation_config_row(11, "manual_dates")
+        ]
+        manual_with_weekday["generation_slots"] = [
+            slot_row(111, 11, time(8, 0), time(9, 0))
+        ]
+        manual_with_weekday["generation_slot_weekdays"] = [
+            {"slot_id": slot_uuid(111), "iso_weekday": 1}
+        ]
+        manual_with_weekday["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(111), "entry_date": date(2026, 9, 15)}
+        ]
+        cases.append(manual_with_weekday)
+
+        manual_without_date = empty_rows()
+        manual_without_date["plan_items"] = [plan_item_row(18)]
+        manual_without_date["generation_configs"] = [
+            generation_config_row(18, "manual_dates")
+        ]
+        manual_without_date["generation_slots"] = [
+            slot_row(181, 18, time(8, 0), time(9, 0))
+        ]
+        cases.append(manual_without_date)
+
+        overlapping = empty_rows()
+        overlapping["plan_items"] = [plan_item_row(12)]
+        overlapping["generation_configs"] = [
+            generation_config_row(12, "interval_days")
+        ]
+        overlapping["generation_slots"] = [
+            slot_row(121, 12, time(8, 0), time(10, 0)),
+            slot_row(122, 12, time(9, 0), time(11, 0)),
+        ]
+        cases.append(overlapping)
+
+        for rows in cases:
+            with self.subTest(rows=rows), self.assertRaises(
+                planner_state_service.PlannerStateConsistencyError
+            ):
+                planner_state_service.build_planner_state(rows)
+
+    def test_rejects_unrepresentable_exclusions_and_cross_plan_source_slot(self):
+        rows = empty_rows()
+        rows["plan_items"] = [plan_item_row(13), plan_item_row(14)]
+        rows["generation_configs"] = [
+            generation_config_row(13, "manual_dates"),
+            generation_config_row(14, "manual_dates"),
+        ]
+        rows["generation_slots"] = [
+            slot_row(131, 13, time(8, 0), time(9, 0)),
+            slot_row(141, 14, time(10, 0), time(11, 0)),
+        ]
+        rows["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(131), "entry_date": date(2026, 9, 15)},
+            {"slot_id": slot_uuid(141), "entry_date": date(2026, 9, 15)},
+        ]
+        rows["occurrences"] = [
+            occurrence_row(
+                1301,
+                13,
+                date(2026, 9, 15),
+                time(8, 0),
+                time(9, 0),
+                source_slot=141,
+            )
+        ]
+        with self.assertRaises(planner_state_service.PlannerStateConsistencyError):
+            planner_state_service.build_planner_state(rows)
+
+        rows["occurrences"] = []
+        rows["generation_excluded_dates"] = [
+            {"plan_item_id": uuid(13), "excluded_date": date(2026, 9, 16)}
+        ]
+        with self.assertRaises(planner_state_service.PlannerStateConsistencyError):
+            planner_state_service.build_planner_state(rows)
+
+        rows["generation_excluded_dates"] = []
+        rows["occurrences"] = []
+        rows["generation_slot_excluded_dates"] = [
+            {"slot_id": slot_uuid(131), "excluded_date": date(2026, 9, 15)}
+        ]
+        with self.assertRaises(planner_state_service.PlannerStateConsistencyError):
+            planner_state_service.build_planner_state(rows)
+
+    def test_null_source_generation_slot_is_omitted(self):
+        rows = empty_rows()
+        rows["plan_items"] = [plan_item_row(15)]
+        rows["generation_configs"] = [generation_config_row(15, "manual_dates")]
+        rows["generation_slots"] = [
+            slot_row(151, 15, time(8, 0), time(9, 0))
+        ]
+        rows["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(151), "entry_date": date(2026, 9, 15)}
+        ]
+        rows["occurrences"] = [
+            occurrence_row(
+                1501, 15, date(2026, 9, 15), time(8, 0), time(9, 0)
+            )
+        ]
+
+        result = planner_state_service.build_planner_state(rows)
+
+        self.assertNotIn("sourceGenerationSlotId", result["occurrences"][0])
 
     def test_repository_failure_is_sanitized_by_service(self):
         with patch.object(

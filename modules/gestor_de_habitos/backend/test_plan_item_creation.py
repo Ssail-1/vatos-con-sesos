@@ -20,16 +20,25 @@ from repositories import plan_item_repository
 REFERENCE_DATE = date(2026, 9, 11)
 
 
+def slot_id(number):
+    return f"00000000-0000-4000-8000-{number:012d}"
+
+
 def weekly_config(**changes):
     config = {
         "mode": "weekly",
         "startDate": "2026-09-11",
         "endDate": None,
         "indefinite": True,
-        "weekdays": [1, 3, 5],
-        "defaultStartTime": "08:00",
-        "defaultEndTime": "09:00",
-        "weekdayTimeOverrides": {},
+        "slots": [
+            {
+                "id": slot_id(index),
+                "isoWeekday": weekday,
+                "startTime": "08:00",
+                "endTime": "09:00",
+            }
+            for index, weekday in enumerate((1, 3, 5), start=1)
+        ],
     }
     config.update(changes)
     return config
@@ -42,24 +51,34 @@ def interval_config(**changes):
         "endDate": None,
         "indefinite": True,
         "intervalDays": 3,
-        "defaultStartTime": "12:00",
-        "defaultEndTime": "13:00",
+        "slots": [
+            {
+                "id": slot_id(20),
+                "startTime": "12:00",
+                "endTime": "13:00",
+            }
+        ],
     }
     config.update(changes)
     return config
 
 
 def manual_config(entries=None, **controls):
+    source_entries = entries if entries is not None else [
+        {
+            "date": "2026-09-11",
+            "startTime": "10:00",
+            "endTime": "11:00",
+        }
+    ]
     return {
         "mode": "manual_dates",
-        "entries": entries
-        if entries is not None
-        else [
+        "entries": [
             {
-                "date": "2026-09-11",
-                "startTime": "10:00",
-                "endTime": "11:00",
+                "id": entry.get("id", slot_id(30 + index)),
+                **entry,
             }
+            for index, entry in enumerate(source_entries)
         ],
         **controls,
     }
@@ -123,23 +142,24 @@ class PayloadValidationTests(unittest.TestCase):
             )
 
     def test_rejects_invalid_plan_item_and_generation_values(self):
-        duplicate_entry = {
-            "date": "2026-09-11",
-            "startTime": "10:00",
-            "endTime": "11:00",
-        }
+        first_weekly_slot = weekly_config()["slots"][0]
         invalid_payloads = [
             {**activity_payload(), "name": " "},
             {**activity_payload(), "activityType": "unknown"},
             {**habit_payload(), "activityType": "periodic"},
-            activity_payload(weekly_config(weekdays=[])),
-            activity_payload(weekly_config(weekdays=[1, 1])),
-            activity_payload(weekly_config(defaultEndTime="07:00")),
+            activity_payload(weekly_config(slots=[])),
+            activity_payload(weekly_config(slots=[first_weekly_slot, first_weekly_slot])),
+            activity_payload(weekly_config(slots=[{**first_weekly_slot, "endTime": "07:00"}])),
+            activity_payload(weekly_config(slots=[{**first_weekly_slot, "id": "not-a-uuid"}])),
             activity_payload(interval_config(intervalDays=0)),
             activity_payload(manual_config(entries=[])),
-            activity_payload(manual_config(entries=[duplicate_entry, duplicate_entry])),
-            activity_payload(manual_config(excludedDates=["invalid"])),
+            activity_payload(manual_config(entries=[
+                {"date": "2026-09-11", "startTime": "10:00", "endTime": "12:00"},
+                {"date": "2026-09-11", "startTime": "11:00", "endTime": "13:00"},
+            ])),
+            activity_payload(manual_config(excludedDates=["2026-09-12"])),
             activity_payload(manual_config(stoppedFromDate="invalid")),
+            activity_payload(weekly_config(defaultStartTime="08:00")),
         ]
         for payload in invalid_payloads:
             with self.subTest(payload=payload):
@@ -149,10 +169,10 @@ class PayloadValidationTests(unittest.TestCase):
     def test_normalizes_name_order_and_optional_controls(self):
         payload = activity_payload(
             weekly_config(
-                weekdays=[5, 1],
-                weekdayTimeOverrides={
-                    "5": {"startTime": "10:00", "endTime": "11:00"}
-                },
+                slots=[
+                    {"id": slot_id(5), "isoWeekday": 5, "startTime": "10:00", "endTime": "11:00"},
+                    {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+                ],
                 excludedDates=["2026-09-25", "2026-09-12"],
                 stoppedFromDate="2026-10-01",
             )
@@ -160,22 +180,77 @@ class PayloadValidationTests(unittest.TestCase):
         payload["name"] = "  Actividad normalizada  "
         result = creation_service.validate_plan_item_payload(payload)
         self.assertEqual(result["name"], "Actividad normalizada")
-        self.assertEqual(result["generationConfig"]["weekdays"], [1, 5])
+        self.assertEqual(
+            [slot["isoWeekday"] for slot in result["generationConfig"]["slots"]],
+            [1, 5],
+        )
         self.assertEqual(
             result["generationConfig"]["excludedDates"],
             ["2026-09-12", "2026-09-25"],
         )
 
+    def test_adjacent_slots_are_valid_and_overlapping_slots_are_rejected(self):
+        valid_cases = (
+            weekly_config(slots=[
+                {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+                {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "10:00"},
+            ]),
+            interval_config(slots=[
+                {"id": slot_id(20), "startTime": "08:00", "endTime": "09:00"},
+                {"id": slot_id(21), "startTime": "09:00", "endTime": "10:00"},
+            ]),
+            manual_config(entries=[
+                {"date": "2026-09-11", "startTime": "08:00", "endTime": "09:00"},
+                {"date": "2026-09-11", "startTime": "09:00", "endTime": "10:00"},
+            ]),
+        )
+        for config in valid_cases:
+            with self.subTest(mode=config["mode"]):
+                creation_service.validate_plan_item_payload(activity_payload(config))
+
+        overlapping_cases = (
+            weekly_config(slots=[
+                {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "10:00"},
+                {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "11:00"},
+            ]),
+            interval_config(slots=[
+                {"id": slot_id(20), "startTime": "08:00", "endTime": "10:00"},
+                {"id": slot_id(21), "startTime": "09:00", "endTime": "11:00"},
+            ]),
+        )
+        for config in overlapping_cases:
+            with self.subTest(mode=config["mode"]), self.assertRaises(
+                creation_service.PlanItemValidationError
+            ):
+                creation_service.validate_plan_item_payload(activity_payload(config))
+
+    def test_slot_ids_are_preserved_and_duplicates_are_rejected(self):
+        config = weekly_config(slots=[
+            {"id": slot_id(101), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+            {"id": slot_id(102), "isoWeekday": 2, "startTime": "10:00", "endTime": "11:00"},
+        ])
+        normalized = creation_service.validate_plan_item_payload(
+            activity_payload(config)
+        )
+        self.assertEqual(
+            [slot["id"] for slot in normalized["generationConfig"]["slots"]],
+            [slot_id(101), slot_id(102)],
+        )
+
+        config["slots"][1]["id"] = slot_id(101)
+        with self.assertRaises(creation_service.PlanItemValidationError):
+            creation_service.validate_plan_item_payload(activity_payload(config))
+
 
 class MaterializationTests(unittest.TestCase):
-    def test_weekly_override_interval_and_manual_dates(self):
+    def test_weekly_interval_and_manual_dates(self):
         cases = (
             (
                 activity_payload(
                     weekly_config(
-                        weekdayTimeOverrides={
-                            "5": {"startTime": "10:00", "endTime": "11:30"}
-                        }
+                        slots=[
+                            {"id": slot_id(5), "isoWeekday": 5, "startTime": "10:00", "endTime": "11:30"}
+                        ]
                     )
                 ),
                 lambda occurrences: self.assertTrue(
@@ -239,6 +314,61 @@ class MaterializationTests(unittest.TestCase):
             ["2026-09-11", "2026-09-17"],
         )
 
+    def test_multiple_occurrences_same_day_keep_slot_provenance(self):
+        config = manual_config(entries=[
+            {"id": slot_id(31), "date": "2026-09-11", "startTime": "08:00", "endTime": "09:00"},
+            {"id": slot_id(32), "date": "2026-09-11", "startTime": "10:00", "endTime": "11:00"},
+        ])
+        result, _, _ = create_without_database(activity_payload(config))
+        self.assertEqual(len(result["occurrences"]), 2)
+        self.assertEqual(
+            [item["sourceGenerationSlotId"] for item in result["occurrences"]],
+            [slot_id(31), slot_id(32)],
+        )
+        self.assertEqual(
+            len({(item["sourceGenerationSlotId"], item["date"]) for item in result["occurrences"]}),
+            2,
+        )
+
+    def test_uber_week_materializes_seventeen_occurrences(self):
+        slots = []
+        sequence = 200
+        for weekday in range(1, 6):
+            for start_time, end_time in (
+                ("08:00", "11:00"),
+                ("14:00", "17:00"),
+                ("20:00", "22:00"),
+            ):
+                sequence += 1
+                slots.append({
+                    "id": slot_id(sequence),
+                    "isoWeekday": weekday,
+                    "startTime": start_time,
+                    "endTime": end_time,
+                })
+        for weekday in (6, 7):
+            sequence += 1
+            slots.append({
+                "id": slot_id(sequence),
+                "isoWeekday": weekday,
+                "startTime": "08:00",
+                "endTime": "21:00",
+            })
+        config = weekly_config(
+            startDate="2026-09-14",
+            endDate="2026-09-20",
+            indefinite=False,
+            slots=slots,
+        )
+        result, _, _ = create_without_database(
+            activity_payload(config), reference_date=date(2026, 9, 14)
+        )
+        self.assertEqual(len(result["occurrences"]), 17)
+        self.assertEqual(
+            {item["sourceGenerationSlotId"] for item in result["occurrences"]},
+            {slot["id"] for slot in slots},
+        )
+
     def test_habit_and_activity_keep_the_discriminated_contract(self):
         for payload, subtype_field in (
             (habit_payload(), "habitType"),
@@ -261,12 +391,12 @@ class MaterializationTests(unittest.TestCase):
                         weekly_config(
                             endDate="2026-09-30",
                             indefinite=False,
-                            weekdayTimeOverrides={
-                                "5": {
-                                    "startTime": "10:00",
-                                    "endTime": "11:30",
-                                }
-                            },
+                            slots=[
+                                {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+                                {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "10:00"},
+                                {"id": slot_id(3), "isoWeekday": 3, "startTime": "14:00", "endTime": "15:00"},
+                                {"id": slot_id(5), "isoWeekday": 5, "startTime": "10:00", "endTime": "11:30"},
+                            ],
                             excludedDates=["2026-09-16"],
                             stoppedFromDate="2026-09-26",
                         )
@@ -279,7 +409,14 @@ class MaterializationTests(unittest.TestCase):
                 "planItem": {
                     "id": "interval",
                     **activity_payload(
-                        interval_config(excludedDates=["2026-09-17"])
+                        interval_config(
+                            slots=[
+                                {"id": slot_id(20), "startTime": "08:00", "endTime": "09:00"},
+                                {"id": slot_id(21), "startTime": "12:00", "endTime": "13:00"},
+                            ],
+                            excludedDates=["2026-09-17"],
+                            stoppedFromDate="2026-09-25",
+                        )
                     ),
                 },
                 "rangeStart": "2026-09-01",
@@ -339,7 +476,7 @@ class MaterializationTests(unittest.TestCase):
 
 
 class ConflictTests(unittest.TestCase):
-    def test_overlapping_manual_entries_are_a_domain_conflict(self):
+    def test_overlapping_manual_entries_are_invalid_payload(self):
         payload = activity_payload(
             manual_config(
                 entries=[
@@ -356,9 +493,8 @@ class ConflictTests(unittest.TestCase):
                 ]
             )
         )
-        with self.assertRaises(creation_service.PlanItemConflictError) as error:
+        with self.assertRaises(creation_service.PlanItemValidationError):
             creation_service.create_plan_item(payload, reference_date=REFERENCE_DATE)
-        self.assertEqual(error.exception.code, "candidate_internal_conflict")
 
     def test_frozen_history_is_rejected_before_opening_a_connection(self):
         payload = activity_payload(
@@ -416,17 +552,17 @@ class ConflictTests(unittest.TestCase):
 
 
 class RepositoryWriteTests(unittest.TestCase):
-    def test_weekly_graph_includes_overrides_exclusions_and_occurrences(self):
+    def test_weekly_graph_includes_slots_details_exclusions_and_occurrences(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         plan_item = {
             "id": str(UUID(int=1)),
             **activity_payload(
                 weekly_config(
-                    weekdays=[1, 5],
-                    weekdayTimeOverrides={
-                        "5": {"startTime": "10:00", "endTime": "11:00"}
-                    },
+                    slots=[
+                        {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+                        {"id": slot_id(5), "isoWeekday": 5, "startTime": "10:00", "endTime": "11:00"},
+                    ],
                     excludedDates=["2026-09-14"],
                     stoppedFromDate="2026-10-01",
                 )
@@ -439,10 +575,11 @@ class RepositoryWriteTests(unittest.TestCase):
             "startTime": "10:00",
             "endTime": "11:00",
             "status": "pending",
+            "sourceGenerationSlotId": slot_id(5),
         }
 
         plan_item_repository.insert_plan_item_graph(
-            connection, plan_item, [occurrence], []
+            connection, plan_item, [occurrence]
         )
 
         executed = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
@@ -452,21 +589,30 @@ class RepositoryWriteTests(unittest.TestCase):
         self.assertIn("public.plan_items", executed)
         self.assertIn("public.generation_configs", executed)
         weekday_query = next(
-            query for query in batches if "public.generation_weekdays" in query
+            query
+            for query in batches
+            if "public.generation_slot_weekdays" in query
         )
         self.assertEqual(
             batches[weekday_query],
             [
-                (plan_item["id"], 1, None, None),
-                (plan_item["id"], 5, "10:00", "11:00"),
+                (slot_id(1), 1),
+                (slot_id(5), 5),
             ],
+        )
+        slot_query = next(
+            query for query in batches if "public.generation_slots" in query
+        )
+        self.assertEqual(
+            [parameters[0] for parameters in batches[slot_query]],
+            [slot_id(1), slot_id(5)],
         )
         self.assertTrue(
             any("public.generation_excluded_dates" in query for query in batches)
         )
         self.assertTrue(any("public.occurrences" in query for query in batches))
 
-    def test_manual_graph_assigns_one_internal_id_per_entry(self):
+    def test_manual_graph_preserves_entry_ids_in_slot_and_date_detail(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         entries = [
@@ -477,19 +623,18 @@ class RepositoryWriteTests(unittest.TestCase):
             "id": str(UUID(int=1)),
             **activity_payload(manual_config(entries=entries)),
         }
-        entry_ids = [str(UUID(int=2)), str(UUID(int=3))]
-
         plan_item_repository.insert_plan_item_graph(
-            connection, plan_item, [], entry_ids
+            connection, plan_item, []
         )
 
         entry_call = next(
             call
             for call in cursor.executemany.call_args_list
-            if "public.generation_date_entries" in call.args[0]
+            if "public.generation_slot_dates" in call.args[0]
         )
         self.assertEqual(
-            [parameters[0] for parameters in entry_call.args[1]], entry_ids
+            [parameters[0] for parameters in entry_call.args[1]],
+            [entry["id"] for entry in plan_item["generationConfig"]["entries"]],
         )
 
 
@@ -514,11 +659,19 @@ class TransactionTests(unittest.TestCase):
 
     def test_failures_rollback_without_leaving_an_orphan(self):
         cases = (
-            "generation_configs",
-            "generation_date_entries",
-            "occurrences",
+            ("generation_configs", activity_payload()),
+            ("generation_slots", activity_payload()),
+            ("generation_slot_dates", activity_payload()),
+            ("generation_slot_weekdays", activity_payload(weekly_config())),
+            (
+                "generation_excluded_dates",
+                activity_payload(
+                    weekly_config(excludedDates=["2026-09-14"])
+                ),
+            ),
+            ("occurrences", activity_payload()),
         )
-        for table_name in cases:
+        for table_name, payload in cases:
             with self.subTest(table=table_name):
                 connection = self._connection_failing_at(table_name)
                 transaction = connection.transaction.return_value
@@ -529,7 +682,7 @@ class TransactionTests(unittest.TestCase):
                         creation_service.PlanItemCreationUnavailableError
                     ) as error:
                         creation_service.create_plan_item(
-                            activity_payload(), reference_date=REFERENCE_DATE
+                            payload, reference_date=REFERENCE_DATE
                         )
                 self.assertNotIn("PRIVATE_DATABASE_DETAIL", str(error.exception))
                 transaction.__exit__.assert_called_once()
@@ -540,11 +693,10 @@ class TransactionTests(unittest.TestCase):
         result, connection, insert = create_without_database(activity_payload())
         connection.transaction.assert_called_once_with()
         insert.assert_called_once()
-        persisted_connection, plan_item, occurrences, entry_ids = insert.call_args.args
+        persisted_connection, plan_item, occurrences = insert.call_args.args
         self.assertIs(persisted_connection, connection)
         self.assertEqual(plan_item, result["planItem"])
         self.assertEqual(occurrences, result["occurrences"])
-        self.assertEqual(len(entry_ids), 1)
 
 
 class EndpointTests(unittest.TestCase):

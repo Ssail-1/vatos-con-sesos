@@ -28,9 +28,16 @@ def get_materialization_range(plan_item, reference_date):
     )
 
 
-def _draft(plan_item_id, occurrence_date, start_time, end_time):
+def _draft(
+    plan_item_id,
+    source_generation_slot_id,
+    occurrence_date,
+    start_time,
+    end_time,
+):
     return {
         "planItemId": plan_item_id,
+        "sourceGenerationSlotId": source_generation_slot_id,
         "date": occurrence_date.isoformat(),
         "startTime": start_time,
         "endTime": end_time,
@@ -56,18 +63,16 @@ def materialize_occurrence_drafts(plan_item, range_start, range_end):
         current_date = effective_start
         while current_date <= effective_end:
             weekday = current_date.isoweekday()
-            if weekday in config["weekdays"]:
-                override = config["weekdayTimeOverrides"].get(str(weekday))
+            for slot in config["slots"]:
+                if slot["isoWeekday"] != weekday:
+                    continue
                 drafts.append(
                     _draft(
                         plan_item["id"],
+                        slot["id"],
                         current_date,
-                        override["startTime"]
-                        if override
-                        else config["defaultStartTime"],
-                        override["endTime"]
-                        if override
-                        else config["defaultEndTime"],
+                        slot["startTime"],
+                        slot["endTime"],
                     )
                 )
             current_date += timedelta(days=1)
@@ -83,14 +88,16 @@ def materialize_occurrence_drafts(plan_item, range_start, range_end):
         step = timedelta(days=config["intervalDays"])
         while current_date <= effective_end:
             if current_date >= range_start:
-                drafts.append(
-                    _draft(
-                        plan_item["id"],
-                        current_date,
-                        config["defaultStartTime"],
-                        config["defaultEndTime"],
+                for slot in config["slots"]:
+                    drafts.append(
+                        _draft(
+                            plan_item["id"],
+                            slot["id"],
+                            current_date,
+                            slot["startTime"],
+                            slot["endTime"],
+                        )
                     )
-                )
             current_date += step
 
     elif mode == "manual_dates":
@@ -100,6 +107,7 @@ def materialize_occurrence_drafts(plan_item, range_start, range_end):
                 drafts.append(
                     _draft(
                         plan_item["id"],
+                        entry["id"],
                         entry_date,
                         entry["startTime"],
                         entry["endTime"],

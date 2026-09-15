@@ -43,6 +43,13 @@ def _uuid_string(value, field_name):
     return str(value)
 
 
+def _slot_uuid_string(value, field_name):
+    slot_id = _uuid_string(value, field_name)
+    if value.version != 4:
+        _inconsistent(f"{field_name} no contiene un UUID v4.")
+    return slot_id
+
+
 def _date_string(value, field_name):
     if isinstance(value, datetime) or not isinstance(value, date):
         _inconsistent(f"{field_name} no contiene una fecha válida.")
@@ -71,6 +78,14 @@ def _rows_by_plan_item(rows):
     return grouped
 
 
+def _rows_by_slot(rows):
+    grouped = {}
+    for row in rows:
+        slot_id = _slot_uuid_string(row["slot_id"], "slot_id")
+        grouped.setdefault(slot_id, []).append(row)
+    return grouped
+
+
 def _recurring_date_range(config_row):
     indefinite = config_row["indefinite"]
     if not isinstance(indefinite, bool):
@@ -92,6 +107,8 @@ def _recurring_date_range(config_row):
 
 
 def _generation_controls(config, config_row, excluded_rows):
+    if config["mode"] == "manual_dates" and excluded_rows:
+        _inconsistent("manual_dates no puede representar excludedDates globales.")
     excluded_dates = [
         _date_string(row["excluded_date"], "excluded_date")
         for row in excluded_rows
@@ -109,64 +126,80 @@ def _generation_controls(config, config_row, excluded_rows):
     return config
 
 
-def _weekly_config(config_row, weekday_rows, entry_rows):
-    if entry_rows:
-        _inconsistent("Una configuración weekly no puede tener entries manuales.")
-    if not weekday_rows:
-        _inconsistent("Una configuración weekly requiere al menos un weekday.")
+def _ranges_overlap(first, second):
+    return (
+        first["startTime"] < second["endTime"]
+        and first["endTime"] > second["startTime"]
+    )
+
+
+def _validate_slot_overlaps(items, group_key):
+    grouped = {}
+    for item in items:
+        group = grouped.setdefault(group_key(item), [])
+        if any(_ranges_overlap(item, candidate) for candidate in group):
+            _inconsistent("La configuración contiene GenerationSlots solapados.")
+        group.append(item)
+
+
+def _base_slot(row):
+    start_time, end_time = _time_range(
+        row["start_time"], row["end_time"], "start_time", "end_time"
+    )
+    return {
+        "id": _slot_uuid_string(row["id"], "generation_slots.id"),
+        "startTime": start_time,
+        "endTime": end_time,
+    }
+
+
+def _weekly_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot):
+    if not slot_rows:
+        _inconsistent("Una configuración weekly requiere al menos un slot.")
     if config_row["interval_days"] is not None:
         _inconsistent("Una configuración weekly no puede tener intervalDays.")
 
     start_date, end_date, indefinite = _recurring_date_range(config_row)
-    weekdays = []
-    weekday_time_overrides = {}
-    for row in weekday_rows:
+    slots = []
+    for slot_row in slot_rows:
+        slot = _base_slot(slot_row)
+        weekday_rows = weekday_rows_by_slot.get(slot["id"], [])
+        date_rows = date_rows_by_slot.get(slot["id"], [])
+        if len(weekday_rows) != 1:
+            _inconsistent("Cada slot weekly requiere exactamente un weekday.")
+        if date_rows:
+            _inconsistent("Un slot weekly no puede tener date detail.")
+        row = weekday_rows[0]
         weekday = row["iso_weekday"]
         if isinstance(weekday, bool) or not isinstance(weekday, int):
             _inconsistent("iso_weekday no contiene un entero válido.")
-        if weekday < 1 or weekday > 7 or weekday in weekdays:
-            _inconsistent("Los weekdays deben ser únicos y estar entre 1 y 7.")
-        weekdays.append(weekday)
-
-        override_start = row["override_start_time"]
-        override_end = row["override_end_time"]
-        if (override_start is None) != (override_end is None):
-            _inconsistent("Un override semanal requiere ambas horas.")
-        if override_start is not None:
-            start_time, end_time = _time_range(
-                override_start,
-                override_end,
-                "override_start_time",
-                "override_end_time",
-            )
-            weekday_time_overrides[str(weekday)] = {
-                "startTime": start_time,
-                "endTime": end_time,
-            }
-
-    default_start_time, default_end_time = _time_range(
-        config_row["default_start_time"],
-        config_row["default_end_time"],
-        "default_start_time",
-        "default_end_time",
+        if weekday < 1 or weekday > 7:
+            _inconsistent("iso_weekday debe estar entre 1 y 7.")
+        slot["isoWeekday"] = weekday
+        slots.append(slot)
+    _validate_slot_overlaps(slots, lambda slot: slot["isoWeekday"])
+    slots.sort(
+        key=lambda slot: (
+            slot["isoWeekday"],
+            slot["startTime"],
+            slot["endTime"],
+            slot["id"],
+        )
     )
     return {
         "mode": "weekly",
         "startDate": start_date,
         "endDate": end_date,
         "indefinite": indefinite,
-        "weekdays": sorted(weekdays),
-        "defaultStartTime": default_start_time,
-        "defaultEndTime": default_end_time,
-        "weekdayTimeOverrides": weekday_time_overrides,
+        "slots": slots,
     }
 
 
-def _interval_days_config(config_row, weekday_rows, entry_rows):
-    if weekday_rows or entry_rows:
-        _inconsistent(
-            "Una configuración interval_days no puede tener weekdays ni entries."
-        )
+def _interval_days_config(
+    config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+):
+    if not slot_rows:
+        _inconsistent("Una configuración interval_days requiere al menos un slot.")
     interval_days = config_row["interval_days"]
     if (
         isinstance(interval_days, bool)
@@ -175,64 +208,73 @@ def _interval_days_config(config_row, weekday_rows, entry_rows):
     ):
         _inconsistent("intervalDays debe ser un entero positivo.")
     start_date, end_date, indefinite = _recurring_date_range(config_row)
-    default_start_time, default_end_time = _time_range(
-        config_row["default_start_time"],
-        config_row["default_end_time"],
-        "default_start_time",
-        "default_end_time",
-    )
+    slots = []
+    for row in slot_rows:
+        slot = _base_slot(row)
+        if weekday_rows_by_slot.get(slot["id"]) or date_rows_by_slot.get(slot["id"]):
+            _inconsistent("Un slot interval_days no puede tener detalles de fecha.")
+        slots.append(slot)
+    _validate_slot_overlaps(slots, lambda _slot: "interval_days")
+    slots.sort(key=lambda slot: (slot["startTime"], slot["endTime"], slot["id"]))
     return {
         "mode": "interval_days",
         "startDate": start_date,
         "endDate": end_date,
         "indefinite": indefinite,
         "intervalDays": interval_days,
-        "defaultStartTime": default_start_time,
-        "defaultEndTime": default_end_time,
+        "slots": slots,
     }
 
 
-def _manual_dates_config(config_row, weekday_rows, entry_rows):
-    if weekday_rows:
-        _inconsistent("Una configuración manual_dates no puede tener weekdays.")
-    if not entry_rows:
+def _manual_dates_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot):
+    if not slot_rows:
         _inconsistent("Una configuración manual_dates requiere al menos una entry.")
     if any(
         config_row[field] is not None
-        for field in (
-            "start_date",
-            "end_date",
-            "default_start_time",
-            "default_end_time",
-            "interval_days",
-        )
+        for field in ("start_date", "end_date", "interval_days")
     ) or config_row["indefinite"] is not False:
         _inconsistent("La fila manual_dates contiene controles recurrentes.")
 
     entries = []
-    for row in entry_rows:
-        start_time, end_time = _time_range(
-            row["start_time"], row["end_time"], "start_time", "end_time"
+    for slot_row in slot_rows:
+        entry = _base_slot(slot_row)
+        weekday_rows = weekday_rows_by_slot.get(entry["id"], [])
+        date_rows = date_rows_by_slot.get(entry["id"], [])
+        if weekday_rows:
+            _inconsistent("Un slot manual_dates no puede tener weekday detail.")
+        if len(date_rows) != 1:
+            _inconsistent("Cada slot manual_dates requiere exactamente una fecha.")
+        entry["date"] = _date_string(date_rows[0]["entry_date"], "entry_date")
+        entries.append(entry)
+    _validate_slot_overlaps(entries, lambda entry: entry["date"])
+    entries.sort(
+        key=lambda entry: (
+            entry["date"], entry["startTime"], entry["endTime"], entry["id"]
         )
-        entries.append(
-            {
-                "date": _date_string(row["entry_date"], "entry_date"),
-                "startTime": start_time,
-                "endTime": end_time,
-            }
-        )
-    entries.sort(key=lambda entry: (entry["date"], entry["startTime"], entry["endTime"]))
+    )
     return {"mode": "manual_dates", "entries": entries}
 
 
-def _build_generation_config(config_row, weekday_rows, entry_rows, excluded_rows):
+def _build_generation_config(
+    config_row,
+    slot_rows,
+    weekday_rows_by_slot,
+    date_rows_by_slot,
+    excluded_rows,
+):
     mode = config_row["mode"]
     if mode == "weekly":
-        config = _weekly_config(config_row, weekday_rows, entry_rows)
+        config = _weekly_config(
+            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+        )
     elif mode == "interval_days":
-        config = _interval_days_config(config_row, weekday_rows, entry_rows)
+        config = _interval_days_config(
+            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+        )
     elif mode == "manual_dates":
-        config = _manual_dates_config(config_row, weekday_rows, entry_rows)
+        config = _manual_dates_config(
+            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+        )
     else:
         _inconsistent("La configuración tiene un mode no soportado.")
     return _generation_controls(config, config_row, excluded_rows)
@@ -258,7 +300,7 @@ def _build_plan_item(row, generation_config):
     return plan_item
 
 
-def _build_occurrences(rows, plan_item_ids):
+def _build_occurrences(rows, plan_item_ids, slot_owners):
     occurrence_ids = []
     for row in rows:
         occurrence_id = _uuid_string(row["id"], "occurrences.id")
@@ -289,6 +331,17 @@ def _build_occurrences(rows, plan_item_ids):
             "endTime": end_time,
             "status": status,
         }
+        generation_slot_value = row["source_generation_slot_id"]
+        if generation_slot_value is not None:
+            generation_slot_id = _slot_uuid_string(
+                generation_slot_value,
+                "occurrences.source_generation_slot_id",
+            )
+            if slot_owners.get(generation_slot_id) != plan_item_id:
+                _inconsistent(
+                    "Una Occurrence referencia un GenerationSlot de otro PlanItem."
+                )
+            occurrence["sourceGenerationSlotId"] = generation_slot_id
         reason = row["status_reason"]
         source_value = row["source_occurrence_id"]
         if reason is None and source_value is None:
@@ -331,8 +384,28 @@ def build_planner_state(rows):
             _inconsistent("Un PlanItem tiene varias generationConfig.")
         config_by_plan_item[plan_item_id] = config_row
 
-    weekdays_by_plan_item = _rows_by_plan_item(rows["generation_weekdays"])
-    entries_by_plan_item = _rows_by_plan_item(rows["generation_date_entries"])
+    slots_by_plan_item = {}
+    slot_owners = {}
+    for slot_row in rows["generation_slots"]:
+        slot_id = _slot_uuid_string(slot_row["id"], "generation_slots.id")
+        if slot_id in slot_owners:
+            _inconsistent("Existen IDs de GenerationSlot duplicados.")
+        plan_item_id = _uuid_string(
+            slot_row["plan_item_id"], "generation_slots.plan_item_id"
+        )
+        slot_owners[slot_id] = plan_item_id
+        slots_by_plan_item.setdefault(plan_item_id, []).append(slot_row)
+
+    weekdays_by_slot = _rows_by_slot(rows["generation_slot_weekdays"])
+    dates_by_slot = _rows_by_slot(rows["generation_slot_dates"])
+    detail_slot_ids = set(weekdays_by_slot) | set(dates_by_slot)
+    if detail_slot_ids - set(slot_owners):
+        _inconsistent("Existen detalles asociados a un GenerationSlot inexistente.")
+    if rows["generation_slot_excluded_dates"]:
+        _inconsistent(
+            "Existen exclusiones por slot que el contrato actual no representa."
+        )
+
     excluded_by_plan_item = _rows_by_plan_item(rows["generation_excluded_dates"])
 
     plan_items = []
@@ -347,16 +420,16 @@ def build_planner_state(rows):
             _inconsistent("Un PlanItem no tiene generationConfig persistida.")
         generation_config = _build_generation_config(
             config_row,
-            weekdays_by_plan_item.get(plan_item_id, []),
-            entries_by_plan_item.get(plan_item_id, []),
+            slots_by_plan_item.get(plan_item_id, []),
+            weekdays_by_slot,
+            dates_by_slot,
             excluded_by_plan_item.get(plan_item_id, []),
         )
         plan_items.append(_build_plan_item(plan_item_row, generation_config))
 
     related_ids = (
         set(config_by_plan_item)
-        | set(weekdays_by_plan_item)
-        | set(entries_by_plan_item)
+        | set(slots_by_plan_item)
         | set(excluded_by_plan_item)
     )
     if related_ids - plan_item_ids:
@@ -364,7 +437,9 @@ def build_planner_state(rows):
 
     return {
         "planItems": plan_items,
-        "occurrences": _build_occurrences(rows["occurrences"], plan_item_ids),
+        "occurrences": _build_occurrences(
+            rows["occurrences"], plan_item_ids, slot_owners
+        ),
     }
 
 

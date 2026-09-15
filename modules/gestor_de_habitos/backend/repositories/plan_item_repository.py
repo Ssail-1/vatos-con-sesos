@@ -63,7 +63,7 @@ def list_blocking_occurrences(connection, occurrence_dates):
         return cursor.fetchall()
 
 
-def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
+def insert_plan_item_graph(connection, plan_item, occurrences):
     """Inserta el agregado completo usando la transacción de la conexión recibida."""
     config = plan_item["generationConfig"]
     subtype = (
@@ -89,12 +89,10 @@ def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
                 start_date,
                 end_date,
                 indefinite,
-                default_start_time,
-                default_end_time,
                 interval_days,
                 stopped_from_date
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 plan_item["id"],
@@ -102,8 +100,6 @@ def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
                 config.get("startDate") if recurring else None,
                 config.get("endDate") if recurring else None,
                 config["indefinite"] if recurring else False,
-                config.get("defaultStartTime") if recurring else None,
-                config.get("defaultEndTime") if recurring else None,
                 config.get("intervalDays")
                 if config["mode"] == "interval_days"
                 else None,
@@ -111,53 +107,59 @@ def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
             ),
         )
 
+        slots = (
+            config["entries"]
+            if config["mode"] == "manual_dates"
+            else config["slots"]
+        )
+        cursor.executemany(
+            """
+            INSERT INTO public.generation_slots (
+                id,
+                plan_item_id,
+                start_time,
+                end_time
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            [
+                (
+                    slot["id"],
+                    plan_item["id"],
+                    slot["startTime"],
+                    slot["endTime"],
+                )
+                for slot in slots
+            ],
+        )
+
         if config["mode"] == "weekly":
             cursor.executemany(
                 """
-                INSERT INTO public.generation_weekdays (
-                    plan_item_id,
-                    iso_weekday,
-                    override_start_time,
-                    override_end_time
+                INSERT INTO public.generation_slot_weekdays (
+                    slot_id,
+                    iso_weekday
                 )
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s, %s)
                 """,
                 [
-                    (
-                        plan_item["id"],
-                        weekday,
-                        config["weekdayTimeOverrides"].get(str(weekday), {}).get(
-                            "startTime"
-                        ),
-                        config["weekdayTimeOverrides"].get(str(weekday), {}).get(
-                            "endTime"
-                        ),
-                    )
-                    for weekday in config["weekdays"]
+                    (slot["id"], slot["isoWeekday"])
+                    for slot in config["slots"]
                 ],
             )
 
         if config["mode"] == "manual_dates":
             cursor.executemany(
                 """
-                INSERT INTO public.generation_date_entries (
-                    id,
-                    plan_item_id,
-                    entry_date,
-                    start_time,
-                    end_time
+                INSERT INTO public.generation_slot_dates (
+                    slot_id,
+                    entry_date
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s)
                 """,
                 [
-                    (
-                        entry_id,
-                        plan_item["id"],
-                        entry["date"],
-                        entry["startTime"],
-                        entry["endTime"],
-                    )
-                    for entry_id, entry in zip(entry_ids, config["entries"])
+                    (entry["id"], entry["date"])
+                    for entry in config["entries"]
                 ],
             )
 
@@ -187,9 +189,10 @@ def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
                     end_time,
                     status,
                     status_reason,
-                    source_occurrence_id
+                    source_occurrence_id,
+                    source_generation_slot_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL)
+                VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, %s)
                 """,
                 [
                     (
@@ -199,6 +202,7 @@ def insert_plan_item_graph(connection, plan_item, occurrences, entry_ids):
                         occurrence["startTime"],
                         occurrence["endTime"],
                         occurrence["status"],
+                        occurrence["sourceGenerationSlotId"],
                     )
                     for occurrence in occurrences
                 ],

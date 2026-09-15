@@ -83,6 +83,40 @@ def _time_range(start_value, end_value, start_field, end_field):
     return start_time, end_time
 
 
+def _slot_id(value):
+    if not isinstance(value, str):
+        _invalid("Cada GenerationSlot requiere un UUID v4 válido.")
+    try:
+        parsed = UUID(value)
+    except (ValueError, AttributeError):
+        _invalid("Cada GenerationSlot requiere un UUID v4 válido.")
+    if parsed.version != 4 or str(parsed) != value:
+        _invalid("Cada GenerationSlot requiere un UUID v4 canónico.")
+    return value
+
+
+def _time_ranges_overlap(first, second):
+    return (
+        first["startTime"] < second["endTime"]
+        and first["endTime"] > second["startTime"]
+    )
+
+
+def _reject_group_overlaps(items, group_key):
+    grouped = {}
+    for item in items:
+        group = grouped.setdefault(group_key(item), [])
+        if any(_time_ranges_overlap(item, candidate) for candidate in group):
+            _invalid("Los horarios de una misma fecha de generación no pueden solaparse.")
+        group.append(item)
+
+
+def _validate_unique_slot_ids(items):
+    slot_ids = [item["id"] for item in items]
+    if len(set(slot_ids)) != len(slot_ids):
+        _invalid("Los UUID de GenerationSlot deben ser únicos en el payload.")
+
+
 def _generation_controls(config, normalized):
     if "excludedDates" in config:
         excluded_dates = config["excludedDates"]
@@ -127,10 +161,7 @@ def _weekly_config(config):
         "startDate",
         "endDate",
         "indefinite",
-        "weekdays",
-        "defaultStartTime",
-        "defaultEndTime",
-        "weekdayTimeOverrides",
+        "slots",
     }
     _require_exact_fields(
         config, required, {"excludedDates", "stoppedFromDate"}, "generationConfig"
@@ -138,52 +169,46 @@ def _weekly_config(config):
     normalized = {"mode": "weekly"}
     _recurring_range(config, normalized)
 
-    weekdays = config["weekdays"]
-    if not isinstance(weekdays, list) or not weekdays:
-        _invalid("weekly requiere al menos un weekday.")
-    if any(
-        isinstance(weekday, bool)
-        or not isinstance(weekday, int)
-        or weekday < 1
-        or weekday > 7
-        for weekday in weekdays
-    ) or len(set(weekdays)) != len(weekdays):
-        _invalid("Los weekdays deben ser enteros ISO únicos entre 1 y 7.")
-    normalized["weekdays"] = sorted(weekdays)
-    default_start, default_end = _time_range(
-        config["defaultStartTime"],
-        config["defaultEndTime"],
-        "defaultStartTime",
-        "defaultEndTime",
-    )
-    normalized["defaultStartTime"] = default_start
-    normalized["defaultEndTime"] = default_end
-
-    overrides = config["weekdayTimeOverrides"]
-    if not isinstance(overrides, dict):
-        _invalid("weekdayTimeOverrides debe ser un objeto.")
-    normalized_overrides = {}
-    for weekday_key, override in overrides.items():
-        if weekday_key not in {str(weekday) for weekday in weekdays}:
-            _invalid("Un override solo puede pertenecer a un weekday activo.")
+    slots = config["slots"]
+    if not isinstance(slots, list) or not slots:
+        _invalid("weekly requiere al menos un GenerationSlot.")
+    normalized_slots = []
+    for slot in slots:
         _require_exact_fields(
-            override,
-            {"startTime", "endTime"},
+            slot,
+            {"id", "isoWeekday", "startTime", "endTime"},
             set(),
-            "weekdayTimeOverrides",
+            "GenerationSlot weekly",
         )
+        weekday = slot["isoWeekday"]
+        if (
+            isinstance(weekday, bool)
+            or not isinstance(weekday, int)
+            or weekday < 1
+            or weekday > 7
+        ):
+            _invalid("Cada slot weekly requiere isoWeekday entre 1 y 7.")
         start_time, end_time = _time_range(
-            override["startTime"],
-            override["endTime"],
-            "weekday override startTime",
-            "weekday override endTime",
+            slot["startTime"], slot["endTime"], "startTime", "endTime"
         )
-        normalized_overrides[weekday_key] = {
-            "startTime": start_time,
-            "endTime": end_time,
-        }
-    normalized["weekdayTimeOverrides"] = dict(
-        sorted(normalized_overrides.items(), key=lambda pair: int(pair[0]))
+        normalized_slots.append(
+            {
+                "id": _slot_id(slot["id"]),
+                "isoWeekday": weekday,
+                "startTime": start_time,
+                "endTime": end_time,
+            }
+        )
+    _validate_unique_slot_ids(normalized_slots)
+    _reject_group_overlaps(normalized_slots, lambda slot: slot["isoWeekday"])
+    normalized["slots"] = sorted(
+        normalized_slots,
+        key=lambda slot: (
+            slot["isoWeekday"],
+            slot["startTime"],
+            slot["endTime"],
+            slot["id"],
+        ),
     )
     return _generation_controls(config, normalized)
 
@@ -195,8 +220,7 @@ def _interval_config(config):
         "endDate",
         "indefinite",
         "intervalDays",
-        "defaultStartTime",
-        "defaultEndTime",
+        "slots",
     }
     _require_exact_fields(
         config, required, {"excludedDates", "stoppedFromDate"}, "generationConfig"
@@ -211,14 +235,33 @@ def _interval_config(config):
     ):
         _invalid("intervalDays debe ser un entero mayor o igual a 1.")
     normalized["intervalDays"] = interval_days
-    start_time, end_time = _time_range(
-        config["defaultStartTime"],
-        config["defaultEndTime"],
-        "defaultStartTime",
-        "defaultEndTime",
+    slots = config["slots"]
+    if not isinstance(slots, list) or not slots:
+        _invalid("interval_days requiere al menos un GenerationSlot.")
+    normalized_slots = []
+    for slot in slots:
+        _require_exact_fields(
+            slot,
+            {"id", "startTime", "endTime"},
+            set(),
+            "GenerationSlot interval_days",
+        )
+        start_time, end_time = _time_range(
+            slot["startTime"], slot["endTime"], "startTime", "endTime"
+        )
+        normalized_slots.append(
+            {
+                "id": _slot_id(slot["id"]),
+                "startTime": start_time,
+                "endTime": end_time,
+            }
+        )
+    _validate_unique_slot_ids(normalized_slots)
+    _reject_group_overlaps(normalized_slots, lambda _slot: "interval_days")
+    normalized["slots"] = sorted(
+        normalized_slots,
+        key=lambda slot: (slot["startTime"], slot["endTime"], slot["id"]),
     )
-    normalized["defaultStartTime"] = start_time
-    normalized["defaultEndTime"] = end_time
     return _generation_controls(config, normalized)
 
 
@@ -226,7 +269,7 @@ def _manual_dates_config(config):
     _require_exact_fields(
         config,
         {"mode", "entries"},
-        {"excludedDates", "stoppedFromDate"},
+        {"stoppedFromDate"},
         "generationConfig",
     )
     entries = config["entries"]
@@ -235,32 +278,38 @@ def _manual_dates_config(config):
     normalized_entries = []
     for entry in entries:
         _require_exact_fields(
-            entry, {"date", "startTime", "endTime"}, set(), "entry"
+            entry, {"id", "date", "startTime", "endTime"}, set(), "entry"
         )
         start_time, end_time = _time_range(
             entry["startTime"], entry["endTime"], "startTime", "endTime"
         )
         normalized_entries.append(
             {
+                "id": _slot_id(entry["id"]),
                 "date": _date_string(entry["date"], "entry.date"),
                 "startTime": start_time,
                 "endTime": end_time,
             }
         )
-    entry_keys = [
-        (entry["date"], entry["startTime"], entry["endTime"])
-        for entry in normalized_entries
-    ]
-    if len(set(entry_keys)) != len(entry_keys):
-        _invalid("manual_dates no admite entries idénticas duplicadas.")
+    _validate_unique_slot_ids(normalized_entries)
+    _reject_group_overlaps(normalized_entries, lambda entry: entry["date"])
     normalized = {
         "mode": "manual_dates",
         "entries": sorted(
             normalized_entries,
-            key=lambda entry: (entry["date"], entry["startTime"], entry["endTime"]),
+            key=lambda entry: (
+                entry["date"],
+                entry["startTime"],
+                entry["endTime"],
+                entry["id"],
+            ),
         ),
     }
-    return _generation_controls(config, normalized)
+    if "stoppedFromDate" in config:
+        normalized["stoppedFromDate"] = _date_string(
+            config["stoppedFromDate"], "stoppedFromDate"
+        )
+    return normalized
 
 
 def _normalize_generation_config(config):
@@ -410,16 +459,12 @@ def _assign_ids(plan_item, drafts, uuid_factory):
         {"id": str(uuid_factory()), **draft, "planItemId": plan_item_id}
         for draft in drafts
     ]
-    entry_ids = [
-        str(uuid_factory())
-        for _ in persisted_plan_item["generationConfig"].get("entries", [])
-    ]
-    return persisted_plan_item, occurrences, entry_ids
+    return persisted_plan_item, occurrences
 
 
-def _validate_generated_ids(plan_item, occurrences, entry_ids):
+def _validate_generated_ids(plan_item, occurrences):
     # Defensa local para factories inyectadas en pruebas; PostgreSQL recibe UUID reales.
-    ids = [plan_item["id"], *entry_ids, *(item["id"] for item in occurrences)]
+    ids = [plan_item["id"], *(item["id"] for item in occurrences)]
     try:
         parsed = [UUID(value) for value in ids]
     except (ValueError, TypeError, AttributeError):
@@ -449,10 +494,8 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
             "No se pueden crear occurrences dentro del historial congelado.",
         )
     _validate_internal_conflicts(drafts)
-    plan_item, occurrences, entry_ids = _assign_ids(
-        normalized, drafts, uuid_factory
-    )
-    _validate_generated_ids(plan_item, occurrences, entry_ids)
+    plan_item, occurrences = _assign_ids(normalized, drafts, uuid_factory)
+    _validate_generated_ids(plan_item, occurrences)
 
     try:
         with database.get_connection() as connection:
@@ -463,7 +506,7 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
                 )
                 _validate_existing_conflicts(plan_item, drafts, blocking_rows)
                 plan_item_repository.insert_plan_item_graph(
-                    connection, plan_item, occurrences, entry_ids
+                    connection, plan_item, occurrences
                 )
     except PlanItemConflictError:
         raise
