@@ -153,7 +153,27 @@ def _base_slot(row):
     }
 
 
-def _weekly_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot):
+def _add_slot_exclusions(slot, excluded_rows_by_slot, allow):
+    rows = excluded_rows_by_slot.get(slot["id"], [])
+    if rows and not allow:
+        _inconsistent("manual_dates no puede representar exclusiones por slot.")
+    excluded_dates = [
+        _date_string(row["excluded_date"], "excluded_date") for row in rows
+    ]
+    if len(set(excluded_dates)) != len(excluded_dates):
+        _inconsistent("Un GenerationSlot contiene excludedDates duplicadas.")
+    if excluded_dates:
+        slot["excludedDates"] = sorted(excluded_dates)
+    return slot
+
+
+def _weekly_config(
+    config_row,
+    slot_rows,
+    weekday_rows_by_slot,
+    date_rows_by_slot,
+    excluded_rows_by_slot,
+):
     if not slot_rows:
         _inconsistent("Una configuración weekly requiere al menos un slot.")
     if config_row["interval_days"] is not None:
@@ -162,7 +182,9 @@ def _weekly_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slo
     start_date, end_date, indefinite = _recurring_date_range(config_row)
     slots = []
     for slot_row in slot_rows:
-        slot = _base_slot(slot_row)
+        slot = _add_slot_exclusions(
+            _base_slot(slot_row), excluded_rows_by_slot, True
+        )
         weekday_rows = weekday_rows_by_slot.get(slot["id"], [])
         date_rows = date_rows_by_slot.get(slot["id"], [])
         if len(weekday_rows) != 1:
@@ -196,7 +218,11 @@ def _weekly_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slo
 
 
 def _interval_days_config(
-    config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+    config_row,
+    slot_rows,
+    weekday_rows_by_slot,
+    date_rows_by_slot,
+    excluded_rows_by_slot,
 ):
     if not slot_rows:
         _inconsistent("Una configuración interval_days requiere al menos un slot.")
@@ -210,7 +236,9 @@ def _interval_days_config(
     start_date, end_date, indefinite = _recurring_date_range(config_row)
     slots = []
     for row in slot_rows:
-        slot = _base_slot(row)
+        slot = _add_slot_exclusions(
+            _base_slot(row), excluded_rows_by_slot, True
+        )
         if weekday_rows_by_slot.get(slot["id"]) or date_rows_by_slot.get(slot["id"]):
             _inconsistent("Un slot interval_days no puede tener detalles de fecha.")
         slots.append(slot)
@@ -226,7 +254,13 @@ def _interval_days_config(
     }
 
 
-def _manual_dates_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot):
+def _manual_dates_config(
+    config_row,
+    slot_rows,
+    weekday_rows_by_slot,
+    date_rows_by_slot,
+    excluded_rows_by_slot,
+):
     if not slot_rows:
         _inconsistent("Una configuración manual_dates requiere al menos una entry.")
     if any(
@@ -237,7 +271,9 @@ def _manual_dates_config(config_row, slot_rows, weekday_rows_by_slot, date_rows_
 
     entries = []
     for slot_row in slot_rows:
-        entry = _base_slot(slot_row)
+        entry = _add_slot_exclusions(
+            _base_slot(slot_row), excluded_rows_by_slot, False
+        )
         weekday_rows = weekday_rows_by_slot.get(entry["id"], [])
         date_rows = date_rows_by_slot.get(entry["id"], [])
         if weekday_rows:
@@ -260,20 +296,33 @@ def _build_generation_config(
     slot_rows,
     weekday_rows_by_slot,
     date_rows_by_slot,
+    slot_excluded_rows_by_slot,
     excluded_rows,
 ):
     mode = config_row["mode"]
     if mode == "weekly":
         config = _weekly_config(
-            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+            config_row,
+            slot_rows,
+            weekday_rows_by_slot,
+            date_rows_by_slot,
+            slot_excluded_rows_by_slot,
         )
     elif mode == "interval_days":
         config = _interval_days_config(
-            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+            config_row,
+            slot_rows,
+            weekday_rows_by_slot,
+            date_rows_by_slot,
+            slot_excluded_rows_by_slot,
         )
     elif mode == "manual_dates":
         config = _manual_dates_config(
-            config_row, slot_rows, weekday_rows_by_slot, date_rows_by_slot
+            config_row,
+            slot_rows,
+            weekday_rows_by_slot,
+            date_rows_by_slot,
+            slot_excluded_rows_by_slot,
         )
     else:
         _inconsistent("La configuración tiene un mode no soportado.")
@@ -398,13 +447,16 @@ def build_planner_state(rows):
 
     weekdays_by_slot = _rows_by_slot(rows["generation_slot_weekdays"])
     dates_by_slot = _rows_by_slot(rows["generation_slot_dates"])
-    detail_slot_ids = set(weekdays_by_slot) | set(dates_by_slot)
+    slot_exclusions_by_slot = _rows_by_slot(
+        rows["generation_slot_excluded_dates"]
+    )
+    detail_slot_ids = (
+        set(weekdays_by_slot)
+        | set(dates_by_slot)
+        | set(slot_exclusions_by_slot)
+    )
     if detail_slot_ids - set(slot_owners):
         _inconsistent("Existen detalles asociados a un GenerationSlot inexistente.")
-    if rows["generation_slot_excluded_dates"]:
-        _inconsistent(
-            "Existen exclusiones por slot que el contrato actual no representa."
-        )
 
     excluded_by_plan_item = _rows_by_plan_item(rows["generation_excluded_dates"])
 
@@ -423,6 +475,7 @@ def build_planner_state(rows):
             slots_by_plan_item.get(plan_item_id, []),
             weekdays_by_slot,
             dates_by_slot,
+            slot_exclusions_by_slot,
             excluded_by_plan_item.get(plan_item_id, []),
         )
         plan_items.append(_build_plan_item(plan_item_row, generation_config))

@@ -180,6 +180,10 @@ class PlannerStateMappingTests(unittest.TestCase):
             {"plan_item_id": uuid(1), "excluded_date": date(2026, 9, 22)},
             {"plan_item_id": uuid(1), "excluded_date": date(2026, 9, 15)},
         ]
+        rows["generation_slot_excluded_dates"] = [
+            {"slot_id": slot_uuid(12), "excluded_date": date(2026, 9, 29)},
+            {"slot_id": slot_uuid(12), "excluded_date": date(2026, 9, 22)},
+        ]
 
         result = planner_state_service.build_planner_state(rows)
 
@@ -208,6 +212,7 @@ class PlannerStateMappingTests(unittest.TestCase):
                                 "isoWeekday": 1,
                                 "startTime": "14:00",
                                 "endTime": "15:00",
+                                "excludedDates": ["2026-09-22", "2026-09-29"],
                             },
                             {
                                 "id": str(slot_uuid(15)),
@@ -239,6 +244,9 @@ class PlannerStateMappingTests(unittest.TestCase):
             slot_row(21, 2, time(12, 0), time(13, 30)),
             slot_row(22, 2, time(16, 0), time(17, 0)),
         ]
+        rows["generation_slot_excluded_dates"] = [
+            {"slot_id": slot_uuid(22), "excluded_date": date(2026, 9, 17)}
+        ]
 
         result = planner_state_service.build_planner_state(rows)
 
@@ -260,6 +268,7 @@ class PlannerStateMappingTests(unittest.TestCase):
                         "id": str(slot_uuid(22)),
                         "startTime": "16:00",
                         "endTime": "17:00",
+                        "excludedDates": ["2026-09-17"],
                     },
                 ],
             },

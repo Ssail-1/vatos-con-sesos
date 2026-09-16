@@ -20,6 +20,12 @@ function occurrenceFor(store, planItemId, date) {
     return store.getOccurrencesForPlanItem(planItemId).find((occurrence) => occurrence.date === date);
 }
 
+function sourceSlotFor(store, planItemId, occurrence) {
+    return store.getPlanItemById(planItemId).generationConfig.slots.find(
+        ({ id }) => id === occurrence.sourceGenerationSlotId,
+    );
+}
+
 // Delete individual: presente, ayer, frozen y matriz completa de estados.
 for (const date of [REFERENCE_DATE, "2026-09-28"]) {
     const store = createPlannerStore([planItem(`deletable-${date}`)], [], REFERENCE_DATE);
@@ -27,7 +33,7 @@ for (const date of [REFERENCE_DATE, "2026-09-28"]) {
     const result = store.deleteOccurrenceForDate(occurrence.id);
     assert.equal(result.deletedOccurrence.id, occurrence.id);
     assert.equal(store.getOccurrenceById(occurrence.id), null);
-    assert.deepEqual(store.getPlanItemById(`deletable-${date}`).generationConfig.excludedDates, [date]);
+    assert.deepEqual(sourceSlotFor(store, `deletable-${date}`, occurrence).excludedDates, [date]);
 }
 
 {
@@ -55,7 +61,7 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
     store.setOccurrenceStatus(occurrence.id, "cancelled");
     store.deleteOccurrenceForDate(occurrence.id);
     assert.equal(store.getOccurrenceById(occurrence.id), null);
-    assert.deepEqual(store.getPlanItemById("future-cancelled").generationConfig.excludedDates, ["2026-09-30"]);
+    assert.deepEqual(sourceSlotFor(store, "future-cancelled", occurrence).excludedDates, ["2026-09-30"]);
 }
 
 // La exclusión evita regenerar, conserva otras fechas y puede restaurarse atómicamente.
@@ -73,7 +79,7 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
     });
     const restored = store.commitPreparedScheduleChange(prepared);
     assert.equal(restored.date, REFERENCE_DATE);
-    assert.deepEqual(store.getPlanItemById("restorable").generationConfig.excludedDates, []);
+    assert.deepEqual(sourceSlotFor(store, "restorable", deleted).excludedDates, []);
     const countBefore = store.getOccurrencesForPlanItem("restorable").length;
     store.materializePlanItem("restorable", REFERENCE_DATE, "2026-09-30");
     assert.equal(store.getOccurrencesForPlanItem("restorable").length, countBefore);
@@ -92,7 +98,7 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
         }),
         "priority_conflict",
     );
-    assert.deepEqual(store.getPlanItemById("restore-conflict").generationConfig.excludedDates, [REFERENCE_DATE]);
+    assert.deepEqual(sourceSlotFor(store, "restore-conflict", deleted).excludedDates, [REFERENCE_DATE]);
     expectCode(
         () => store.prepareOccurrenceAddition("restore-conflict", {
             date: REFERENCE_DATE,
@@ -101,14 +107,16 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
         }),
         "invalid_occurrence",
     );
-    assert.deepEqual(store.getPlanItemById("restore-conflict").generationConfig.excludedDates, [REFERENCE_DATE]);
+    assert.deepEqual(sourceSlotFor(store, "restore-conflict", deleted).excludedDates, [REFERENCE_DATE]);
 }
 
 // La reconciliación limpia exclusiones frozen sin reconstruir historia.
 {
     const config = weeklyConfig({ excludedDates: ["2026-09-27", "2026-09-28"] });
+    config.slots[0].excludedDates = ["2026-09-27", "2026-09-28"];
     const store = createPlannerStore([planItem("cleanup", config)], [], REFERENCE_DATE);
     assert.deepEqual(store.getPlanItemById("cleanup").generationConfig.excludedDates, ["2026-09-28"]);
+    assert.deepEqual(store.getPlanItemById("cleanup").generationConfig.slots[0].excludedDates, ["2026-09-28"]);
     assert.deepEqual(store.reconcileTemporalState(), []);
     assert.deepEqual(store.getPlanItemById("cleanup").generationConfig.excludedDates, ["2026-09-28"]);
     assert.deepEqual(store.materializePlanItem("cleanup", "2026-09-27", "2026-09-27"), []);
@@ -251,20 +259,54 @@ for (const [id, config] of modeCases) {
     assert.equal(occurrenceFor(store, "preserved-controls", "2026-10-05"), undefined);
 }
 
-// Fallos y ambigüedad no dejan mutaciones parciales.
+// Un ID exacto elimina solo su occurrence aunque el PlanItem tenga otra el mismo día.
 {
     const store = createPlannerStore([planItem("ambiguous")], [], REFERENCE_DATE);
     const first = occurrenceFor(store, "ambiguous", REFERENCE_DATE);
-    store.addOccurrenceForPlanItem("ambiguous", { date: REFERENCE_DATE, startTime: "10:00", endTime: "11:00" });
+    const adHoc = store.addOccurrenceForPlanItem("ambiguous", { date: REFERENCE_DATE, startTime: "10:00", endTime: "11:00" });
+    store.deleteOccurrenceForDate(first.id);
+    assert.equal(store.getOccurrenceById(first.id), null);
+    assert.ok(store.getOccurrenceById(adHoc.id));
+    assert.deepEqual(sourceSlotFor(store, "ambiguous", first).excludedDates, [REFERENCE_DATE]);
+
     const beforeItem = store.getPlanItemById("ambiguous");
     const beforeOccurrences = store.getOccurrencesForPlanItem("ambiguous");
-    expectCode(() => store.deleteOccurrenceForDate(first.id), "ambiguous_occurrence");
-    assert.deepEqual(store.getPlanItemById("ambiguous"), beforeItem);
-    assert.deepEqual(store.getOccurrencesForPlanItem("ambiguous"), beforeOccurrences);
-
     expectCode(() => store.stopPlanItemFromDate("ambiguous", "2026-09-27"), "history_frozen");
     assert.deepEqual(store.getPlanItemById("ambiguous"), beforeItem);
     assert.deepEqual(store.getOccurrencesForPlanItem("ambiguous"), beforeOccurrences);
+}
+
+// En multi-slot recurrente la exclusión pertenece solo al slot eliminado.
+{
+    const config = weeklyConfig({
+        days: [2],
+        startDate: REFERENCE_DATE,
+        extraSlots: [{ isoWeekday: 2, startTime: "10:00", endTime: "11:00" }],
+    });
+    const store = createPlannerStore([planItem("recurring-multi-delete", config)], [], REFERENCE_DATE);
+    const [first, second] = store.getOccurrencesForDate(REFERENCE_DATE);
+    store.deleteOccurrenceForDate(second.id);
+    assert.ok(store.getOccurrenceById(first.id));
+    assert.equal(store.getOccurrenceById(second.id), null);
+    assert.equal(sourceSlotFor(store, "recurring-multi-delete", first).excludedDates, undefined);
+    assert.deepEqual(sourceSlotFor(store, "recurring-multi-delete", second).excludedDates, [REFERENCE_DATE]);
+    assert.deepEqual(store.materializePlanItem("recurring-multi-delete", REFERENCE_DATE, REFERENCE_DATE), []);
+}
+
+// manual_dates elimina solamente la entry elegida y protege la última.
+{
+    const config = manualConfig([
+        { date: REFERENCE_DATE, startTime: "08:00", endTime: "09:00" },
+        { date: REFERENCE_DATE, startTime: "10:00", endTime: "11:00" },
+    ]);
+    const store = createPlannerStore([planItem("manual-delete", config)], [], REFERENCE_DATE);
+    const second = store.getOccurrencesForPlanItem("manual-delete")[1];
+    store.deleteOccurrenceForDate(second.id);
+    assert.equal(store.getOccurrenceById(second.id), null);
+    assert.equal(store.getPlanItemById("manual-delete").generationConfig.entries.length, 1);
+    const last = store.getOccurrencesForPlanItem("manual-delete")[0];
+    expectCode(() => store.deleteOccurrenceForDate(last.id), "last_manual_entry");
+    assert.ok(store.getOccurrenceById(last.id));
 }
 
 // El materializador aplica controles comunes sin modificar entries/configuración histórica.

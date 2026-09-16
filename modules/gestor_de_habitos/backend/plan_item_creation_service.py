@@ -12,12 +12,16 @@ from plan_item_materializer import (
     materialize_occurrence_drafts,
 )
 from repositories import plan_item_repository
+from scheduling_policy import (
+    HISTORY_EDIT_WINDOW_DAYS,
+    occurrence_items_overlap,
+    scheduling_priority,
+)
 
 
 ACTIVITY_TYPES = frozenset({"anchor", "periodic", "event", "unexpected"})
 HABIT_TYPES = frozenset({"scheduled"})
 GENERATION_MODES = frozenset({"weekly", "interval_days", "manual_dates"})
-HISTORY_EDIT_WINDOW_DAYS = 1
 _TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -117,16 +121,20 @@ def _validate_unique_slot_ids(items):
         _invalid("Los UUID de GenerationSlot deben ser únicos en el payload.")
 
 
+def _normalize_excluded_dates(values, field_name):
+    if not isinstance(values, list):
+        _invalid(f"{field_name} debe ser una lista.")
+    normalized = [_date_string(value, field_name) for value in values]
+    if len(set(normalized)) != len(normalized):
+        _invalid(f"{field_name} debe contener fechas únicas.")
+    return sorted(normalized)
+
+
 def _generation_controls(config, normalized):
     if "excludedDates" in config:
-        excluded_dates = config["excludedDates"]
-        if not isinstance(excluded_dates, list):
-            _invalid("excludedDates debe ser una lista.")
-        normalized_dates = [
-            _date_string(value, "excludedDates") for value in excluded_dates
-        ]
-        if len(set(normalized_dates)) != len(normalized_dates):
-            _invalid("excludedDates debe contener fechas únicas.")
+        normalized_dates = _normalize_excluded_dates(
+            config["excludedDates"], "excludedDates"
+        )
         if normalized_dates:
             normalized["excludedDates"] = sorted(normalized_dates)
     if "stoppedFromDate" in config:
@@ -177,7 +185,7 @@ def _weekly_config(config):
         _require_exact_fields(
             slot,
             {"id", "isoWeekday", "startTime", "endTime"},
-            set(),
+            {"excludedDates"},
             "GenerationSlot weekly",
         )
         weekday = slot["isoWeekday"]
@@ -191,14 +199,19 @@ def _weekly_config(config):
         start_time, end_time = _time_range(
             slot["startTime"], slot["endTime"], "startTime", "endTime"
         )
-        normalized_slots.append(
-            {
-                "id": _slot_id(slot["id"]),
-                "isoWeekday": weekday,
-                "startTime": start_time,
-                "endTime": end_time,
-            }
-        )
+        normalized_slot = {
+            "id": _slot_id(slot["id"]),
+            "isoWeekday": weekday,
+            "startTime": start_time,
+            "endTime": end_time,
+        }
+        if "excludedDates" in slot:
+            excluded_dates = _normalize_excluded_dates(
+                slot["excludedDates"], "GenerationSlot.excludedDates"
+            )
+            if excluded_dates:
+                normalized_slot["excludedDates"] = excluded_dates
+        normalized_slots.append(normalized_slot)
     _validate_unique_slot_ids(normalized_slots)
     _reject_group_overlaps(normalized_slots, lambda slot: slot["isoWeekday"])
     normalized["slots"] = sorted(
@@ -243,19 +256,24 @@ def _interval_config(config):
         _require_exact_fields(
             slot,
             {"id", "startTime", "endTime"},
-            set(),
+            {"excludedDates"},
             "GenerationSlot interval_days",
         )
         start_time, end_time = _time_range(
             slot["startTime"], slot["endTime"], "startTime", "endTime"
         )
-        normalized_slots.append(
-            {
-                "id": _slot_id(slot["id"]),
-                "startTime": start_time,
-                "endTime": end_time,
-            }
-        )
+        normalized_slot = {
+            "id": _slot_id(slot["id"]),
+            "startTime": start_time,
+            "endTime": end_time,
+        }
+        if "excludedDates" in slot:
+            excluded_dates = _normalize_excluded_dates(
+                slot["excludedDates"], "GenerationSlot.excludedDates"
+            )
+            if excluded_dates:
+                normalized_slot["excludedDates"] = excluded_dates
+        normalized_slots.append(normalized_slot)
     _validate_unique_slot_ids(normalized_slots)
     _reject_group_overlaps(normalized_slots, lambda _slot: "interval_days")
     normalized["slots"] = sorted(
@@ -359,19 +377,8 @@ def validate_plan_item_payload(payload):
     }
 
 
-def _time_to_minutes(value):
-    hours, minutes = value.split(":")
-    return int(hours) * 60 + int(minutes)
-
-
 def _overlaps(first, second):
-    return (
-        first["date"] == second["date"]
-        and _time_to_minutes(first["startTime"])
-        < _time_to_minutes(second["endTime"])
-        and _time_to_minutes(first["endTime"])
-        > _time_to_minutes(second["startTime"])
-    )
+    return occurrence_items_overlap(first, second)
 
 
 def _validate_internal_conflicts(drafts):
@@ -413,14 +420,6 @@ def _existing_occurrence(row):
     }
 
 
-def _priority(kind, subtype):
-    if kind == "activity" and subtype == "unexpected":
-        return 300
-    if kind == "activity" and subtype == "event":
-        return 200
-    return 100
-
-
 def _validate_existing_conflicts(plan_item, drafts, rows):
     conflicts = [
         row
@@ -435,9 +434,9 @@ def _validate_existing_conflicts(plan_item, drafts, rows):
             "El intervalo contiene un registro completado y protegido.",
         )
     subtype = plan_item.get("activityType") or plan_item.get("habitType")
-    candidate_priority = _priority(plan_item["kind"], subtype)
+    candidate_priority = scheduling_priority(plan_item["kind"], subtype)
     if any(
-        candidate_priority <= _priority(row["kind"], row["subtype"])
+        candidate_priority <= scheduling_priority(row["kind"], row["subtype"])
         for row in conflicts
     ):
         raise PlanItemConflictError(

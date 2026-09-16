@@ -58,7 +58,34 @@ export function cloneGenerationConfig(config) {
         ...config,
         ...controls,
         slots: Array.isArray(config.slots)
-            ? config.slots.map((slot) => ({ ...slot }))
+            ? config.slots.map((slot) => ({
+                ...slot,
+                ...(slot.excludedDates
+                    ? { excludedDates: [...slot.excludedDates] }
+                    : {}),
+            }))
             : config.slots,
     };
+}
+
+export function preserveSlotExcludedDates(existingConfig, nextConfig) {
+    const candidate = cloneGenerationConfig(nextConfig);
+    if (
+        candidate === null ||
+        existingConfig === null ||
+        candidate.mode !== existingConfig.mode ||
+        !["weekly", "interval_days"].includes(candidate.mode)
+    ) {
+        return candidate;
+    }
+    const exclusionsById = new Map(
+        existingConfig.slots.map((slot) => [slot.id, slot.excludedDates]),
+    );
+    candidate.slots = candidate.slots.map((slot) => {
+        const excludedDates = exclusionsById.get(slot.id);
+        return excludedDates?.length
+            ? { ...slot, excludedDates: [...excludedDates] }
+            : slot;
+    });
+    return candidate;
 }

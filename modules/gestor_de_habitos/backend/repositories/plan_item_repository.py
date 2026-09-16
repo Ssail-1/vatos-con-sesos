@@ -178,6 +178,23 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
                 ],
             )
 
+        slot_exclusions = [
+            (slot["id"], excluded_date)
+            for slot in slots
+            for excluded_date in slot.get("excludedDates", [])
+        ]
+        if slot_exclusions:
+            cursor.executemany(
+                """
+                INSERT INTO public.generation_slot_excluded_dates (
+                    slot_id,
+                    excluded_date
+                )
+                VALUES (%s, %s)
+                """,
+                slot_exclusions,
+            )
+
         if occurrences:
             cursor.executemany(
                 """

@@ -3,6 +3,7 @@ import {
     cloneGenerationConfig,
     compareGenerationSlots,
     createGenerationSlotId,
+    preserveSlotExcludedDates,
 } from "../domain/generation-slots.js";
 import { validateGenerationConfig } from "../scheduling/materializer.js";
 import { getIsoWeekday, isValidDateKey, isValidTimeRange } from "../utils/date-time.js";
@@ -15,7 +16,9 @@ function configsEqual(first, second) {
         if (config === null) return null;
         const { excludedDates, stoppedFromDate, ...editableFields } = cloneGenerationConfig(config);
         if (editableFields.mode === "manual_dates") editableFields.entries.sort(compareGenerationSlots);
-        else editableFields.slots?.sort(compareGenerationSlots);
+        else editableFields.slots = editableFields.slots
+            ?.map(({ excludedDates: _slotExcludedDates, ...slot }) => slot)
+            .sort(compareGenerationSlots);
         return editableFields;
     };
     return JSON.stringify(editableConfig(first)) === JSON.stringify(editableConfig(second));
@@ -852,6 +855,10 @@ export function createPlanItemFormView(options) {
             validateOccurrence: ["edit", "edit_without_occurrence"].includes(formContext.mode),
         });
         if (result.errors.length) return showErrors(result.errors);
+        result.generationConfig = preserveSlotExcludedDates(
+            originalGenerationConfig,
+            result.generationConfig,
+        );
         result.recurrenceChanged = ["edit", "edit_without_occurrence", "edit_schedule"].includes(formContext.mode)
             && originalGenerationConfig !== null
             && !configsEqual(result.generationConfig, originalGenerationConfig);

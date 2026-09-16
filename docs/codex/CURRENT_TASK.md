@@ -1,6 +1,6 @@
 # CURRENT TASK
 
-## MVP 05.6.3 — Backend multi-slot + JS/Python parity
+## MVP 05.6.4.1 — Persisted single-occurrence editing/deletion + slot exclusions
 
 ### Documento normativo
 
@@ -11,1057 +11,529 @@ La especificación global de multi-slot está en:
 Este `CURRENT_TASK.md` define únicamente la fase activa:
 
 ```text
-MVP 05.6.3
-Backend read/create multi-slot + Python materializer + JS/Python parity
+MVP 05.6.4.1
+Persisted single-occurrence editing/deletion + slot exclusions
 ```
 
 Estado actual:
 
 ```text
-Frontend/domain JavaScript
-→ MVP 05.6.1 multi-slot ✅
-
-PostgreSQL schema/migration
-→ MVP 05.6.2 multi-slot ✅
-
-Backend Python
-→ todavía contrato MVP 05.5 ⏳
+Frontend/domain multi-slot       ✅
+PostgreSQL multi-slot            ✅
+Backend/API multi-slot           ✅
+vcs_dev migrada a 003            ✅
+POST/GET multi-slot real         ✅
 ```
 
-Objetivo de esta fase:
-
-```text
-Frontend
-PostgreSQL
-Backend
-```
-
-deben volver a compartir el mismo contrato canónico multi-slot.
+La siguiente necesidad es poder actuar sobre UNA occurrence concreta sin
+afectar accidentalmente los demás slots del mismo PlanItem.
 
 ---
 
 # 1. Objetivo
 
-Adaptar el backend Flask/Python para trabajar con el modelo relacional
-introducido por:
+Implementar persistencia para las operaciones:
 
 ```text
-003_multi_slot_scheduling.sql
+Editar únicamente esta occurrence
+Eliminar únicamente esta occurrence
 ```
 
-Debe actualizarse:
+respetando su `sourceGenerationSlotId`.
+
+Debe ser posible tener:
 
 ```text
-GET /api/planner-state
-POST /api/plan-items
-Python materializer
-repositories
-validaciones
-tests
-JS/Python parity
+Uber — 2026-09-20
+
+08:00–11:00
+14:00–17:00
+20:00–22:00
 ```
 
-Al terminar esta fase:
+y eliminar/modificar únicamente:
 
 ```text
-Frontend/domain
-Backend/API
-PostgreSQL schema
+14:00–17:00
 ```
 
-deben entender el mismo modelo de GenerationSlots.
-
----
-
-# 2. Alcance
-
-Puede modificarse lo necesario dentro de:
+sin afectar:
 
 ```text
-modules/gestor_de_habitos/backend/
-```
-
-incluyendo:
-
-```text
-app.py
-repositories/
-services
-materializer Python
-tests backend
-```
-
-Puede agregarse/modificarse código backend cuando sea necesario.
-
-Puede utilizarse:
-
-```text
-modules/gestor_de_habitos/tests/
-```
-
-únicamente si hace falta adaptar o ampliar fixtures de paridad
-JavaScript ↔ Python sin cambiar la semántica frontend ya aprobada.
-
-NO modificar por iniciativa propia:
-
-```text
-frontend funcional MVP 05.6.1
-migraciones 001
-migración 002
-migración 003
-vcs_dev
+08:00–11:00
+20:00–22:00
 ```
 
 ---
 
-# 3. Fuente de verdad contractual
+# 2. Subdivisión deliberada
 
-El contrato canónico está definido por:
+MVP 05.6.4 se implementará en varias pasadas.
 
-```text
-MVP 05.6.1
-+
-MULTI_SLOT_SCHEDULING.md
-```
-
-Los únicos modos siguen siendo:
+Esta fase NO implementa todavía:
 
 ```text
-weekly
-interval_days
-manual_dates
+Apply Week persistente
+Apply Future persistente
+reestructuración completa de semana/configuración
 ```
 
-`single_date` no existe.
-
-La UI visual "Una fecha" ya llega al backend como:
+Se prevé:
 
 ```text
-manual_dates
+MVP 05.6.4.1
+→ esta occurrence / este día
+
+MVP 05.6.4.2
+→ Apply Week
+
+MVP 05.6.4.3
+→ Apply Future / configuración desde fecha efectiva
 ```
+
+No adelantar fases posteriores.
 
 ---
 
-# 4. Identidad de GenerationSlot
+# 3. Nueva representación canónica de exclusión por slot
 
-Esta decisión está cerrada.
+`generation_slot_excluded_dates` ya existe en PostgreSQL desde MVP 05.6.2.
 
-El frontend genera:
+Ahora debe tener representación en el dominio.
 
-```text
-GenerationSlot.id
-```
+Para `weekly`:
 
-como UUID v4.
-
-El backend debe:
-
-```text
-recibirlo
-validarlo
-preservarlo
-persistirlo exactamente
-devolverlo exactamente
-```
-
-NO debe:
-
-```text
-reemplazarlo por otro UUID
-generar un nuevo slot ID
-hacer client-id → server-id remapping
-derivar identidad de horario/fecha/index
-```
-
-PostgreSQL protege la unicidad mediante:
-
-```text
-generation_slots.id PRIMARY KEY
-```
-
----
-
-# 5. IDs generados por backend
-
-Durante creación persistente el backend continúa generando:
-
-```text
-PlanItem.id
-Occurrence.id
-```
-
-mediante UUID v4.
-
-Los GenerationSlots NO pertenecen a esta categoría.
-
----
-
-# 6. Contrato POST — activity
-
-`POST /api/plan-items`
-
-Actividad:
-
-```json
+```js
 {
-  "name": "Uber",
-  "kind": "activity",
-  "activityType": "periodic",
-  "generationConfig": {}
+  id: "UUID",
+  isoWeekday: 1,
+  startTime: "14:00",
+  endTime: "17:00",
+  excludedDates: ["YYYY-MM-DD"]
 }
 ```
 
-Los `generationConfig` válidos se definen a continuación.
+Para `interval_days`:
 
-No aceptar:
-
-```text
-id del PlanItem enviado por cliente
-occurrences enviadas por cliente
-single_date
-campos desconocidos
-modelo legacy default-time como contrato canónico
-```
-
----
-
-# 7. Contrato POST — habit
-
-Hábito:
-
-```json
+```js
 {
-  "name": "Medicamento",
-  "kind": "habit",
-  "habitType": "scheduled",
-  "generationConfig": {}
+  id: "UUID",
+  startTime: "14:00",
+  endTime: "17:00",
+  excludedDates: ["YYYY-MM-DD"]
 }
 ```
 
-Las mismas reglas multi-slot aplican.
+`excludedDates` dentro del slot es opcional.
 
-No crear restricciones artificiales según:
-
-```text
-activityType
-habitType
-```
+Ausente y `[]` son semánticamente equivalentes.
 
 ---
 
-# 8. POST weekly
+# 4. Diferencia entre exclusión global y exclusión de slot
 
-Contrato:
+Se mantienen DOS conceptos distintos.
 
-```json
-{
-  "mode": "weekly",
-  "startDate": "YYYY-MM-DD",
-  "endDate": null,
-  "indefinite": true,
-  "slots": [
-    {
-      "id": "UUID-v4",
-      "isoWeekday": 1,
-      "startTime": "08:00",
-      "endTime": "11:00"
-    },
-    {
-      "id": "UUID-v4",
-      "isoWeekday": 1,
-      "startTime": "14:00",
-      "endTime": "17:00"
-    }
-  ],
-  "excludedDates": ["YYYY-MM-DD"],
-  "stoppedFromDate": "YYYY-MM-DD"
-}
-```
+## generationConfig.excludedDates
 
-`excludedDates` y `stoppedFromDate` son opcionales.
-
-Debe existir al menos un slot.
-
-Cada slot:
-
-```text
-UUID válido
-isoWeekday 1..7
-startTime < endTime
-```
-
-Slots del mismo weekday no pueden solaparse.
-
-Intervalos contiguos sí están permitidos.
-
----
-
-# 9. POST interval_days
-
-Contrato:
-
-```json
-{
-  "mode": "interval_days",
-  "startDate": "YYYY-MM-DD",
-  "endDate": null,
-  "indefinite": true,
-  "intervalDays": 1,
-  "slots": [
-    {
-      "id": "UUID-v4",
-      "startTime": "08:00",
-      "endTime": "08:05"
-    },
-    {
-      "id": "UUID-v4",
-      "startTime": "14:00",
-      "endTime": "14:05"
-    }
-  ],
-  "excludedDates": ["YYYY-MM-DD"],
-  "stoppedFromDate": "YYYY-MM-DD"
-}
-```
-
-Debe existir al menos un slot.
-
-Todos los slots aplican a cada fecha generada por la regla.
-
-No pueden solaparse entre sí.
-
-Debe cumplirse:
-
-```text
-intervalDays > 0
-```
-
----
-
-# 10. POST manual_dates
-
-Contrato:
-
-```json
-{
-  "mode": "manual_dates",
-  "entries": [
-    {
-      "id": "UUID-v4",
-      "date": "YYYY-MM-DD",
-      "startTime": "08:00",
-      "endTime": "11:00"
-    },
-    {
-      "id": "UUID-v4",
-      "date": "YYYY-MM-DD",
-      "startTime": "14:00",
-      "endTime": "17:00"
-    }
-  ],
-  "stoppedFromDate": "YYYY-MM-DD"
-}
-```
-
-Debe existir al menos una entry.
-
-Varias entries pueden utilizar la misma fecha.
-
-Entries de la misma fecha no pueden solaparse.
-
-No aceptar `excludedDates` como parte del contrato canónico de
-`manual_dates`.
-
-Si PostgreSQL contiene `generation_excluded_dates` para un PlanItem
-manual y el backend no puede representarlo sin pérdida en el contrato
-actual:
-
-```text
-reportar inconsistencia persistida
-```
-
-No omitirla silenciosamente.
-
----
-
-# 11. UUID validation
-
-Los IDs de slots recibidos deben validarse como UUID v4.
-
-Debe rechazarse:
-
-```text
-UUID inválido
-UUID duplicado dentro del mismo payload
-UUID utilizado para más de un slot/entry
-```
-
-No mutar silenciosamente un ID inválido.
-
-Payload inválido:
-
-```text
-HTTP 400
-invalid_payload
-```
-
----
-
-# 12. Persistencia weekly
-
-Dentro de una única transacción:
-
-```text
-plan_items
-        ↓
-generation_configs
-        ↓
-generation_slots
-        ↓
-generation_slot_weekdays
-        ↓
-generation_excluded_dates
-        ↓
-occurrences
-```
-
-Cada:
-
-```text
-generation_slots.id
-```
-
-debe ser exactamente el UUID recibido desde frontend.
-
-Cada slot weekly debe tener exactamente una fila en:
-
-```text
-generation_slot_weekdays
-```
-
----
-
-# 13. Persistencia interval_days
-
-Dentro de la misma transacción:
-
-```text
-plan_items
-generation_configs
-generation_slots
-generation_excluded_dates
-occurrences
-```
-
-Los slots interval NO deben producir filas en:
-
-```text
-generation_slot_weekdays
-generation_slot_dates
-```
-
----
-
-# 14. Persistencia manual_dates
-
-Cada entry recibida se guarda como:
-
-```text
-generation_slots
-+
-generation_slot_dates
-```
-
-Mapeo:
-
-```text
-entry.id
-→ generation_slots.id
-
-entry.startTime/endTime
-→ generation_slots
-
-entry.date
-→ generation_slot_dates.entry_date
-```
-
-NO existe ya:
-
-```text
-generation_date_entries
-```
-
----
-
-# 15. generation_slot_excluded_dates
-
-La tabla existe desde MVP 05.6.2.
-
-Sin embargo, la semántica persistente de:
-
-```text
-slot + excluded date
-```
-
-se implementará completamente en MVP 05.6.4.
-
-En MVP 05.6.3:
-
-```text
-POST /api/plan-items
-```
-
-NO acepta exclusiones individuales por slot.
-
-El backend puede leer la tabla para detectar estado persistido, pero no
-debe inventar todavía un campo canónico frontend que no exista.
-
-Si existen filas reales que no pueden representarse todavía:
-
-```text
-no omitirlas silenciosamente
-reportar estado persistido no representable/inconsistente
-```
-
-Hasta MVP 05.6.4 la tabla debería permanecer vacía en uso normal.
-
----
-
-# 16. Occurrences persistidas
-
-Cada occurrence generada desde un slot debe guardar:
-
-```text
-source_generation_slot_id
-```
-
-igual a:
-
-```text
-GenerationSlot.id
-```
-
-Además conserva sus propios:
-
-```text
-id
-plan_item_id
-occurrence_date
-start_time
-end_time
-status
-status_reason
-source_occurrence_id
-```
-
-La occurrence no lee posteriormente su horario desde el slot.
-
----
-
-# 17. Respuesta POST correcta
-
-HTTP:
-
-```text
-201 CREATED
-```
-
-Respuesta conceptual:
-
-```json
-{
-  "planItem": {
-    "id": "PLAN-ITEM-UUID",
-    "name": "Uber",
-    "kind": "activity",
-    "activityType": "periodic",
-    "generationConfig": {
-      "mode": "weekly",
-      "startDate": "YYYY-MM-DD",
-      "endDate": null,
-      "indefinite": true,
-      "slots": [
-        {
-          "id": "SLOT-UUID",
-          "isoWeekday": 1,
-          "startTime": "08:00",
-          "endTime": "11:00"
-        }
-      ]
-    }
-  },
-  "occurrences": [
-    {
-      "id": "OCCURRENCE-UUID",
-      "planItemId": "PLAN-ITEM-UUID",
-      "sourceGenerationSlotId": "SLOT-UUID",
-      "date": "YYYY-MM-DD",
-      "startTime": "08:00",
-      "endTime": "11:00",
-      "status": "pending"
-    }
-  ]
-}
-```
-
-Los slot IDs de respuesta deben coincidir exactamente con los recibidos.
-
----
-
-# 18. GET /api/planner-state
-
-Actualizar la reconstrucción persistente para leer el esquema `003`.
-
-Debe leer al menos:
-
-```text
-plan_items
-generation_configs
-generation_slots
-generation_slot_weekdays
-generation_slot_dates
-generation_excluded_dates
-generation_slot_excluded_dates
-occurrences
-```
-
-No utilizar:
-
-```text
-generation_weekdays
-generation_date_entries
-default_start_time
-default_end_time
-```
-
-porque ya no existen después de `003`.
-
----
-
-# 19. GET — weekly
-
-Debe reconstruir:
+Ejemplo:
 
 ```js
 {
   mode: "weekly",
-  startDate,
-  endDate,
-  indefinite,
-  slots: [
-    {
-      id,
-      isoWeekday,
-      startTime,
-      endTime
-    }
-  ],
-  excludedDates?,
-  stoppedFromDate?
+  excludedDates: ["2026-12-25"]
 }
 ```
 
-Ordenar slots determinísticamente.
+Significa:
 
-Orden recomendado:
+> No generar ninguna occurrence de este PlanItem en esta fecha.
 
-```text
-isoWeekday
-startTime
-endTime
-id
-```
+## slot.excludedDates
 
-El orden no define identidad.
-
----
-
-# 20. GET — interval_days
-
-Debe reconstruir:
+Ejemplo:
 
 ```js
 {
-  mode: "interval_days",
-  startDate,
-  endDate,
-  indefinite,
-  intervalDays,
-  slots: [
-    {
-      id,
-      startTime,
-      endTime
-    }
-  ],
-  excludedDates?,
-  stoppedFromDate?
+  id: "S2",
+  startTime: "14:00",
+  endTime: "17:00",
+  excludedDates: ["2026-09-20"]
 }
 ```
 
-Orden determinista:
+Significa:
 
-```text
-startTime
-endTime
-id
-```
+> No generar únicamente este slot en esta fecha.
+
+No mezclar ambas semánticas.
 
 ---
 
-# 21. GET — manual_dates
+# 5. Manual dates
 
-Debe reconstruir:
+`manual_dates` NO utiliza `slot.excludedDates` como representación
+canónica normal.
+
+Una entry manual representa una instrucción explícita de una única fecha.
+
+Ejemplo:
 
 ```js
 {
-  mode: "manual_dates",
-  entries: [
-    {
-      id,
-      date,
-      startTime,
-      endTime
-    }
-  ],
-  stoppedFromDate?
+  id: "S1",
+  date: "2026-09-20",
+  startTime: "14:00",
+  endTime: "17:00"
 }
 ```
 
-Orden determinista:
-
-```text
-date
-startTime
-endTime
-id
-```
-
-No inventar:
-
-```text
-excludedDates
-```
-
-si no forma parte del contrato canónico manual.
+Cuando se elimina una entry manual, debe eliminarse esa entry/slot
+cuando hacerlo mantenga una configuración válida.
 
 ---
 
-# 22. GET — occurrences
+# 6. PlanItem siempre estructuralmente válido
 
-Cada occurrence debe serializar:
-
-```js
-{
-  id,
-  planItemId,
-  sourceGenerationSlotId?,
-  date,
-  startTime,
-  endTime,
-  status,
-  statusContext?
-}
-```
-
-Si:
+Después de cualquier operación debe continuar cumpliéndose:
 
 ```text
-source_generation_slot_id IS NULL
-```
-
-usar la convención frontend existente:
-
-```text
-omitir campo
-o
-null
-```
-
-pero elegir una sola convención coherente con el dominio actual y
-probarla.
-
-No confundirlo con:
-
-```text
-statusContext.sourceOccurrenceId
-```
-
----
-
-# 23. Detección de inconsistencias persistidas
-
-El mapper/service debe continuar sin inventar información.
-
-Ejemplos de inconsistencias:
-
-```text
-PlanItem sin generation_config
-
-weekly sin slots
-
-weekly slot sin generation_slot_weekdays
-
-weekly slot con generation_slot_dates
-
-interval_days sin slots
-
-interval slot con weekday/date detail
-
-manual_dates sin entries/slots
-
-manual slot sin generation_slot_dates
-
-manual slot con weekday detail
-
-slot perteneciente a otro PlanItem/config
-
-dos detalles incompatibles para un mismo slot
-
-horarios solapados dentro de la misma regla
-
-global exclusions no representables según el mode
-
-slot exclusions existentes antes de que el contrato pueda representarlas
-```
-
-Cuando el estado persistido no pueda reconstruirse sin pérdida:
-
-```text
-HTTP 500 controlado
-```
-
-No exponer filas SQL, DSN, credenciales ni mensajes internos del driver.
-
----
-
-# 24. Python materializer — weekly
-
-Actualizar el materializador Python al contrato multi-slot.
-
-Por cada fecha candidata:
-
-```text
-weekday
-→ todos los slots del weekday
-→ una occurrence por slot
-```
-
-Cada occurrence:
-
-```text
-sourceGenerationSlotId = slot.id
-```
-
-Debe respetar:
-
-```text
-excludedDates
-stoppedFromDate
-rango finito
-indefinite horizon
-history window
-```
-
-con la misma semántica JavaScript.
-
----
-
-# 25. Python materializer — interval_days
-
-Por cada fecha válida:
-
-```text
-crear una occurrence por cada slot
-```
-
-Cada occurrence conserva:
-
-```text
-sourceGenerationSlotId
-```
-
-Respetar las mismas reglas de:
-
-```text
-intervalDays
-excludedDates
-stoppedFromDate
-horizon
-history
-```
-
-que JavaScript.
-
----
-
-# 26. Python materializer — manual_dates
-
-Cada entry:
-
-```text
-→ una occurrence
-```
-
-Varias entries en la misma fecha:
-
-```text
-→ varias occurrences
-```
-
-Cada una con:
-
-```text
-sourceGenerationSlotId = entry.id
-```
-
----
-
-# 27. Materialización idempotente
-
-La lógica Python debe reconocer identidad mediante:
-
-```text
-sourceGenerationSlotId
+PlanItem válido
 +
-date
-```
-
-No mediante:
-
-```text
-planItemId
+generationConfig válida
 +
-date
+estructura específica del mode válida
 ```
 
-La base protege además esta regla con el índice parcial creado por `003`.
+No dejar:
 
-No generar duplicados que dependan de que PostgreSQL los rechace.
+```text
+manual_dates con 0 entries
+weekly con 0 slots
+interval_days con 0 slots
+```
 
-El dominio debe ser correcto antes del INSERT.
+como resultado accidental de esta fase.
 
 ---
 
-# 28. Internal slot overlap validation
+# 7. Última entry manual
 
-Backend debe validar antes de persistir/materializar:
+Si el usuario intenta eliminar la ÚLTIMA entry de un PlanItem
+`manual_dates`, esta fase NO debe dejar una configuración vacía.
 
-## weekly
+La operación debe rechazarse de forma controlada.
 
-```text
-slots del mismo isoWeekday
-```
-
-## interval_days
+Código de dominio sugerido:
 
 ```text
-todos los slots
+last_manual_entry
 ```
 
-## manual_dates
+HTTP:
 
 ```text
-entries de la misma fecha
+409
 ```
 
-Intervalos contiguos:
+No borrar el PlanItem automáticamente.
 
-```text
-08:00–11:00
-11:00–14:00
-```
+No introducir todavía user-facing PlanItem deletion.
 
-son válidos.
-
-Solapados:
-
-```text
-08:00–11:00
-10:30–14:00
-```
-
-son inválidos.
+La occurrence puede seguir gestionándose mediante las reglas/status
+existentes, por ejemplo cancelación cuando corresponda.
 
 ---
 
-# 29. Conflictos contra otras occurrences
+# 8. API — editar una occurrence
 
-Preservar las reglas existentes.
-
-Cada occurrence candidata multi-slot debe evaluarse individualmente.
-
-No cambiar:
+Implementar:
 
 ```text
-intervalos semiabiertos
-priority model
-completed conflict
-history frozen
-priority override requirements
+PATCH /api/occurrences/<occurrence_id>
+```
+
+Esta ruta modifica únicamente la aparición seleccionada.
+
+Payload canónico:
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "startTime": "HH:MM",
+  "endTime": "HH:MM"
+}
+```
+
+Los tres campos representan el estado horario final deseado.
+
+No aceptar campos adicionales.
+
+Esta ruta NO modifica:
+
+```text
+status
+statusContext
+PlanItem name
+kind/subtype
+generationConfig general
+```
+
+salvo los metadatos/exclusiones necesarios para preservar la semántica de
+la occurrence cuando se mueve de fecha.
+
+---
+
+# 9. PATCH — occurrence recurrente, misma fecha
+
+Para una occurrence proveniente de:
+
+```text
+weekly
+interval_days
+```
+
+si únicamente cambia el horario manteniendo la misma fecha:
+
+```text
+GenerationSlot
+→ NO cambia
+
+Occurrence
+→ cambia start_time/end_time
+
+sourceGenerationSlotId
+→ se conserva
+```
+
+Ejemplo:
+
+```text
+Slot S2
+lunes 14:00–17:00
+
+Occurrence O10
+2026-09-21 14:00–17:00
+```
+
+editar solo ese día:
+
+```text
+Occurrence O10
+2026-09-21 15:00–18:00
+sourceGenerationSlotId = S2
+```
+
+Las demás occurrences de S2 siguen usando:
+
+```text
+14:00–17:00
 ```
 
 ---
 
-# 30. Prioridad
+# 10. PATCH — occurrence recurrente movida de fecha
+
+Si una occurrence proveniente de:
+
+```text
+weekly
+interval_days
+```
+
+cambia de fecha:
+
+```text
+fecha original
+→ debe quedar excluida para ese slot
+
+occurrence
+→ se mueve a nueva fecha
+
+sourceGenerationSlotId
+→ se conserva
+```
+
+Ejemplo:
+
+```text
+S2 genera:
+2026-09-21 14:00–17:00
+```
+
+el usuario mueve solo esa occurrence a:
+
+```text
+2026-09-22 15:00–18:00
+```
+
+Debe persistirse:
+
+```text
+generation_slot_excluded_dates
+S2 | 2026-09-21
+```
+
+y actualizar la occurrence.
+
+Esto impide que el materializador vuelva a crear S2 el día original.
+
+---
+
+# 11. PATCH — colisión de source slot en nueva fecha
+
+La base contiene:
+
+```text
+UNIQUE(source_generation_slot_id, occurrence_date)
+WHERE source_generation_slot_id IS NOT NULL
+```
+
+Si mover una occurrence provoca que el mismo slot ya tenga otra
+occurrence en la fecha destino:
+
+```text
+rechazar operación
+```
+
+No quitar procedencia para evadir la constraint.
+
+No duplicar la occurrence.
+
+Responder con conflicto de dominio controlado.
+
+---
+
+# 12. PATCH — manual_dates
+
+Una entry `manual_dates` representa exactamente una instrucción explícita.
+
+Por tanto, editar su única occurrence debe mantener sincronizados:
+
+```text
+generation_slots
+generation_slot_dates
+occurrence
+```
 
 Preservar:
 
 ```text
-NORMAL       = 100
-EVENT        = 200
-UNEXPECTED   = 300
+slot.id
+sourceGenerationSlotId
+occurrence.id
 ```
 
-Multi-slot no modifica esta jerarquía.
-
-Cada occurrence se evalúa por separado.
-
----
-
-# 31. Priority override handshake
-
-MVP 05.5 devuelve actualmente:
+Si cambia horario:
 
 ```text
-409 priority_override_required
+generation_slots.start/end
+→ actualizar
+
+occurrence.start/end
+→ actualizar
 ```
 
-cuando la creación necesita confirmación de override.
+Si cambia fecha:
 
-Mantener esta política.
+```text
+generation_slot_dates.entry_date
+→ actualizar
 
-NO implementar todavía el handshake frontend completo.
+occurrence.occurrence_date
+→ actualizar
+```
 
-Eso pertenece a integración/edición posterior.
-
-No ejecutar overrides silenciosamente.
+No crear un slot nuevo por una edición normal de esa misma entry.
 
 ---
 
-# 32. Atomicidad de POST
+# 13. PATCH — occurrence ad-hoc
 
-La creación continúa siendo completamente atómica.
+Si:
 
-Debe utilizar:
+```text
+sourceGenerationSlotId = null
+```
+
+la occurrence no tiene regla generadora.
+
+Editar:
+
+```text
+date
+startTime
+endTime
+```
+
+modifica únicamente la occurrence.
+
+No crear GenerationSlot.
+
+No crear slot exclusion.
+
+---
+
+# 14. PATCH — conflictos
+
+Antes de confirmar el horario/fecha nueva:
+
+```text
+revalidar conflictos
+```
+
+contra las occurrences relevantes.
+
+Preservar exactamente las reglas actuales:
+
+```text
+intervalos semiabiertos
+completed conflict
+priority
+history frozen
+priority override requirement
+```
+
+No permitir que una occurrence choque consigo misma durante la validación.
+
+Excluir su propio ID de la búsqueda de conflictos.
+
+---
+
+# 15. PATCH — atomicidad
+
+Toda edición debe ser atómica.
+
+Usar:
 
 ```text
 una sola conexión
 una sola transacción
 ```
 
-Conceptualmente:
+Ejemplo recurrente movido:
 
 ```text
 BEGIN
 
-validar conflictos/bloquear lo necesario
-insert plan_item
-insert generation_config
-insert generation_slots
-insert weekday/date details
-insert global exclusions
-insert occurrences
+lock occurrence
+validate
+insert slot exclusion original date
+update occurrence
+
+COMMIT
+```
+
+Manual:
+
+```text
+BEGIN
+
+lock occurrence / slot
+validate
+update generation slot
+update slot date si aplica
+update occurrence
 
 COMMIT
 ```
@@ -1072,68 +544,486 @@ Ante cualquier fallo:
 ROLLBACK
 ```
 
-No debe quedar:
-
-```text
-PlanItem huérfano
-slot huérfano
-generationConfig parcial
-occurrence parcial
-```
+No dejar exclusión sin edición ni edición sin exclusión.
 
 ---
 
-# 33. Concurrencia
+# 16. PATCH — respuesta
 
-Mantener el mecanismo existente de bloqueo de occurrences potencialmente
-conflictivas mediante:
+Respuesta correcta:
 
 ```text
-FOR UPDATE
+HTTP 200
 ```
 
-si continúa siendo válido.
+Contrato mínimo:
 
-Adaptarlo únicamente si multi-slot lo exige.
+```json
+{
+  "occurrence": {
+    "id": "UUID",
+    "planItemId": "UUID",
+    "sourceGenerationSlotId": "UUID",
+    "date": "YYYY-MM-DD",
+    "startTime": "HH:MM",
+    "endTime": "HH:MM",
+    "status": "pending"
+  }
+}
+```
 
-No retirar protección de concurrencia para simplificar implementación.
+Si `sourceGenerationSlotId` es NULL, seguir la convención API ya existente.
+
+La integración frontend persistente todavía no se implementa en esta fase.
 
 ---
 
-# 34. Consistencia de GET planner-state
+# 17. API — eliminar una occurrence
 
-`GET /api/planner-state` reconstruye estado desde varias tablas.
+Implementar:
 
-Todas las consultas de una misma reconstrucción deben utilizar:
+```text
+DELETE /api/occurrences/<occurrence_id>
+```
+
+La semántica depende del origen de la occurrence.
+
+---
+
+# 18. DELETE — weekly / interval_days
+
+Si la occurrence proviene de un GenerationSlot recurrente:
+
+```text
+sourceGenerationSlotId != null
+```
+
+y el mode es:
+
+```text
+weekly
+interval_days
+```
+
+debe ocurrir atómicamente:
+
+```text
+insert generation_slot_excluded_dates
+    slot_id
+    occurrence_date
+
+delete occurrence
+```
+
+Resultado:
+
+```text
+solo ese slot desaparece ese día
+```
+
+Los demás slots del mismo PlanItem/fecha permanecen.
+
+---
+
+# 19. DELETE — manual_dates
+
+Si la occurrence proviene de:
+
+```text
+manual_dates
+```
+
+y NO es la última entry del PlanItem:
+
+```text
+delete occurrence
+delete GenerationSlot
+```
+
+La eliminación del slot debe limpiar mediante CASCADE:
+
+```text
+generation_slot_dates
+```
+
+y cualquier detalle dependiente.
+
+No afectar otras manual entries.
+
+---
+
+# 20. DELETE — última manual entry
+
+Si es la última entry del PlanItem:
+
+```text
+rechazar
+```
+
+No dejar:
+
+```text
+manual_dates entries=[]
+```
+
+No borrar automáticamente PlanItem.
+
+Respuesta:
+
+```text
+409
+```
+
+con error de dominio sanitizado.
+
+---
+
+# 21. DELETE — occurrence ad-hoc
+
+Si:
+
+```text
+sourceGenerationSlotId IS NULL
+```
+
+y la política temporal/status permite eliminación:
+
+```text
+delete occurrence
+```
+
+No crear exclusión.
+
+No modificar configuration.
+
+---
+
+# 22. DELETE — atomicidad
+
+La eliminación completa debe utilizar:
 
 ```text
 una sola conexión
+una sola transacción
 ```
 
-y una vista consistente de la base.
-
-Ahora que ya existen escrituras persistentes, preferir una transacción de
-lectura consistente, idealmente:
+Ejemplo recurring:
 
 ```text
-READ ONLY
-REPEATABLE READ
+BEGIN
+
+lock occurrence
+validate temporal/status
+insert slot exclusion
+delete occurrence
+
+COMMIT
 ```
 
-si puede integrarse limpiamente con la infraestructura actual.
-
-Si hacerlo requiere una alteración arquitectónica desproporcionada:
+Si cualquier paso falla:
 
 ```text
-no improvisar
-reportarlo
+ROLLBACK
 ```
-
-Pero no utilizar conexiones separadas por tabla.
 
 ---
 
-# 35. Errores API
+# 23. DELETE — respuesta
+
+Respuesta correcta:
+
+```text
+HTTP 200
+```
+
+Contrato mínimo:
+
+```json
+{
+  "deletedOccurrenceId": "UUID"
+}
+```
+
+No es necesario devolver todo planner-state.
+
+La futura integración frontend podrá refrescar:
+
+```text
+GET /api/planner-state
+```
+
+después de una mutación.
+
+---
+
+# 24. GET /api/planner-state — slot exclusions
+
+Actualizar el contrato de lectura para que:
+
+```text
+generation_slot_excluded_dates
+```
+
+ya NO se considere automáticamente inconsistencia.
+
+Debe reconstruirse en cada slot recurrente.
+
+Weekly:
+
+```js
+{
+  id,
+  isoWeekday,
+  startTime,
+  endTime,
+  excludedDates: ["YYYY-MM-DD"]
+}
+```
+
+Interval:
+
+```js
+{
+  id,
+  startTime,
+  endTime,
+  excludedDates: ["YYYY-MM-DD"]
+}
+```
+
+Omitir `excludedDates` cuando esté vacío si esa es la convención ya usada
+por el frontend.
+
+---
+
+# 25. GET manual_dates
+
+Una fila en:
+
+```text
+generation_slot_excluded_dates
+```
+
+asociada a un slot `manual_dates` sigue considerándose estado persistido
+no canónico para esta fase.
+
+No inventar semántica.
+
+Debe producir error de integridad controlado.
+
+---
+
+# 26. JavaScript domain — slot exclusions
+
+Adaptar el dominio local para aceptar:
+
+```text
+slot.excludedDates
+```
+
+en:
+
+```text
+weekly
+interval_days
+```
+
+El materializador JavaScript debe verificar:
+
+```text
+config.excludedDates
+OR
+slot.excludedDates
+```
+
+antes de generar una occurrence.
+
+---
+
+# 27. Python materializer — slot exclusions
+
+El materializador Python debe aplicar exactamente la misma semántica.
+
+Para cada candidate:
+
+```text
+si candidateDate está en config.excludedDates
+→ no generar ningún slot
+
+si candidateDate está en slot.excludedDates
+→ no generar ese slot
+
+si no
+→ generar normalmente
+```
+
+Mantener paridad JS ↔ Python.
+
+---
+
+# 28. Materialización idempotente después de edición
+
+Una occurrence recurrente editada solo en horario conserva:
+
+```text
+sourceGenerationSlotId + date
+```
+
+Por tanto, una rematerialización NO debe generar otra occurrence con el
+horario original.
+
+Ejemplo:
+
+```text
+S2 = 14:00–17:00
+
+O2 editada:
+15:00–18:00
+source=S2
+date=2026-09-21
+```
+
+Materializar nuevamente:
+
+```text
+NO crear otro 14:00–17:00
+```
+
+---
+
+# 29. Materialización después de DELETE
+
+Después de eliminar:
+
+```text
+S2
+2026-09-21
+```
+
+debe existir:
+
+```text
+slot.excludedDates includes 2026-09-21
+```
+
+Por tanto una rematerialización:
+
+```text
+NO recrea S2 ese día
+```
+
+Los demás slots continúan generándose.
+
+---
+
+# 30. Temporal integrity
+
+Preservar las reglas actuales.
+
+No ampliar la ventana editable.
+
+No permitir cambios en historia congelada.
+
+No permitir borrar/modificar statuses protegidos si actualmente están
+protegidos.
+
+Usar las mismas funciones/reglas existentes cuando sea posible.
+
+---
+
+# 31. Status
+
+PATCH de esta fase modifica:
+
+```text
+date/time
+```
+
+NO modifica status.
+
+DELETE respeta las reglas de status existentes.
+
+No implementar persistencia general de status en esta tarea si todavía
+pertenece a otra fase.
+
+---
+
+# 32. UUIDs
+
+Validar:
+
+```text
+occurrence_id de URL
+```
+
+como UUID válido según la política backend actual.
+
+Los slot IDs existentes se preservan.
+
+PATCH no genera slot UUID salvo que otra operación existente lo requiera,
+lo cual no debería suceder en esta fase.
+
+DELETE no reutiliza IDs.
+
+---
+
+# 33. Repository layer
+
+Mantener arquitectura:
+
+```text
+app.py
+→ HTTP
+
+service/domain
+→ reglas/orquestación
+
+repository
+→ SQL
+```
+
+No poner reglas de mode en Flask route.
+
+No poner lógica temporal en repository.
+
+No introducir ORM.
+
+---
+
+# 34. Bloqueos/concurrencia
+
+Las mutations deben bloquear las filas relevantes.
+
+Utilizar:
+
+```text
+SELECT ... FOR UPDATE
+```
+
+o el mecanismo equivalente ya existente.
+
+Evitar que dos ediciones/eliminaciones concurrentes produzcan:
+
+```text
+duplicated exclusions
+lost update
+partial mutation
+```
+
+La PK:
+
+```text
+(slot_id, excluded_date)
+```
+
+protege también la exclusión.
+
+La operación puede insertar exclusión de forma idempotente cuando sea
+apropiado.
+
+---
+
+# 35. Error handling
 
 Mantener respuestas sanitizadas.
 
@@ -1141,337 +1031,95 @@ Como mínimo:
 
 ```text
 400
-invalid_payload
+invalid_payload / invalid identifier
+
+404
+occurrence_not_found
 
 409
-conflicto de dominio existente
+domain conflict
+history frozen
+status conflict
+last_manual_entry
+slot/date uniqueness conflict
 
 500
-persisted planner state inválido/no representable
+persisted state invalid
 
 503
-database_unavailable
+database unavailable
 ```
 
 No exponer:
 
 ```text
+SQL
 DSN
 password
-SQL raw
-driver internals
-tracebacks al cliente
+driver messages
+traceback
 ```
 
 ---
 
-# 36. Repository layer
+# 36. Frontend persistente
 
-Mantener separación:
+NO conectar todavía el frontend a:
 
 ```text
-app.py
-→ HTTP solamente
-
-service/domain
-→ validación/orquestación
-
-repository
-→ SQL
-
-materializer
-→ generación temporal
+PATCH /api/occurrences
+DELETE /api/occurrences
 ```
 
-No introducir ORM.
+La UI/local domain puede adaptarse para representar correctamente
+slot exclusions.
 
-No duplicar SQL en Flask routes.
-
-No mover reglas de dominio a repository.
+La integración HTTP pertenece a una fase posterior.
 
 ---
 
-# 37. planner-state repository
+# 37. Apply Week
 
-Actualizar las consultas al esquema nuevo.
-
-Usar:
+NO implementar todavía la persistencia de:
 
 ```text
-dict_row
+Apply Week
 ```
 
-o la convención existente.
+Si el código local existente necesita adaptación mínima para no perder
+`slot.excludedDates`, hacerlo.
 
-Consultas deterministas.
-
-No depender del orden natural de PostgreSQL.
+No diseñar todavía su endpoint persistente.
 
 ---
 
-# 38. plan-item creation repository
+# 38. Apply Future
 
-Actualizar inserts al esquema nuevo.
+NO implementar todavía:
 
-Debe aceptar los slot IDs ya validados.
+```text
+Apply Future persistente
+modificación masiva de generation_slots
+effectiveDate
+reconciliación futura completa
+```
 
-No generar UUID de slot en repository.
-
-No modificar los IDs recibidos.
-
-No insertar detalles incompatibles con el `mode`.
+Eso pertenece a MVP 05.6.4.3.
 
 ---
 
-# 39. JS ↔ Python parity
+# 39. PostgreSQL
 
-La prueba de paridad que temporalmente quedó roja en MVP 05.6.1 debe
-volver a quedar verde.
+NO crear nuevas migraciones.
 
-Utilizar fixtures multi-slot con IDs de slot fijos/deterministas.
-
-Comparar la semántica materializada equivalente.
-
-Debe incluir al menos:
+El esquema 003 ya contiene:
 
 ```text
-weekly un slot
-
-weekly varios slots mismo weekday
-
-weekly slots distintos por weekday
-
-interval_days varios slots
-
-manual_dates varias entries mismo día
-
-slots contiguos
-
-excludedDates
-
-stoppedFromDate
-
-sourceGenerationSlotId
-```
-
-Si JavaScript y Python generan `Occurrence.id` aleatorios de forma
-independiente:
-
-```text
-NO exigir igualdad de UUID de occurrence
-```
-
-para considerar equivalencia.
-
-Comparar los campos semánticos apropiados:
-
-```text
-planItemId
-sourceGenerationSlotId
-date
-startTime
-endTime
-status
-```
-
-y cualquier otro campo determinista relevante.
-
-No debilitar la prueba simplemente para hacerla pasar.
-
----
-
-# 40. Casos de prueba POST weekly
-
-Cubrir:
-
-```text
-un slot
-
-múltiples slots mismo weekday
-
-slots diferentes por weekday
-
-UUIDs preservados
-
-override visual no existe en API canónica
-
-excludedDates
-
-stoppedFromDate
-
-slots contiguos
-
-slots solapados rechazados
-
-slot UUID inválido
-
-slot UUID duplicado
-```
-
----
-
-# 41. Casos de prueba POST interval_days
-
-Cubrir:
-
-```text
-un slot
-
-varios slots
-
-intervalDays válido
-
-intervalDays inválido
-
-UUIDs preservados
-
-solapamiento rechazado
-
-excludedDates
-
-stoppedFromDate
-```
-
----
-
-# 42. Casos de prueba POST manual_dates
-
-Cubrir:
-
-```text
-una entry
-
-varias entries
-
-varias entries misma fecha
-
-horarios contiguos
-
-horarios solapados rechazados
-
-UUIDs preservados
-
-stoppedFromDate
-
-excludedDates rechazado si aparece
-
-single_date rechazado
-```
-
----
-
-# 43. Casos de prueba planner-state
-
-Cubrir:
-
-```text
-DB vacía
-
-weekly multi-slot
-
-interval_days multi-slot
-
-manual_dates multi-slot
-
-varios PlanItems
-
-múltiples occurrences mismo PlanItem/día
-
-sourceGenerationSlotId presente
-
-sourceGenerationSlotId NULL
-
-statusContext
-
-excludedDates global
-
-stoppedFromDate
-
-orden determinista
-
-estado inconsistente
-```
-
----
-
-# 44. Tests de atomicidad
-
-Con PostgreSQL aislado verificar rollback si falla:
-
-```text
-generation_config
-
-generation_slot
-
-weekday/date detail
-
-global exclusion
-
-occurrence
-```
-
-Después del fallo no debe quedar:
-
-```text
-PlanItem
-GenerationSlot
-Occurrence
-```
-
-parcialmente persistido.
-
----
-
-# 45. Tests de idempotencia DB
-
-Verificar que:
-
-```text
-mismo source_generation_slot_id
-+
-misma occurrence_date
-```
-
-no pueda duplicarse.
-
-Y que:
-
-```text
-slot A + fecha X
-slot B + fecha X
-```
-
-sí sea válido para el mismo PlanItem.
-
----
-
-# 46. Tests de procedencia histórica
-
-Verificar que una occurrence con:
-
-```text
+generation_slot_excluded_dates
 source_generation_slot_id
 ```
 
-conserva:
-
-```text
-date
-start/end
-status
-```
-
-independientemente del slot.
-
-No es necesario implementar edición persistente todavía.
-
----
-
-# 47. PostgreSQL de pruebas
-
-Utilizar PostgreSQL 16 aislado/efímero cuando esté disponible.
-
-Aplicar siempre:
+No modificar:
 
 ```text
 001
@@ -1479,132 +1127,381 @@ Aplicar siempre:
 003
 ```
 
-antes de tests de integración.
+Si se detecta un defecto real del esquema:
 
-NO utilizar:
+```text
+detenerse y reportarlo
+```
+
+No crear `004` por iniciativa propia.
+
+---
+
+# 40. vcs_dev
+
+Codex NO debe modificar:
 
 ```text
 vcs_dev
 ```
 
-No utilizar credenciales reales del usuario.
+No usar credenciales reales.
 
----
+Utilizar PostgreSQL 16 aislado/efímero para integración.
 
-# 48. vcs_dev
-
-Codex NO debe aplicar:
+Aplicar:
 
 ```text
+001
+002
 003
 ```
 
-sobre `vcs_dev`.
+---
 
-NO debe modificar los datos reales/locales del usuario.
+# 41. Tests — DELETE recurrente multi-slot
 
-La aplicación de `003` a `vcs_dev` se hará manualmente después de revisar
-MVP 05.6.3.
+Probar:
+
+```text
+PlanItem
+S1 08:00–11:00
+S2 14:00–17:00
+
+misma fecha
+O1 ← S1
+O2 ← S2
+```
+
+Eliminar O2.
+
+Verificar:
+
+```text
+O1 permanece
+O2 desaparece
+
+slot S1 permanece
+slot S2 permanece
+
+generation_slot_excluded_dates:
+S2 + date
+
+NO:
+S1 + date
+```
+
+Rematerializar.
+
+Verificar:
+
+```text
+O2 NO reaparece
+O1 no se duplica
+```
 
 ---
 
-# 49. Backend tests legacy
+# 42. Tests — PATCH recurrente
 
-Actualizar tests backend que todavía construyan fixtures con:
+Probar:
 
 ```text
-defaultStartTime
-defaultEndTime
-weekdays
-weekdayTimeOverrides
-generation_date_entries
+S2 14:00–17:00
+O2 14:00–17:00
 ```
 
-cuando esos tests estén validando el contrato canónico actual.
+PATCH:
 
-No borrar tests de regresión útiles.
+```text
+O2 → 15:00–18:00
+```
 
-Los tests específicamente históricos/de migración pueden conservar el
-modelo legacy si están probando 001/002 → 003.
+Verificar:
+
+```text
+S2 sigue 14:00–17:00
+O2 es 15:00–18:00
+sourceGenerationSlotId = S2
+```
+
+Rematerializar:
+
+```text
+no aparece duplicado 14:00–17:00
+```
 
 ---
 
-# 50. Rutas existentes
+# 43. Tests — mover fecha recurrente
 
-Preservar:
+Mover:
 
 ```text
-GET /api/health
-GET /api/health/db
-GET /api/plan-items
-GET /api/planner-state
-POST /api/plan-items
+O2
+2026-09-20
 ```
 
-No romper health endpoints.
+a:
 
-`GET /api/plan-items` puede continuar devolviendo únicamente los datos
-básicos que ya devolvía si ese es su contrato actual.
+```text
+2026-09-21
+```
+
+Verificar:
+
+```text
+slot exclusion:
+S2 + 2026-09-20
+
+occurrence:
+date = 2026-09-21
+
+sourceGenerationSlotId = S2
+```
+
+Rematerializar fecha original:
+
+```text
+no reaparece
+```
 
 ---
 
-# 51. Frontend
+# 44. Tests — manual_dates edit
 
-NO modificar el comportamiento frontend aprobado en MVP 05.6.1.
-
-Si para las pruebas de paridad hace falta tocar exclusivamente un helper
-de tests:
+Verificar que PATCH actualiza coherentemente:
 
 ```text
-permitido
+generation_slots
+generation_slot_dates
+occurrence
 ```
 
-Si se detecta un defecto real del frontend/domain:
+preservando:
 
 ```text
-detenerse
-reportarlo
+slot.id
+occurrence.id
+sourceGenerationSlotId
 ```
-
-No corregir silenciosamente una feature ya cerrada desde backend.
 
 ---
 
-# 52. Database migrations
+# 45. Tests — manual_dates delete
 
-NO modificar:
-
-```text
-001_initial_schema.sql
-002_fix_occurrence_status_context.sql
-003_multi_slot_scheduling.sql
-```
-
-Si se detecta un defecto REAL en `003`:
+Con dos entries:
 
 ```text
-detenerse
-reportarlo
+S1
+S2
 ```
 
-No crear `004` por iniciativa propia en esta fase.
+eliminar S2.
 
-Primero debe revisarse la incompatibilidad.
+Verificar:
+
+```text
+S1 permanece
+S2 desaparece
+O2 desaparece
+PlanItem sigue válido
+```
+
+Intentar luego eliminar S1 como última entry:
+
+```text
+409
+last_manual_entry
+```
+
+y verificar rollback completo.
+
+---
+
+# 46. Tests — ad-hoc
+
+Occurrence con:
+
+```text
+sourceGenerationSlotId = null
+```
+
+PATCH:
+
+```text
+actualiza solo occurrence
+```
+
+DELETE:
+
+```text
+elimina solo occurrence
+```
+
+No crea:
+
+```text
+GenerationSlot
+slot exclusion
+```
+
+---
+
+# 47. Tests — slot excludedDates GET
+
+Insertar:
+
+```text
+S2 + 2026-09-20
+```
+
+en:
+
+```text
+generation_slot_excluded_dates
+```
+
+GET planner-state debe devolver:
+
+```js
+{
+  id: "S2",
+  ...
+  excludedDates: ["2026-09-20"]
+}
+```
+
+sin HTTP 500.
+
+---
+
+# 48. Tests — slot exclusions materializer parity
+
+JS y Python deben producir exactamente la misma semántica.
+
+Fixture:
+
+```text
+S1
+S2 excluded on selected date
+S3
+```
+
+Resultado:
+
+```text
+S1 generated
+S2 omitted
+S3 generated
+```
+
+La prueba JS ↔ Python debe continuar verde.
+
+---
+
+# 49. Tests — rollback
+
+Probar rollback real si falla:
+
+```text
+insert slot exclusion
+update occurrence
+delete occurrence
+manual slot update
+manual slot delete
+```
+
+No dejar mutaciones parciales.
+
+---
+
+# 50. Regresión
+
+Ejecutar:
+
+```text
+todas las pruebas backend
+9 suites frontend
+JS/Python parity
+PostgreSQL integration
+git diff --check
+```
+
+Health endpoints deben permanecer verdes.
+
+POST y GET existentes deben continuar funcionando.
+
+---
+
+# 51. Caso de aceptación principal
+
+Dado:
+
+```text
+Prueba multi-slot
+2026-09-20
+
+08:00–11:00 ← S1
+14:00–17:00 ← S2
+```
+
+debe ser posible eliminar únicamente:
+
+```text
+14:00–17:00
+```
+
+y obtener:
+
+```text
+08:00–11:00 permanece
+
+S2 sigue siendo regla válida
+pero:
+S2.excludedDates incluye 2026-09-20
+```
+
+La rematerialización no debe recrear el segundo horario.
+
+---
+
+# 52. Segundo caso de aceptación
+
+Dado:
+
+```text
+S2 recurrente
+14:00–17:00
+```
+
+una occurrence concreta puede cambiar a:
+
+```text
+15:00–18:00
+```
+
+sin cambiar S2.
+
+Las siguientes occurrences siguen:
+
+```text
+14:00–17:00
+```
 
 ---
 
 # 53. Fuera de alcance
 
-NO implementar todavía:
+NO implementar:
 
 ```text
-PATCH plan-items
-DELETE persistente
-edición persistente de slots
-generation_slot_excluded_dates writes
-eliminar solo este slot hoy
-Apply week persistente multi-slot
-Apply Future persistente multi-slot
+PlanItem deletion
+Apply Week persistente
+Apply Future persistente
+mass slot replacement
+slot versioning
+soft-delete de slots
 frontend fetch integration
 auth
 multiusuario
@@ -1614,142 +1511,9 @@ notifications
 timezone por usuario
 ```
 
-Esas operaciones pertenecen a fases posteriores.
-
 ---
 
-# 54. Caso de aceptación principal — Uber
-
-El backend debe aceptar un solo PlanItem:
-
-```text
-Uber
-```
-
-con slots weekly equivalentes a:
-
-```text
-lunes-viernes
-
-08:00–11:00
-14:00–17:00
-20:00–22:00
-
-sábado-domingo
-
-08:00–21:00
-```
-
-Debe:
-
-```text
-preservar todos los slot UUIDs
-persistirlos
-materializar 17 occurrences en una semana completa equivalente
-asignar sourceGenerationSlotId correcto
-permitir múltiples occurrences mismo PlanItem/día
-```
-
-sin crear varios PlanItems.
-
----
-
-# 55. Caso de aceptación — Medicamento
-
-Debe aceptar:
-
-```text
-interval_days = 1
-
-08:00–08:05
-14:00–14:05
-22:00–22:05
-```
-
-como tres slots del mismo PlanItem.
-
----
-
-# 56. Caso de aceptación — manual_dates
-
-Debe aceptar:
-
-```text
-2026-09-15
-
-08:00–11:00
-14:00–17:00
-```
-
-como dos entries con dos UUIDs distintos.
-
-Debe persistir dos GenerationSlots y dos occurrences independientes.
-
----
-
-# 57. Criterios de aceptación
-
-MVP 05.6.3 queda completo cuando:
-
-```text
-GET planner-state
-→ reconstruye contrato multi-slot
-
-POST plan-items
-→ persiste contrato multi-slot
-
-GenerationSlot UUID frontend
-→ preservado hasta PostgreSQL y respuesta
-
-Python materializer
-→ multi-slot
-
-sourceGenerationSlotId
-→ persistido y serializado
-
-JS/Python parity
-→ verde
-
-múltiples occurrences mismo PlanItem/día
-→ válidas
-
-rollback
-→ conserva atomicidad
-
-health routes
-→ sin regresión
-```
-
----
-
-# 58. Resultado arquitectónico esperado
-
-Al finalizar:
-
-```text
-Frontend
-GenerationSlots
-      │
-      ▼
-Flask/API
-      │
-      ▼
-Service/domain Python
-      │
-      ├── materializer Python
-      │
-      ▼
-Repository
-      │
-      ▼
-PostgreSQL 003
-```
-
-Los tres niveles comparten el mismo modelo.
-
----
-
-# 59. Git
+# 54. Git
 
 Codex NO debe:
 
@@ -1764,36 +1528,37 @@ El usuario controla Git.
 
 ---
 
-# 60. Reporte requerido
+# 55. Reporte requerido
 
 Al terminar reportar:
 
 1. archivos creados/modificados;
-2. contrato exacto aceptado por POST weekly;
-3. contrato exacto aceptado por POST interval_days;
-4. contrato exacto aceptado por POST manual_dates;
-5. contrato exacto devuelto por planner-state;
-6. cómo se validan los UUID de slots;
-7. evidencia de que se preservan;
-8. estrategia SQL de persistencia;
-9. cómo se insertan weekday/date details;
-10. cómo se persiste `source_generation_slot_id`;
-11. cómo funciona el materializador Python;
-12. cómo funciona la idempotencia;
-13. cómo se detectan estados persistidos inconsistentes;
-14. estrategia de transacción/rollback;
-15. resultado de JS/Python parity;
-16. número y resultado de tests backend;
-17. resultado de tests frontend como regresión;
-18. resultado de integración PostgreSQL `001+002+003`;
-19. prueba del caso Uber;
-20. cualquier limitación/riesgo encontrado.
+2. contrato exacto de PATCH occurrence;
+3. contrato exacto de DELETE occurrence;
+4. cómo se representan `slot.excludedDates`;
+5. cómo se reconstruyen desde PostgreSQL;
+6. cómo JS materializer aplica exclusión por slot;
+7. cómo Python materializer aplica exclusión por slot;
+8. comportamiento PATCH recurrente misma fecha;
+9. comportamiento PATCH recurrente movida de fecha;
+10. comportamiento PATCH manual;
+11. comportamiento PATCH ad-hoc;
+12. comportamiento DELETE recurring;
+13. comportamiento DELETE manual;
+14. protección de última manual entry;
+15. comportamiento DELETE ad-hoc;
+16. atomicidad/rollback;
+17. locking/concurrencia;
+18. resultado JS/Python parity;
+19. número y resultado de tests backend;
+20. resultado de suites frontend;
+21. resultado PostgreSQL integration;
+22. cualquier limitación o riesgo encontrado.
 
 Confirmar explícitamente:
 
 ```text
 vcs_dev no fue modificado
-frontend funcional no fue modificado
 001/002/003 no fueron modificadas
 no se hizo commit/push/merge
 ```

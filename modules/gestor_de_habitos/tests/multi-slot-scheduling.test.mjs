@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {
+    cloneGenerationConfig,
     createGenerationSlotId,
     isGenerationSlotId,
+    preserveSlotExcludedDates,
 } from "../js/domain/generation-slots.js";
 import { materializeOccurrenceDrafts, validateGenerationConfig } from "../js/scheduling/materializer.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
@@ -34,6 +36,38 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     const drafts = materializeOccurrenceDrafts(activity("weekly-one", config), "2026-09-14", "2026-09-20");
     assert.equal(drafts.length, 1, "weekly materializa un único slot en su weekday");
     assert.equal(drafts[0].sourceGenerationSlotId, config.slots[0].id);
+}
+
+{
+    const first = generationSlot({ isoWeekday: 1, startTime: "08:00", endTime: "09:00" });
+    const excluded = generationSlot({ isoWeekday: 1, startTime: "10:00", endTime: "11:00" });
+    excluded.excludedDates = ["2026-09-14"];
+    const third = generationSlot({ isoWeekday: 1, startTime: "12:00", endTime: "13:00" });
+    const config = weeklyConfig({
+        days: [],
+        startDate: "2026-09-14",
+        endDate: "2026-09-14",
+        indefinite: false,
+        slots: [first, excluded, third],
+    });
+    const drafts = materializeOccurrenceDrafts(activity("slot-exclusion", config), "2026-09-14", "2026-09-14");
+    assert.deepEqual(
+        drafts.map(({ sourceGenerationSlotId }) => sourceGenerationSlotId),
+        [first.id, third.id],
+        "slot.excludedDates omite solamente el slot seleccionado",
+    );
+    const cloned = cloneGenerationConfig(config);
+    cloned.slots[1].excludedDates.push("2026-09-21");
+    assert.deepEqual(excluded.excludedDates, ["2026-09-14"], "el clone no comparte el array de exclusiones");
+    const editedConfig = preserveSlotExcludedDates(
+        config,
+        { ...config, slots: config.slots.map(({ excludedDates: _excludedDates, ...slot }) => ({ ...slot })) },
+    );
+    assert.deepEqual(
+        editedConfig.slots[1].excludedDates,
+        ["2026-09-14"],
+        "el editor conserva exclusiones ocultas por identidad de slot",
+    );
 }
 
 {
@@ -88,6 +122,39 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
 }
 
 {
+    const config = weeklyConfig({
+        days: [1],
+        startDate: "2026-09-14",
+        endDate: "2026-09-14",
+        indefinite: false,
+        startTime: "08:00",
+        endTime: "09:00",
+        extraSlots: [{ isoWeekday: 1, startTime: "14:00", endTime: "17:00" }],
+    });
+    const store = createPlannerStore([activity("local-patch", config)], [], "2026-09-14");
+    const second = store.getOccurrencesForPlanItem("local-patch")[1];
+    const sourceSlot = config.slots.find(({ id }) => id === second.sourceGenerationSlotId);
+    store.updateOccurrence(second.id, {
+        date: second.date,
+        startTime: "15:00",
+        endTime: "18:00",
+    });
+    assert.deepEqual(
+        store.getPlanItemById("local-patch").generationConfig.slots.find(({ id }) => id === sourceSlot.id),
+        sourceSlot,
+        "editar horario de una occurrence recurrente no modifica su slot",
+    );
+    store.updateOccurrence(second.id, {
+        date: "2026-09-15",
+        startTime: "15:00",
+        endTime: "18:00",
+    });
+    const movedSlot = store.getPlanItemById("local-patch").generationConfig.slots.find(({ id }) => id === sourceSlot.id);
+    assert.deepEqual(movedSlot.excludedDates, ["2026-09-14"]);
+    assert.deepEqual(store.materializePlanItem("local-patch", "2026-09-14", "2026-09-14"), []);
+}
+
+{
     const config = manualConfig([
         { date: "2026-09-15", startTime: "08:00", endTime: "11:00" },
         { date: "2026-09-15", startTime: "14:00", endTime: "17:00" },
@@ -95,6 +162,33 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     const drafts = materializeOccurrenceDrafts(activity("manual", config), "2026-09-15", "2026-09-15");
     assert.equal(drafts.length, 2, "manual_dates admite varios horarios en la misma fecha");
     assert.deepEqual(drafts.map(({ sourceGenerationSlotId }) => sourceGenerationSlotId), config.entries.map(({ id }) => id));
+}
+
+{
+    const config = manualConfig([
+        { date: "2026-09-15", startTime: "08:00", endTime: "09:00" },
+        { date: "2026-09-16", startTime: "14:00", endTime: "17:00" },
+    ]);
+    const store = createPlannerStore([activity("manual-local-patch", config)], [], "2026-09-15");
+    const second = store.getOccurrencesForPlanItem("manual-local-patch")[1];
+    store.updateOccurrence(second.id, {
+        date: "2026-09-17",
+        startTime: "15:00",
+        endTime: "18:00",
+    });
+    const entry = store.getPlanItemById("manual-local-patch").generationConfig.entries.find(
+        ({ id }) => id === second.sourceGenerationSlotId,
+    );
+    assert.deepEqual(
+        entry,
+        {
+            id: second.sourceGenerationSlotId,
+            date: "2026-09-17",
+            startTime: "15:00",
+            endTime: "18:00",
+        },
+        "editar manual_dates sincroniza entry y occurrence preservando IDs",
+    );
 }
 
 {

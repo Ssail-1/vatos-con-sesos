@@ -129,6 +129,22 @@ class PayloadValidationTests(unittest.TestCase):
                     payload["generationConfig"]["mode"],
                 )
 
+    def test_recurring_slots_accept_excluded_dates_but_manual_entries_do_not(self):
+        config = weekly_config()
+        config["slots"][0]["excludedDates"] = ["2026-09-18", "2026-09-15"]
+        normalized = creation_service.validate_plan_item_payload(
+            activity_payload(config)
+        )
+        self.assertEqual(
+            normalized["generationConfig"]["slots"][0]["excludedDates"],
+            ["2026-09-15", "2026-09-18"],
+        )
+
+        manual = manual_config()
+        manual["entries"][0]["excludedDates"] = ["2026-09-11"]
+        with self.assertRaises(creation_service.PlanItemValidationError):
+            creation_service.validate_plan_item_payload(activity_payload(manual))
+
         with self.assertRaises(creation_service.PlanItemValidationError):
             creation_service.validate_plan_item_payload(
                 activity_payload(
@@ -393,7 +409,8 @@ class MaterializationTests(unittest.TestCase):
                             indefinite=False,
                             slots=[
                                 {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
-                                {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "10:00"},
+                                {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "10:00", "excludedDates": ["2026-09-21"]},
+                                {"id": slot_id(4), "isoWeekday": 1, "startTime": "10:00", "endTime": "11:00"},
                                 {"id": slot_id(3), "isoWeekday": 3, "startTime": "14:00", "endTime": "15:00"},
                                 {"id": slot_id(5), "isoWeekday": 5, "startTime": "10:00", "endTime": "11:30"},
                             ],
@@ -612,6 +629,25 @@ class RepositoryWriteTests(unittest.TestCase):
         )
         self.assertTrue(any("public.occurrences" in query for query in batches))
 
+    def test_recurring_graph_persists_slot_exclusions(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        config = weekly_config()
+        config["slots"][0]["excludedDates"] = ["2026-09-15"]
+        plan_item = {"id": str(UUID(int=1)), **activity_payload(config)}
+
+        plan_item_repository.insert_plan_item_graph(connection, plan_item, [])
+
+        exclusion_call = next(
+            call
+            for call in cursor.executemany.call_args_list
+            if "public.generation_slot_excluded_dates" in call.args[0]
+        )
+        self.assertEqual(
+            exclusion_call.args[1],
+            [(config["slots"][0]["id"], "2026-09-15")],
+        )
+
     def test_manual_graph_preserves_entry_ids_in_slot_and_date_detail(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
@@ -667,6 +703,22 @@ class TransactionTests(unittest.TestCase):
                 "generation_excluded_dates",
                 activity_payload(
                     weekly_config(excludedDates=["2026-09-14"])
+                ),
+            ),
+            (
+                "generation_slot_excluded_dates",
+                activity_payload(
+                    weekly_config(
+                        slots=[
+                            {
+                                "id": slot_id(91),
+                                "isoWeekday": 1,
+                                "startTime": "08:00",
+                                "endTime": "09:00",
+                                "excludedDates": ["2026-09-14"],
+                            }
+                        ]
+                    )
                 ),
             ),
             ("occurrences", activity_payload()),

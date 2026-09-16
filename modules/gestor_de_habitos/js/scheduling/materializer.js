@@ -49,6 +49,19 @@ function assertGenerationControls(config) {
     }
 }
 
+function assertSlotExcludedDates(slot) {
+    if (slot.excludedDates === undefined) return;
+    if (
+        !Array.isArray(slot.excludedDates) ||
+        slot.excludedDates.some((date) => !isValidDateKey(date)) ||
+        new Set(slot.excludedDates).size !== slot.excludedDates.length
+    ) {
+        throw new MaterializationError(
+            "GenerationSlot.excludedDates debe contener fechas válidas y únicas.",
+        );
+    }
+}
+
 function assertSlotCollection(slots, groupValue, groupLabel) {
     if (!Array.isArray(slots) || slots.length === 0) {
         throw new MaterializationError("La configuración requiere al menos un GenerationSlot.");
@@ -61,6 +74,7 @@ function assertSlotCollection(slots, groupValue, groupLabel) {
         }
         ids.add(slot.id);
         assertTimeRange(slot.startTime, slot.endTime);
+        assertSlotExcludedDates(slot);
         const key = groupValue(slot);
         const group = groupedSlots.get(key) ?? [];
         const overlaps = group.some((candidate) =>
@@ -116,6 +130,9 @@ export function validateGenerationConfig(config) {
         assertSlotCollection(config.entries, (entry) => entry.date, "una misma fecha");
         config.entries.forEach((entry) => {
             if (!isValidDateKey(entry?.date)) throw new MaterializationError("Una fecha manual no es válida.");
+            if (entry.excludedDates !== undefined) {
+                throw new MaterializationError("manual_dates no utiliza exclusiones por slot.");
+            }
         });
         return;
     }
@@ -174,8 +191,12 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
             .map((entry) => makeDraft(planItem.id, entry.id, entry.date, entry.startTime, entry.endTime));
     }
     const excludedDates = new Set(config.excludedDates ?? []);
-    return drafts.filter(({ date }) =>
+    const slotExcludedDates = new Map(
+        (config.slots ?? []).map((slot) => [slot.id, new Set(slot.excludedDates ?? [])]),
+    );
+    return drafts.filter(({ date, sourceGenerationSlotId }) =>
         !excludedDates.has(date) &&
+        !slotExcludedDates.get(sourceGenerationSlotId)?.has(date) &&
         (!config.stoppedFromDate || date < config.stoppedFromDate)
     );
 }

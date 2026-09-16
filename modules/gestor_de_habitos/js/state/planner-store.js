@@ -1,5 +1,9 @@
 import { isValidClassification, getPlanItemType } from "../domain/plan-item-classification.js";
-import { cloneGenerationConfig, isGenerationSlotId } from "../domain/generation-slots.js";
+import {
+    cloneGenerationConfig,
+    isGenerationSlotId,
+    preserveSlotExcludedDates,
+} from "../domain/generation-slots.js";
 import {
     DELETION_REASONS,
     getEarlierStoppedFromDate,
@@ -45,7 +49,7 @@ export class PlannerStoreError extends Error {
 }
 
 function preserveGenerationControls(existingConfig, nextConfig) {
-    const candidate = cloneGenerationConfig(nextConfig);
+    const candidate = preserveSlotExcludedDates(existingConfig, nextConfig);
     if (candidate === null || existingConfig === null) return candidate;
     if (existingConfig.excludedDates !== undefined) {
         candidate.excludedDates = [...existingConfig.excludedDates];
@@ -303,15 +307,30 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         });
         planItems.forEach((planItem) => {
             const config = planItem.generationConfig;
-            if (!config?.excludedDates?.length) return;
-            const editableExclusions = config.excludedDates.filter((date) =>
-                getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
-            );
-            if (editableExclusions.length === config.excludedDates.length) return;
-            planItem.generationConfig = {
-                ...config,
-                excludedDates: editableExclusions,
-            };
+            if (config === null) return;
+            let changed = false;
+            const candidate = cloneGenerationConfig(config);
+            if (config.excludedDates?.length) {
+                const editableExclusions = config.excludedDates.filter((date) =>
+                    getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
+                );
+                if (editableExclusions.length !== config.excludedDates.length) {
+                    candidate.excludedDates = editableExclusions;
+                    changed = true;
+                }
+            }
+            if (["weekly", "interval_days"].includes(config.mode)) {
+                candidate.slots = candidate.slots.map((slot) => {
+                    if (!slot.excludedDates?.length) return slot;
+                    const editableExclusions = slot.excludedDates.filter((date) =>
+                        getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
+                    );
+                    if (editableExclusions.length === slot.excludedDates.length) return slot;
+                    changed = true;
+                    return { ...slot, excludedDates: editableExclusions };
+                });
+            }
+            if (changed) planItem.generationConfig = candidate;
         });
         return reconciled;
     }
@@ -581,6 +600,66 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         throw new PlannerStoreError("invalid_operation", "La operación preparada no es válida.");
     }
 
+    function generationConfigAfterOccurrenceEdit(planItem, occurrence, changes) {
+        const config = cloneGenerationConfig(planItem.generationConfig);
+        const sourceSlotId = occurrence.sourceGenerationSlotId;
+        if (config === null || !sourceSlotId) return config;
+        if (["weekly", "interval_days"].includes(config.mode)) {
+            const sourceExists = config.slots.some(({ id }) => id === sourceSlotId);
+            if (!sourceExists) {
+                throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene un GenerationSlot válido.");
+            }
+            if (changes.date === occurrence.date) return config;
+            return {
+                ...config,
+                slots: config.slots.map((slot) => (
+                    slot.id === sourceSlotId
+                        ? {
+                            ...slot,
+                            excludedDates: [...new Set([
+                                ...(slot.excludedDates ?? []),
+                                occurrence.date,
+                            ])].sort(),
+                        }
+                        : slot
+                )),
+            };
+        }
+        const sourceExists = config.entries.some(({ id }) => id === sourceSlotId);
+        if (!sourceExists) {
+            throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene una entry manual válida.");
+        }
+        return {
+            ...config,
+            entries: config.entries.map((entry) => (
+                entry.id === sourceSlotId
+                    ? {
+                        ...entry,
+                        date: changes.date,
+                        startTime: changes.startTime,
+                        endTime: changes.endTime,
+                    }
+                    : entry
+            )),
+        };
+    }
+
+    function requireSourceSlotDateAvailable(occurrence, targetDate) {
+        if (
+            occurrence.sourceGenerationSlotId &&
+            occurrences.some((candidate) => (
+                candidate.id !== occurrence.id &&
+                candidate.sourceGenerationSlotId === occurrence.sourceGenerationSlotId &&
+                candidate.date === targetDate
+            ))
+        ) {
+            throw new PlannerStoreError(
+                "slot_date_conflict",
+                "El GenerationSlot ya tiene una occurrence en la fecha destino.",
+            );
+        }
+    }
+
     function conflictSignature(conflicts) {
         return conflicts.map(({ id, date, startTime, endTime, status }) => [id, date, startTime, endTime, status].join("|")).sort().join(";");
     }
@@ -741,7 +820,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 status: "pending",
             };
             const excludedDates = planItem.generationConfig?.excludedDates ?? [];
-            const restoredConfig = planItem.generationConfig === null
+            let restoredConfig = planItem.generationConfig === null
                 ? null
                 : {
                     ...cloneGenerationConfig(planItem.generationConfig),
@@ -749,10 +828,18 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                         ? { excludedDates: excludedDates.filter((date) => date !== candidate.date) }
                         : {}),
                 };
-            const candidatePlanItem = { ...planItem, generationConfig: restoredConfig };
             if (restoredConfig !== null) {
+                const configWithoutCandidateSlotExclusion = cloneGenerationConfig(restoredConfig);
+                if (["weekly", "interval_days"].includes(configWithoutCandidateSlotExclusion.mode)) {
+                    configWithoutCandidateSlotExclusion.slots = configWithoutCandidateSlotExclusion.slots.map((slot) => ({
+                        ...slot,
+                        ...(slot.excludedDates?.includes(candidate.date)
+                            ? { excludedDates: slot.excludedDates.filter((date) => date !== candidate.date) }
+                            : {}),
+                    }));
+                }
                 const matchingSlotDrafts = materializeOccurrenceDrafts(
-                    candidatePlanItem,
+                    { ...planItem, generationConfig: configWithoutCandidateSlotExclusion },
                     candidate.date,
                     candidate.date,
                 ).filter((draft) => (
@@ -760,8 +847,19 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 ));
                 if (matchingSlotDrafts.length === 1) {
                     candidate.sourceGenerationSlotId = matchingSlotDrafts[0].sourceGenerationSlotId;
+                    if (["weekly", "interval_days"].includes(restoredConfig.mode)) {
+                        restoredConfig = {
+                            ...restoredConfig,
+                            slots: restoredConfig.slots.map((slot) => (
+                                slot.id === candidate.sourceGenerationSlotId && slot.excludedDates?.includes(candidate.date)
+                                    ? { ...slot, excludedDates: slot.excludedDates.filter((date) => date !== candidate.date) }
+                                    : slot
+                            )),
+                        };
+                    }
                 }
             }
+            const candidatePlanItem = { ...planItem, generationConfig: restoredConfig };
             validateOccurrenceDraft(candidate);
             validateDraftSet([candidate]);
             validatePlanItem(candidatePlanItem);
@@ -776,26 +874,50 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         deleteOccurrenceForDate(occurrenceId) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
-            const options = getDeletionOptionsInternal(occurrence.planItemId, occurrence.date);
-            if (!options.individual.allowed) {
-                throwForDeletionDecision(options.individual, "registrar la fecha excluida");
-            }
-            if (options.individual.occurrence.id !== occurrenceId) {
-                throw new PlannerStoreError("ambiguous_occurrence", "La occurrence seleccionada dejó de ser inequívoca.");
-            }
-
             const planItem = getPlanItemReference(occurrence.planItemId);
-            const excludedDates = [...new Set([
-                ...(planItem.generationConfig.excludedDates ?? []),
-                occurrence.date,
-            ])].sort();
-            const candidatePlanItem = {
-                ...planItem,
-                generationConfig: {
-                    ...cloneGenerationConfig(planItem.generationConfig),
-                    excludedDates,
-                },
-            };
+            if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
+            const referenceDate = getCurrentReferenceDate();
+            reconcileTemporalState(referenceDate);
+            const decision = getIndividualDeletionPolicy({
+                occurrences: [occurrence],
+                referenceDate,
+                historyEditWindowDays,
+                hasGenerationConfig: planItem.generationConfig !== null,
+            });
+            if (!decision.allowed) {
+                throwForDeletionDecision(decision, "eliminar la occurrence");
+            }
+            let candidateConfig = cloneGenerationConfig(planItem.generationConfig);
+            if (
+                occurrence.sourceGenerationSlotId &&
+                ["weekly", "interval_days"].includes(candidateConfig.mode)
+            ) {
+                candidateConfig.slots = candidateConfig.slots.map((slot) => (
+                    slot.id === occurrence.sourceGenerationSlotId
+                        ? {
+                            ...slot,
+                            excludedDates: [...new Set([
+                                ...(slot.excludedDates ?? []),
+                                occurrence.date,
+                            ])].sort(),
+                        }
+                        : slot
+                ));
+            } else if (
+                occurrence.sourceGenerationSlotId &&
+                candidateConfig.mode === "manual_dates"
+            ) {
+                if (candidateConfig.entries.length === 1) {
+                    throw new PlannerStoreError(
+                        "last_manual_entry",
+                        "No se puede eliminar la última entry manual.",
+                    );
+                }
+                candidateConfig.entries = candidateConfig.entries.filter(
+                    ({ id }) => id !== occurrence.sourceGenerationSlotId,
+                );
+            }
+            const candidatePlanItem = { ...planItem, generationConfig: candidateConfig };
             validatePlanItem(candidatePlanItem);
             const preservedOccurrences = occurrences.filter(({ id }) => id !== occurrenceId);
 
@@ -1030,7 +1152,11 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             const candidatePlanItem = normalizePlanItemDraft({
                 ...planItem,
                 ...planItemChanges,
-                generationConfig: planItem.generationConfig,
+                generationConfig: generationConfigAfterOccurrenceEdit(
+                    planItem,
+                    occurrence,
+                    occurrenceChanges,
+                ),
             });
             validatePlanItem(candidatePlanItem);
             const candidateOccurrence = {
@@ -1040,6 +1166,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceChanges.endTime,
             };
             validateOccurrenceDraft(candidateOccurrence);
+            requireSourceSlotDateAvailable(occurrence, candidateOccurrence.date);
             const conflict = findOccurrenceConflict(candidateOccurrence, occurrences, occurrence.id);
             if (conflict) {
                 throw new PlannerStoreError("time_conflict", "El horario se superpone.", {
@@ -1061,6 +1188,8 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         updateOccurrence(occurrenceId, occurrenceChanges) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            const planItem = getPlanItemReference(occurrence.planItemId);
+            if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
             requireScheduleMutableDate(occurrence.date);
             const candidate = {
                 ...occurrence,
@@ -1070,6 +1199,16 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             };
             validateOccurrenceDraft(candidate);
             requireScheduleMutableDate(candidate.date);
+            requireSourceSlotDateAvailable(occurrence, candidate.date);
+            const candidatePlanItem = {
+                ...planItem,
+                generationConfig: generationConfigAfterOccurrenceEdit(
+                    planItem,
+                    occurrence,
+                    candidate,
+                ),
+            };
+            validatePlanItem(candidatePlanItem);
             const conflict = findOccurrenceConflict(candidate, occurrences, occurrence.id);
             if (conflict) {
                 throw new PlannerStoreError("time_conflict", "El horario se superpone.", {
@@ -1079,6 +1218,8 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             occurrence.date = candidate.date;
             occurrence.startTime = candidate.startTime;
             occurrence.endTime = candidate.endTime;
+            const planItemIndex = planItems.findIndex(({ id }) => id === planItem.id);
+            planItems[planItemIndex] = candidatePlanItem;
             occurrences.sort(compareOccurrences);
             return cloneOccurrence(occurrence);
         },

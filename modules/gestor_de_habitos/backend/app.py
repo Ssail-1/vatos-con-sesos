@@ -3,6 +3,7 @@
 from flask import Flask, jsonify, request
 
 import database
+import occurrence_mutation_service
 import plan_item_creation_service
 import planner_state_service
 from repositories import plan_item_repository
@@ -93,6 +94,54 @@ def get_planner_state():
             message="El estado persistido del planner no es válido.",
         ), 500
     return jsonify(planner_state)
+
+
+def _occurrence_mutation_error_response(error):
+    if isinstance(error, occurrence_mutation_service.OccurrenceValidationError):
+        return jsonify(
+            status="error",
+            code="invalid_payload",
+            message="El identificador o payload de la occurrence no es válido.",
+        ), 400
+    if isinstance(error, occurrence_mutation_service.OccurrenceNotFoundError):
+        return jsonify(
+            status="error",
+            code="occurrence_not_found",
+            message="La occurrence no existe.",
+        ), 404
+    if isinstance(error, occurrence_mutation_service.OccurrenceConflictError):
+        return jsonify(status="error", code=error.code, message=str(error)), 409
+    if isinstance(error, occurrence_mutation_service.OccurrenceConsistencyError):
+        return jsonify(
+            status="error",
+            code="persisted_state_invalid",
+            message="El estado persistido del planner no es válido.",
+        ), 500
+    return jsonify(
+        status="error",
+        code="database_unavailable",
+        message="No se pudo completar la operación sobre la occurrence.",
+    ), 503
+
+
+@app.patch("/api/occurrences/<occurrence_id>")
+def patch_occurrence(occurrence_id):
+    try:
+        result = occurrence_mutation_service.patch_occurrence(
+            occurrence_id, request.get_json(silent=True)
+        )
+    except occurrence_mutation_service.OccurrenceMutationError as error:
+        return _occurrence_mutation_error_response(error)
+    return jsonify(result)
+
+
+@app.delete("/api/occurrences/<occurrence_id>")
+def delete_occurrence(occurrence_id):
+    try:
+        result = occurrence_mutation_service.delete_occurrence(occurrence_id)
+    except occurrence_mutation_service.OccurrenceMutationError as error:
+        return _occurrence_mutation_error_response(error)
+    return jsonify(result)
 
 
 if __name__ == "__main__":
