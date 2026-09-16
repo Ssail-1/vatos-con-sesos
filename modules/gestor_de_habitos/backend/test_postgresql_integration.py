@@ -14,6 +14,8 @@ import database
 import occurrence_mutation_service as mutation_service
 import plan_item_creation_service as creation_service
 from plan_item_materializer import materialize_occurrence_drafts
+from repositories import occurrence_repository
+import week_mutation_service
 
 
 TEST_DATABASE_ENV = "VCS_TEST_DATABASE_URL"
@@ -124,6 +126,13 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
                 patch.object(mutation_service, "_today", return_value=REFERENCE_DATE):
             return app.test_client().delete(f"/api/occurrences/{occurrence_id}")
 
+    def _apply_week(self, plan_item_id, payload, reference_date=REFERENCE_DATE):
+        with patch.object(database, "get_database_url", return_value=self.database_url), \
+                patch.object(week_mutation_service, "_today", return_value=reference_date):
+            return app.test_client().post(
+                f"/api/plan-items/{plan_item_id}/apply-week", json=payload
+            )
+
     def _weekly_two_slot_payload(self, name="Weekly mutation"):
         return activity(
             {
@@ -145,6 +154,31 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
                         "endTime": "17:00",
                     },
                 ],
+            },
+            name,
+        )
+
+    def _weekly_apply_payload(self, name="Apply Week"):
+        slots = []
+        sequence = 800
+        for weekday in (1, 2, 3):
+            for start_time, end_time in (("08:00", "11:00"), ("14:00", "17:00")):
+                sequence += 1
+                slots.append(
+                    {
+                        "id": slot_id(sequence),
+                        "isoWeekday": weekday,
+                        "startTime": start_time,
+                        "endTime": end_time,
+                    }
+                )
+        return activity(
+            {
+                "mode": "weekly",
+                "startDate": "2026-09-14",
+                "endDate": "2026-09-27",
+                "indefinite": False,
+                "slots": slots,
             },
             name,
         )
@@ -913,6 +947,360 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
                         connection.execute(
                             f"DROP TRIGGER IF EXISTS {trigger_name} ON public.{table_name}"
                         )
+
+    def test_apply_week_main_batch_preserves_generation_and_next_week(self):
+        created = self._post(self._weekly_apply_payload()).get_json()
+        plan_item_id = created["planItem"]["id"]
+        current = {
+            (item["sourceGenerationSlotId"], item["date"]): item
+            for item in created["occurrences"]
+            if item["date"] <= "2026-09-20"
+        }
+        with psycopg.connect(self.database_url) as connection:
+            slots_before = connection.execute(
+                """
+                SELECT id::text, start_time::text, end_time::text
+                FROM public.generation_slots
+                WHERE plan_item_id = %s
+                ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+            config_before = connection.execute(
+                """
+                SELECT mode, start_date::text, end_date::text, indefinite,
+                       interval_days, stopped_from_date::text
+                FROM public.generation_configs
+                WHERE plan_item_id = %s
+                """,
+                (plan_item_id,),
+            ).fetchone()
+
+        response = self._apply_week(
+            plan_item_id,
+            {
+                "anchorDate": "2026-09-16",
+                "operations": [
+                    {
+                        "type": "update",
+                        "occurrenceId": current[(slot_id(802), "2026-09-14")]["id"],
+                        "date": "2026-09-14",
+                        "startTime": "15:00",
+                        "endTime": "18:00",
+                    },
+                    {
+                        "type": "delete",
+                        "occurrenceId": current[(slot_id(804), "2026-09-15")]["id"],
+                    },
+                    {
+                        "type": "create",
+                        "date": "2026-09-16",
+                        "startTime": "20:00",
+                        "endTime": "21:00",
+                    },
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        result = response.get_json()
+        self.assertEqual(result["weekStart"], "2026-09-14")
+        self.assertEqual(result["weekEnd"], "2026-09-20")
+        self.assertEqual(len(result["occurrences"]), 6)
+        updated = next(
+            item for item in result["occurrences"]
+            if item["id"] == current[(slot_id(802), "2026-09-14")]["id"]
+        )
+        self.assertEqual((updated["startTime"], updated["endTime"]), ("15:00", "18:00"))
+        self.assertEqual(updated["sourceGenerationSlotId"], slot_id(802))
+        ad_hoc = next(item for item in result["occurrences"] if item["startTime"] == "20:00")
+        self.assertNotIn("sourceGenerationSlotId", ad_hoc)
+        self.assertEqual(ad_hoc["status"], "pending")
+
+        with psycopg.connect(self.database_url) as connection:
+            slots_after = connection.execute(
+                """
+                SELECT id::text, start_time::text, end_time::text
+                FROM public.generation_slots
+                WHERE plan_item_id = %s
+                ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+            config_after = connection.execute(
+                """
+                SELECT mode, start_date::text, end_date::text, indefinite,
+                       interval_days, stopped_from_date::text
+                FROM public.generation_configs
+                WHERE plan_item_id = %s
+                """,
+                (plan_item_id,),
+            ).fetchone()
+            exclusions = connection.execute(
+                """
+                SELECT slot_id::text, excluded_date::text
+                FROM public.generation_slot_excluded_dates
+                ORDER BY slot_id, excluded_date
+                """
+            ).fetchall()
+        self.assertEqual(slots_after, slots_before)
+        self.assertEqual(config_after, config_before)
+        self.assertEqual(exclusions, [(slot_id(804), "2026-09-15")])
+
+        state = self._get_state().get_json()
+        next_week = [
+            item for item in state["occurrences"]
+            if item["planItemId"] == plan_item_id and "2026-09-21" <= item["date"] <= "2026-09-27"
+        ]
+        self.assertEqual(len(next_week), 6)
+        self.assertEqual(
+            (next(item for item in next_week if item["sourceGenerationSlotId"] == slot_id(802))["startTime"]),
+            "14:00",
+        )
+        self.assertTrue(any(item["sourceGenerationSlotId"] == slot_id(804) for item in next_week))
+        self.assertFalse(any(item["startTime"] == "20:00" for item in next_week))
+        drafts = materialize_occurrence_drafts(
+            state["planItems"][0], date(2026, 9, 21), date(2026, 9, 27)
+        )
+        self.assertEqual(len(drafts), 6)
+
+    def test_apply_week_stages_same_slot_date_swap_safely(self):
+        created = self._post(
+            activity(
+                {
+                    "mode": "interval_days",
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-09-15",
+                    "indefinite": False,
+                    "intervalDays": 1,
+                    "slots": [
+                        {"id": slot_id(820), "startTime": "08:00", "endTime": "09:00"}
+                    ],
+                },
+                "Interval swap",
+            )
+        ).get_json()
+        first, second = created["occurrences"]
+        response = self._apply_week(
+            created["planItem"]["id"],
+            {
+                "anchorDate": "2026-09-14",
+                "operations": [
+                    {"type": "update", "occurrenceId": first["id"], "date": "2026-09-15", "startTime": "10:00", "endTime": "11:00"},
+                    {"type": "update", "occurrenceId": second["id"], "date": "2026-09-14", "startTime": "08:00", "endTime": "09:00"},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        by_id = {item["id"]: item for item in response.get_json()["occurrences"]}
+        self.assertEqual(by_id[first["id"]]["date"], "2026-09-15")
+        self.assertEqual(by_id[second["id"]]["date"], "2026-09-14")
+        self.assertEqual(
+            {item["sourceGenerationSlotId"] for item in by_id.values()},
+            {slot_id(820)},
+        )
+
+    def test_apply_week_failure_rolls_back_updates_deletes_creates_and_exclusions(self):
+        created = self._post(self._weekly_apply_payload("Rollback week")).get_json()
+        plan_item_id = created["planItem"]["id"]
+        current = {
+            (item["sourceGenerationSlotId"], item["date"]): item
+            for item in created["occurrences"]
+            if item["date"] <= "2026-09-20"
+        }
+        with psycopg.connect(self.database_url) as connection:
+            before = connection.execute(
+                """
+                SELECT id::text, occurrence_date::text, start_time::text,
+                       end_time::text, source_generation_slot_id::text
+                FROM public.occurrences
+                WHERE plan_item_id = %s
+                ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+        with psycopg.connect(self.database_url, autocommit=True) as connection:
+            connection.execute(
+                """
+                CREATE TRIGGER reject_apply_week_create
+                BEFORE INSERT ON public.occurrences
+                FOR EACH ROW EXECUTE FUNCTION public.reject_test_insert()
+                """
+            )
+        try:
+            response = self._apply_week(
+                plan_item_id,
+                {
+                    "anchorDate": "2026-09-14",
+                    "operations": [
+                        {"type": "update", "occurrenceId": current[(slot_id(802), "2026-09-14")]["id"], "date": "2026-09-14", "startTime": "15:00", "endTime": "18:00"},
+                        {"type": "delete", "occurrenceId": current[(slot_id(804), "2026-09-15")]["id"]},
+                        {"type": "create", "date": "2026-09-16", "startTime": "20:00", "endTime": "21:00"},
+                    ],
+                },
+            )
+            self.assertEqual(response.status_code, 503)
+        finally:
+            with psycopg.connect(self.database_url, autocommit=True) as connection:
+                connection.execute(
+                    "DROP TRIGGER IF EXISTS reject_apply_week_create ON public.occurrences"
+                )
+        with psycopg.connect(self.database_url) as connection:
+            after = connection.execute(
+                """
+                SELECT id::text, occurrence_date::text, start_time::text,
+                       end_time::text, source_generation_slot_id::text
+                FROM public.occurrences
+                WHERE plan_item_id = %s
+                ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+            exclusion_count = connection.execute(
+                "SELECT COUNT(*) FROM public.generation_slot_excluded_dates"
+            ).fetchone()[0]
+        self.assertEqual(after, before)
+        self.assertEqual(exclusion_count, 0)
+
+    def test_apply_week_rejects_wrong_week_wrong_plan_and_mixed_frozen_batch(self):
+        first = self._post(self._weekly_apply_payload("First")).get_json()
+        with psycopg.connect(self.database_url) as connection:
+            second_plan_item_id = connection.execute(
+                "SELECT gen_random_uuid()"
+            ).fetchone()[0]
+            second_occurrence_id = connection.execute(
+                "SELECT gen_random_uuid()"
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO public.plan_items (id, name, kind, subtype)
+                VALUES (%s, 'Second', 'activity', 'periodic')
+                """,
+                (second_plan_item_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.generation_configs (plan_item_id, mode, indefinite)
+                VALUES (%s, 'manual_dates', FALSE)
+                """,
+                (second_plan_item_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.generation_slots (id, plan_item_id, start_time, end_time)
+                VALUES (%s, %s, '20:00', '21:00')
+                """,
+                (slot_id(830), second_plan_item_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.generation_slot_dates (slot_id, entry_date)
+                VALUES (%s, '2026-09-14')
+                """,
+                (slot_id(830),),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.occurrences (
+                    id, plan_item_id, occurrence_date, start_time, end_time,
+                    status, source_generation_slot_id
+                ) VALUES (%s, %s, '2026-09-14', '20:00', '21:00', 'pending', %s)
+                """,
+                (second_occurrence_id, second_plan_item_id, slot_id(830)),
+            )
+        first_current = [item for item in first["occurrences"] if item["date"] <= "2026-09-20"]
+        before = self._get_state().get_json()
+
+        wrong_plan = self._apply_week(
+            first["planItem"]["id"],
+            {
+                "anchorDate": "2026-09-14",
+                "operations": [
+                    {"type": "update", "occurrenceId": first_current[0]["id"], "date": first_current[0]["date"], "startTime": "09:00", "endTime": "10:00"},
+                    {"type": "delete", "occurrenceId": str(second_occurrence_id)},
+                ],
+            },
+        )
+        self.assertEqual(wrong_plan.status_code, 404)
+        self.assertEqual(wrong_plan.get_json()["code"], "occurrence_not_found")
+        self.assertEqual(self._get_state().get_json(), before)
+
+        outside = self._apply_week(
+            first["planItem"]["id"],
+            {"anchorDate": "2026-09-14", "operations": [{"type": "create", "date": "2026-09-21", "startTime": "22:00", "endTime": "23:00"}]},
+        )
+        self.assertEqual(outside.status_code, 400)
+        self.assertEqual(outside.get_json()["code"], "invalid_payload")
+
+        editable = next(item for item in first_current if item["date"] == "2026-09-16")
+        frozen = next(item for item in first_current if item["date"] == "2026-09-14")
+        allowed = self._apply_week(
+            first["planItem"]["id"],
+            {"anchorDate": "2026-09-14", "operations": [{"type": "update", "occurrenceId": editable["id"], "date": editable["date"], "startTime": "09:00", "endTime": "10:00"}]},
+            reference_date=date(2026, 9, 16),
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.get_data(as_text=True))
+        rejected = self._apply_week(
+            first["planItem"]["id"],
+            {"anchorDate": "2026-09-14", "operations": [
+                {"type": "update", "occurrenceId": editable["id"], "date": editable["date"], "startTime": "10:00", "endTime": "11:00"},
+                {"type": "delete", "occurrenceId": frozen["id"]},
+            ]},
+            reference_date=date(2026, 9, 16),
+        )
+        self.assertEqual(rejected.status_code, 409)
+        self.assertEqual(rejected.get_json()["code"], "history_frozen")
+        persisted_editable = next(
+            item for item in self._get_state().get_json()["occurrences"]
+            if item["id"] == editable["id"]
+        )
+        self.assertEqual(persisted_editable["startTime"], "09:00")
+
+    def test_concurrent_apply_week_has_one_complete_winner(self):
+        created = self._post(self._weekly_apply_payload("Concurrent week")).get_json()
+        plan_item_id = created["planItem"]["id"]
+        target = next(
+            item for item in created["occurrences"]
+            if item["sourceGenerationSlotId"] == slot_id(802) and item["date"] == "2026-09-14"
+        )
+        barrier = __import__("threading").Barrier(2)
+        original_lock = occurrence_repository.lock_plan_item_identity
+
+        def synchronized_lock(connection, locked_plan_item_id):
+            barrier.wait(timeout=5)
+            return original_lock(connection, locked_plan_item_id)
+
+        def attempt(start_time, end_time):
+            try:
+                return week_mutation_service.apply_week(
+                    plan_item_id,
+                    {"anchorDate": "2026-09-14", "operations": [{"type": "update", "occurrenceId": target["id"], "date": "2026-09-14", "startTime": start_time, "endTime": end_time}]},
+                    reference_date=REFERENCE_DATE,
+                )["occurrences"]
+            except week_mutation_service.WeekConflictError as error:
+                return error.code
+
+        with patch.object(database, "get_database_url", return_value=self.database_url), \
+                patch.object(occurrence_repository, "lock_plan_item_identity", side_effect=synchronized_lock):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(attempt, "15:00", "18:00"),
+                    executor.submit(attempt, "16:00", "19:00"),
+                ]
+                results = [future.result(timeout=10) for future in futures]
+
+        winners = [result for result in results if isinstance(result, list)]
+        losers = [result for result in results if isinstance(result, str)]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(losers, ["concurrent_modification"])
+        persisted = next(
+            item for item in self._get_state().get_json()["occurrences"]
+            if item["id"] == target["id"]
+        )
+        winner = next(item for item in winners[0] if item["id"] == target["id"])
+        self.assertEqual(
+            (persisted["startTime"], persisted["endTime"]),
+            (winner["startTime"], winner["endTime"]),
+        )
 
 
 if __name__ == "__main__":

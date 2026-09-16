@@ -308,32 +308,120 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     store.setOccurrenceStatus(first.id, "completed");
     const beforeItem = store.getPlanItemById("scope-guard");
     const beforeOccurrences = store.getOccurrencesForPlanItem("scope-guard");
-    assert.throws(
-        () => store.applyWeeklyToWeek("scope-guard", "2026-09-14", config),
-        (error) => error instanceof PlannerStoreError && error.code === "ambiguous_week",
-    );
+    const weekResult = store.applyWeeklyToWeek("scope-guard", "2026-09-14", config);
+    assert.equal(weekResult.length, 2, "Apply week multi-slot conserva un estado idéntico");
     assert.throws(
         () => store.applyGenerationConfigFromDate("scope-guard", "2026-09-14", config),
         (error) => error instanceof PlannerStoreError && error.code === "ambiguous_future",
     );
-    assert.deepEqual(store.getPlanItemById("scope-guard"), beforeItem, "el alcance aplazado no altera el config multi-slot");
-    assert.deepEqual(store.getOccurrencesForPlanItem("scope-guard"), beforeOccurrences, "el alcance aplazado no reduce N slots a uno");
+    assert.deepEqual(store.getPlanItemById("scope-guard"), beforeItem, "Apply week no altera GenerationSlots");
+    assert.deepEqual(store.getOccurrencesForPlanItem("scope-guard"), beforeOccurrences, "Apply week multi-slot no reduce N slots a uno");
 }
 
 {
     const original = weeklyConfig({ days: [1], startDate: "2026-09-14" });
-    const multiCandidate = weeklyConfig({
+    const multiCandidate = {
+        ...cloneGenerationConfig(original),
+        slots: [
+            ...original.slots.map((slot) => ({ ...slot })),
+            generationSlot({ isoWeekday: 1, startTime: "10:00", endTime: "11:00" }),
+        ],
+    };
+    const store = createPlannerStore([activity("single-to-multi", original)], [], "2026-09-14");
+    const before = store.getOccurrencesForPlanItem("single-to-multi")[0];
+    const result = store.applyWeeklyToWeek("single-to-multi", "2026-09-14", multiCandidate);
+    assert.equal(result.length, 2, "Apply week permite agregar un horario ad-hoc");
+    assert.equal(store.getOccurrenceById(before.id).sourceGenerationSlotId, original.slots[0].id, "conserva la occurrence y procedencia existentes");
+    assert.equal(result.filter(({ sourceGenerationSlotId }) => !sourceGenerationSlotId).length, 1, "el horario nuevo es ad-hoc");
+    assert.deepEqual(store.getPlanItemById("single-to-multi").generationConfig, original, "el nuevo horario no crea GenerationSlot");
+}
+
+{
+    const config = weeklyConfig({
+        days: [1, 2, 3],
+        startDate: "2026-09-14",
+        extraSlots: [
+            { isoWeekday: 1, startTime: "14:00", endTime: "17:00" },
+            { isoWeekday: 2, startTime: "14:00", endTime: "17:00" },
+            { isoWeekday: 3, startTime: "14:00", endTime: "17:00" },
+        ],
+    });
+    const store = createPlannerStore([activity("week-batch", config)], [], "2026-09-14");
+    const mondayAfternoon = store.getOccurrencesForDate("2026-09-14").find(({ startTime }) => startTime === "14:00");
+    const tuesdayAfternoon = store.getOccurrencesForDate("2026-09-15").find(({ startTime }) => startTime === "14:00");
+    const result = store.applyWeekOperations("week-batch", "2026-09-16", [
+        { type: "update", occurrenceId: mondayAfternoon.id, date: "2026-09-14", startTime: "15:00", endTime: "18:00" },
+        { type: "delete", occurrenceId: tuesdayAfternoon.id },
+        { type: "create", date: "2026-09-16", startTime: "20:00", endTime: "21:00" },
+    ]);
+    assert.equal(result.weekStart, "2026-09-14");
+    assert.equal(result.weekEnd, "2026-09-20");
+    assert.equal(result.occurrences.length, 6);
+    assert.equal(store.getOccurrenceById(mondayAfternoon.id).sourceGenerationSlotId, mondayAfternoon.sourceGenerationSlotId);
+    assert.equal(store.getPlanItemById("week-batch").generationConfig.slots.find(({ id }) => id === mondayAfternoon.sourceGenerationSlotId).startTime, "14:00", "update no cambia el GenerationSlot");
+    assert.deepEqual(
+        store.getPlanItemById("week-batch").generationConfig.slots.find(({ id }) => id === tuesdayAfternoon.sourceGenerationSlotId).excludedDates,
+        ["2026-09-15"],
+        "delete persiste exclusión slot+fecha",
+    );
+    assert.equal(result.occurrences.find(({ startTime }) => startTime === "20:00").sourceGenerationSlotId, undefined, "create es ad-hoc");
+}
+
+{
+    const config = weeklyConfig({
         days: [1],
         startDate: "2026-09-14",
-        extraSlots: [{ isoWeekday: 1, startTime: "10:00", endTime: "11:00" }],
+        extraSlots: [{ isoWeekday: 1, startTime: "09:00", endTime: "10:00" }],
     });
-    const store = createPlannerStore([activity("single-to-multi", original)], [], "2026-09-14");
-    const before = store.getOccurrencesForPlanItem("single-to-multi");
+    const store = createPlannerStore([activity("week-swap", config)], [], "2026-09-14");
+    const [first, second] = store.getOccurrencesForDate("2026-09-14");
+    store.applyWeekOperations("week-swap", "2026-09-14", [
+        { type: "update", occurrenceId: first.id, date: first.date, startTime: "09:00", endTime: "10:00" },
+        { type: "update", occurrenceId: second.id, date: second.date, startTime: "08:00", endTime: "09:00" },
+    ]);
+    assert.equal(store.getOccurrenceById(first.id).startTime, "09:00", "swap final válido no produce falso conflicto");
+    const before = store.getOccurrencesForPlanItem("week-swap");
     assert.throws(
-        () => store.applyWeeklyToWeek("single-to-multi", "2026-09-14", multiCandidate),
-        (error) => error instanceof PlannerStoreError && error.code === "ambiguous_week",
+        () => store.applyWeekOperations("week-swap", "2026-09-14", [
+            { type: "update", occurrenceId: first.id, date: first.date, startTime: "08:30", endTime: "09:30" },
+        ]),
+        (error) => error instanceof PlannerStoreError && error.code === "time_conflict",
     );
-    assert.deepEqual(store.getOccurrencesForPlanItem("single-to-multi"), before, "Apply week no crea IDs de occurrence duplicados");
+    assert.deepEqual(store.getOccurrencesForPlanItem("week-swap"), before, "conflicto final hace rollback local completo");
+}
+
+{
+    const interval = intervalConfig({
+        intervalDays: 1,
+        startDate: "2026-09-14",
+        times: [{ startTime: "08:00", endTime: "09:00" }, { startTime: "10:00", endTime: "11:00" }],
+    });
+    const store = createPlannerStore([activity("week-interval", interval)], [], "2026-09-14");
+    const target = store.getOccurrencesForDate("2026-09-15")[1];
+    store.applyWeekOperations("week-interval", "2026-09-15", [
+        { type: "update", occurrenceId: target.id, date: target.date, startTime: "12:00", endTime: "13:00" },
+    ]);
+    assert.equal(store.getOccurrenceById(target.id).startTime, "12:00", "Apply Week local soporta interval_days");
+    const intervalCandidate = cloneGenerationConfig(interval);
+    intervalCandidate.slots[1].startTime = "14:00";
+    intervalCandidate.slots[1].endTime = "15:00";
+    store.applyWeeklyToWeek("week-interval", "2026-09-15", intervalCandidate);
+    assert.equal(
+        store.getOccurrenceById(target.id).startTime,
+        "14:00",
+        "el adaptador usado por la UI habilita Apply Week para interval_days",
+    );
+    assert.equal(
+        store.getPlanItemById("week-interval").generationConfig.slots[1].startTime,
+        "10:00",
+        "la UI tampoco modifica el GenerationSlot interval_days",
+    );
+
+    const manual = createPlannerStore([activity("week-manual", manualConfig([{ date: "2026-09-15", startTime: "08:00", endTime: "09:00" }]))], [], "2026-09-14");
+    assert.throws(
+        () => manual.applyWeekOperations("week-manual", "2026-09-15", [{ type: "create", date: "2026-09-15", startTime: "10:00", endTime: "11:00" }]),
+        (error) => error instanceof PlannerStoreError && error.code === "unsupported_mode",
+    );
 }
 
 console.log("multi-slot-scheduling.test.mjs: todas las pruebas pasaron");

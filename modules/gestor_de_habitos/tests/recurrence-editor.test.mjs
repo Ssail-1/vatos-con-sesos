@@ -86,7 +86,7 @@ for (const [kind, type] of [
         item("blocker", manualConfig([{ date: "2026-08-25", startTime: "10:30", endTime: "11:30" }])),
     ], [], "2026-08-24");
     const before = store.getOccurrences();
-    expectError(() => store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ days: [1, 2, 3, 5], perDayTimes: { "2": { startTime: "10:00", endTime: "11:00" } } })), "time_conflict");
+    expectError(() => store.applyWeeklyToWeek("weekly", "2026-08-24", weekly({ days: [1, 2, 3, 5], perDayTimes: { "2": { startTime: "10:00", endTime: "11:00" } } })), "priority_conflict");
     assert.deepEqual(store.getOccurrences(), before, "Apply week debe ser atómico");
 }
 
@@ -96,8 +96,8 @@ for (const [kind, type] of [
             { date: "2026-08-24", startTime: "10:00", endTime: "11:00" },
     ]))], [], "2026-08-24");
     const before = store.getOccurrences();
-    expectError(() => store.applyWeeklyToWeek("ambiguous", "2026-08-24", weekly()), "ambiguous_week");
-    assert.deepEqual(store.getOccurrences(), before, "la ambigüedad no modifica occurrences");
+    expectError(() => store.applyWeeklyToWeek("ambiguous", "2026-08-24", weekly()), "unsupported_mode");
+    assert.deepEqual(store.getOccurrences(), before, "manual_dates no modifica occurrences mediante Apply Week");
 }
 
 {

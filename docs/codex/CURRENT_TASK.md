@@ -1,684 +1,562 @@
 # CURRENT TASK
 
-## MVP 05.6.4.1 — Persisted single-occurrence editing/deletion + slot exclusions
+## MVP 05.6.4.2 — Persisted Apply Week / week-scoped schedule overrides
 
 ### Documento normativo
 
-La especificación global de multi-slot está en:
+La especificación global multi-slot está en:
 
 `docs/codex/gestor_de_habitos/planeacion/MVP_05_6/MULTI_SLOT_SCHEDULING.md`
 
-Este `CURRENT_TASK.md` define únicamente la fase activa:
+Este documento define exclusivamente:
 
 ```text
-MVP 05.6.4.1
-Persisted single-occurrence editing/deletion + slot exclusions
+MVP 05.6.4.2
+Apply Week
 ```
 
 Estado actual:
 
 ```text
-Frontend/domain multi-slot       ✅
-PostgreSQL multi-slot            ✅
-Backend/API multi-slot           ✅
-vcs_dev migrada a 003            ✅
-POST/GET multi-slot real         ✅
-```
+05.6.1  Frontend/domain multi-slot                 ✅
+05.6.2  PostgreSQL multi-slot                      ✅
+05.6.3  Backend multi-slot                         ✅
+05.6.4.1 Single-occurrence mutations              ✅
+         ├── PATCH occurrence
+         ├── DELETE occurrence
+         └── slot.excludedDates
 
-La siguiente necesidad es poder actuar sobre UNA occurrence concreta sin
-afectar accidentalmente los demás slots del mismo PlanItem.
-
----
-
-# 1. Objetivo
-
-Implementar persistencia para las operaciones:
-
-```text
-Editar únicamente esta occurrence
-Eliminar únicamente esta occurrence
-```
-
-respetando su `sourceGenerationSlotId`.
-
-Debe ser posible tener:
-
-```text
-Uber — 2026-09-20
-
-08:00–11:00
-14:00–17:00
-20:00–22:00
-```
-
-y eliminar/modificar únicamente:
-
-```text
-14:00–17:00
-```
-
-sin afectar:
-
-```text
-08:00–11:00
-20:00–22:00
+05.6.4.2 Apply Week                               ← ACTUAL
+05.6.4.3 Apply Future                             → después
 ```
 
 ---
 
-# 2. Subdivisión deliberada
+# 1. Semántica cerrada
 
-MVP 05.6.4 se implementará en varias pasadas.
+Existen tres niveles distintos de edición.
 
-Esta fase NO implementa todavía:
+## Solo este día
 
-```text
-Apply Week persistente
-Apply Future persistente
-reestructuración completa de semana/configuración
-```
+Modifica una occurrence concreta.
 
-Se prevé:
+Ya implementado en MVP 05.6.4.1.
 
-```text
-MVP 05.6.4.1
-→ esta occurrence / este día
+## Aplicar a esta semana
 
-MVP 05.6.4.2
-→ Apply Week
+Modifica únicamente el calendario concreto de la semana seleccionada.
 
-MVP 05.6.4.3
-→ Apply Future / configuración desde fecha efectiva
-```
-
-No adelantar fases posteriores.
-
----
-
-# 3. Nueva representación canónica de exclusión por slot
-
-`generation_slot_excluded_dates` ya existe en PostgreSQL desde MVP 05.6.2.
-
-Ahora debe tener representación en el dominio.
-
-Para `weekly`:
-
-```js
-{
-  id: "UUID",
-  isoWeekday: 1,
-  startTime: "14:00",
-  endTime: "17:00",
-  excludedDates: ["YYYY-MM-DD"]
-}
-```
-
-Para `interval_days`:
-
-```js
-{
-  id: "UUID",
-  startTime: "14:00",
-  endTime: "17:00",
-  excludedDates: ["YYYY-MM-DD"]
-}
-```
-
-`excludedDates` dentro del slot es opcional.
-
-Ausente y `[]` son semánticamente equivalentes.
-
----
-
-# 4. Diferencia entre exclusión global y exclusión de slot
-
-Se mantienen DOS conceptos distintos.
-
-## generationConfig.excludedDates
-
-Ejemplo:
-
-```js
-{
-  mode: "weekly",
-  excludedDates: ["2026-12-25"]
-}
-```
-
-Significa:
-
-> No generar ninguna occurrence de este PlanItem en esta fecha.
-
-## slot.excludedDates
-
-Ejemplo:
-
-```js
-{
-  id: "S2",
-  startTime: "14:00",
-  endTime: "17:00",
-  excludedDates: ["2026-09-20"]
-}
-```
-
-Significa:
-
-> No generar únicamente este slot en esta fecha.
-
-No mezclar ambas semánticas.
-
----
-
-# 5. Manual dates
-
-`manual_dates` NO utiliza `slot.excludedDates` como representación
-canónica normal.
-
-Una entry manual representa una instrucción explícita de una única fecha.
-
-Ejemplo:
-
-```js
-{
-  id: "S1",
-  date: "2026-09-20",
-  startTime: "14:00",
-  endTime: "17:00"
-}
-```
-
-Cuando se elimina una entry manual, debe eliminarse esa entry/slot
-cuando hacerlo mantenga una configuración válida.
-
----
-
-# 6. PlanItem siempre estructuralmente válido
-
-Después de cualquier operación debe continuar cumpliéndose:
+Puede afectar:
 
 ```text
-PlanItem válido
+una occurrence
+varias occurrences
+varios días
+altas ad-hoc
+eliminaciones temporales
+cambios de horario
+```
+
+pero NO modifica la regla recurrente general.
+
+La siguiente semana vuelve a obedecer normalmente:
+
+```text
+generationConfig
 +
-generationConfig válida
-+
-estructura específica del mode válida
+GenerationSlots
 ```
 
-No dejar:
+## Aplicar de aquí en adelante
 
-```text
-manual_dates con 0 entries
-weekly con 0 slots
-interval_days con 0 slots
-```
+Modificará la configuración general desde una fecha efectiva.
 
-como resultado accidental de esta fase.
+NO pertenece a esta fase.
+
+Será MVP 05.6.4.3.
 
 ---
 
-# 7. Última entry manual
+# 2. Principio fundamental de Apply Week
 
-Si el usuario intenta eliminar la ÚLTIMA entry de un PlanItem
-`manual_dates`, esta fase NO debe dejar una configuración vacía.
-
-La operación debe rechazarse de forma controlada.
-
-Código de dominio sugerido:
+Apply Week representa:
 
 ```text
-last_manual_entry
+excepciones concretas de calendario
 ```
 
-HTTP:
+NO:
 
 ```text
-409
+una nueva configuración recurrente
 ```
 
-No borrar el PlanItem automáticamente.
+Por tanto Apply Week NO modifica:
 
-No introducir todavía user-facing PlanItem deletion.
+```text
+generation_configs.mode
+generation_configs.start/end
+interval_days
+GenerationSlot.start_time/end_time
+generation_slot_weekdays
+generation_slot_dates
+```
 
-La occurrence puede seguir gestionándose mediante las reglas/status
-existentes, por ejemplo cancelación cuando corresponda.
+para PlanItems recurrentes.
 
 ---
 
-# 8. API — editar una occurrence
+# 3. Semana
 
-Implementar:
+Utilizar semana ISO:
 
 ```text
-PATCH /api/occurrences/<occurrence_id>
+lunes → domingo
 ```
 
-Esta ruta modifica únicamente la aparición seleccionada.
+Coherente con:
 
-Payload canónico:
+```text
+isoWeekday 1..7
+```
+
+El request recibe:
+
+```text
+anchorDate
+```
+
+El backend deriva:
+
+```text
+weekStart = lunes
+weekEnd   = domingo
+```
+
+No confiar en weekStart/weekEnd enviados por cliente.
+
+---
+
+# 4. Modos soportados
+
+Apply Week persistente aplica a:
+
+```text
+weekly
+interval_days
+```
+
+`manual_dates` NO necesita esta semántica porque ya representa fechas
+explícitas.
+
+Para manual_dates usar:
+
+```text
+PATCH occurrence
+DELETE occurrence
+```
+
+de MVP 05.6.4.1.
+
+Si se intenta Apply Week sobre manual_dates:
+
+```text
+409 unsupported_mode
+```
+
+o código de dominio equivalente y sanitizado.
+
+---
+
+# 5. API
+
+Implementar una operación atómica de semana.
+
+Ruta preferida:
+
+```text
+POST /api/plan-items/<plan_item_id>/apply-week
+```
+
+Contrato:
 
 ```json
 {
+  "anchorDate": "YYYY-MM-DD",
+  "operations": []
+}
+```
+
+`operations` contiene únicamente los cambios que el usuario realizó.
+
+NO es necesario reenviar occurrences que permanecen sin cambios.
+
+---
+
+# 6. Tipos de operación
+
+Tipos válidos:
+
+```text
+update
+delete
+create
+```
+
+No aceptar otros.
+
+Debe existir al menos una operación.
+
+---
+
+# 7. Update
+
+Contrato:
+
+```json
+{
+  "type": "update",
+  "occurrenceId": "UUID",
   "date": "YYYY-MM-DD",
   "startTime": "HH:MM",
   "endTime": "HH:MM"
 }
 ```
 
-Los tres campos representan el estado horario final deseado.
+Representa el estado final deseado de esa occurrence.
 
-No aceptar campos adicionales.
-
-Esta ruta NO modifica:
+Puede:
 
 ```text
-status
-statusContext
-PlanItem name
-kind/subtype
-generationConfig general
+cambiar horario
+cambiar fecha dentro de la misma semana
+cambiar ambos
 ```
 
-salvo los metadatos/exclusiones necesarios para preservar la semántica de
-la occurrence cuando se mueve de fecha.
+No cambia status.
 
 ---
 
-# 9. PATCH — occurrence recurrente, misma fecha
+# 8. Delete
 
-Para una occurrence proveniente de:
+Contrato:
 
-```text
-weekly
-interval_days
+```json
+{
+  "type": "delete",
+  "occurrenceId": "UUID"
+}
 ```
 
-si únicamente cambia el horario manteniendo la misma fecha:
+La occurrence debe:
 
 ```text
-GenerationSlot
-→ NO cambia
+pertenecer al PlanItem de la URL
+estar actualmente dentro de la semana objetivo
+```
 
-Occurrence
-→ cambia start_time/end_time
+---
 
-sourceGenerationSlotId
-→ se conserva
+# 9. Create
+
+Contrato:
+
+```json
+{
+  "type": "create",
+  "date": "YYYY-MM-DD",
+  "startTime": "HH:MM",
+  "endTime": "HH:MM"
+}
+```
+
+Representa una aparición excepcional solo para esa semana.
+
+Backend genera:
+
+```text
+Occurrence.id UUID v4
+```
+
+y persiste:
+
+```text
+source_generation_slot_id = NULL
+status = pending
+```
+
+NO crear GenerationSlot.
+
+Una creación de semana es:
+
+```text
+ad-hoc
+```
+
+porque no modifica la programación general.
+
+---
+
+# 10. Ejemplo
+
+Configuración general:
+
+```text
+Uber
+
+lunes
+08–11
+14–17
+20–22
+
+martes
+08–11
+14–17
+20–22
+```
+
+El usuario cambia únicamente esta semana:
+
+```text
+martes
+14–17
+→ 15–18
+
+miércoles
+elimina 20–22
+
+jueves
+agrega 12–13
+```
+
+Apply Week debe persistir conceptualmente:
+
+```text
+martes existing occurrence
+→ update
+
+miércoles generated occurrence
+→ slot exclusion + delete
+
+jueves new schedule
+→ ad-hoc occurrence
+```
+
+GenerationSlots siguen intactos.
+
+---
+
+# 11. Reutilización de 05.6.4.1
+
+No duplicar semántica.
+
+Las operaciones individuales deben reutilizar, cuando sea razonable, las
+reglas ya implementadas en:
+
+```text
+occurrence_mutation_service
+scheduling_policy
+repository layer
+```
+
+Pero Apply Week NO debe ejecutar varias transacciones independientes.
+
+Debe existir una única transacción para TODO el batch.
+
+---
+
+# 12. Atomicidad de semana
+
+Apply Week es:
+
+```text
+TODO O NADA
 ```
 
 Ejemplo:
 
 ```text
-Slot S2
-lunes 14:00–17:00
-
-Occurrence O10
-2026-09-21 14:00–17:00
+5 updates
+2 deletes
+1 create
 ```
 
-editar solo ese día:
+Si falla el último create:
 
 ```text
-Occurrence O10
-2026-09-21 15:00–18:00
-sourceGenerationSlotId = S2
+ninguna de las 8 operaciones queda aplicada
 ```
-
-Las demás occurrences de S2 siguen usando:
-
-```text
-14:00–17:00
-```
-
----
-
-# 10. PATCH — occurrence recurrente movida de fecha
-
-Si una occurrence proveniente de:
-
-```text
-weekly
-interval_days
-```
-
-cambia de fecha:
-
-```text
-fecha original
-→ debe quedar excluida para ese slot
-
-occurrence
-→ se mueve a nueva fecha
-
-sourceGenerationSlotId
-→ se conserva
-```
-
-Ejemplo:
-
-```text
-S2 genera:
-2026-09-21 14:00–17:00
-```
-
-el usuario mueve solo esa occurrence a:
-
-```text
-2026-09-22 15:00–18:00
-```
-
-Debe persistirse:
-
-```text
-generation_slot_excluded_dates
-S2 | 2026-09-21
-```
-
-y actualizar la occurrence.
-
-Esto impide que el materializador vuelva a crear S2 el día original.
-
----
-
-# 11. PATCH — colisión de source slot en nueva fecha
-
-La base contiene:
-
-```text
-UNIQUE(source_generation_slot_id, occurrence_date)
-WHERE source_generation_slot_id IS NOT NULL
-```
-
-Si mover una occurrence provoca que el mismo slot ya tenga otra
-occurrence en la fecha destino:
-
-```text
-rechazar operación
-```
-
-No quitar procedencia para evadir la constraint.
-
-No duplicar la occurrence.
-
-Responder con conflicto de dominio controlado.
-
----
-
-# 12. PATCH — manual_dates
-
-Una entry `manual_dates` representa exactamente una instrucción explícita.
-
-Por tanto, editar su única occurrence debe mantener sincronizados:
-
-```text
-generation_slots
-generation_slot_dates
-occurrence
-```
-
-Preservar:
-
-```text
-slot.id
-sourceGenerationSlotId
-occurrence.id
-```
-
-Si cambia horario:
-
-```text
-generation_slots.start/end
-→ actualizar
-
-occurrence.start/end
-→ actualizar
-```
-
-Si cambia fecha:
-
-```text
-generation_slot_dates.entry_date
-→ actualizar
-
-occurrence.occurrence_date
-→ actualizar
-```
-
-No crear un slot nuevo por una edición normal de esa misma entry.
-
----
-
-# 13. PATCH — occurrence ad-hoc
-
-Si:
-
-```text
-sourceGenerationSlotId = null
-```
-
-la occurrence no tiene regla generadora.
-
-Editar:
-
-```text
-date
-startTime
-endTime
-```
-
-modifica únicamente la occurrence.
-
-No crear GenerationSlot.
-
-No crear slot exclusion.
-
----
-
-# 14. PATCH — conflictos
-
-Antes de confirmar el horario/fecha nueva:
-
-```text
-revalidar conflictos
-```
-
-contra las occurrences relevantes.
-
-Preservar exactamente las reglas actuales:
-
-```text
-intervalos semiabiertos
-completed conflict
-priority
-history frozen
-priority override requirement
-```
-
-No permitir que una occurrence choque consigo misma durante la validación.
-
-Excluir su propio ID de la búsqueda de conflictos.
-
----
-
-# 15. PATCH — atomicidad
-
-Toda edición debe ser atómica.
 
 Usar:
 
 ```text
-una sola conexión
-una sola transacción
+una conexión
+una transacción
 ```
 
-Ejemplo recurrente movido:
+Preferir el nivel de aislamiento coherente con 05.6.4.1.
+
+Actualmente las mutations utilizan:
 
 ```text
-BEGIN
-
-lock occurrence
-validate
-insert slot exclusion original date
-update occurrence
-
-COMMIT
+SERIALIZABLE
 ```
 
-Manual:
-
-```text
-BEGIN
-
-lock occurrence / slot
-validate
-update generation slot
-update slot date si aplica
-update occurrence
-
-COMMIT
-```
-
-Ante cualquier fallo:
-
-```text
-ROLLBACK
-```
-
-No dejar exclusión sin edición ni edición sin exclusión.
+Mantenerlo salvo razón técnica documentada.
 
 ---
 
-# 16. PATCH — respuesta
+# 13. Locking
 
-Respuesta correcta:
+Antes de mutar:
 
 ```text
-HTTP 200
+lock PlanItem
+lock generation config
+lock occurrences relevantes
+lock slots relevantes
 ```
 
-Contrato mínimo:
+y cualquier otra fila necesaria.
 
-```json
-{
-  "occurrence": {
-    "id": "UUID",
-    "planItemId": "UUID",
-    "sourceGenerationSlotId": "UUID",
-    "date": "YYYY-MM-DD",
-    "startTime": "HH:MM",
-    "endTime": "HH:MM",
-    "status": "pending"
-  }
-}
+Evitar:
+
+```text
+lost updates
+double deletes
+concurrent week replacement
+inconsistent exclusions
 ```
 
-Si `sourceGenerationSlotId` es NULL, seguir la convención API ya existente.
-
-La integración frontend persistente todavía no se implementa en esta fase.
+Dos Apply Week concurrentes sobre el mismo PlanItem/semana no deben
+producir estado mezclado.
 
 ---
 
-# 17. API — eliminar una occurrence
+# 14. Validación de pertenencia
 
-Implementar:
+Todo `occurrenceId` de update/delete debe:
 
 ```text
-DELETE /api/occurrences/<occurrence_id>
+existir
+pertenecer al plan_item_id de URL
 ```
 
-La semántica depende del origen de la occurrence.
+Si no:
+
+```text
+404 occurrence_not_found
+```
+
+o conflicto/identificador apropiado sin revelar información sensible.
+
+No permitir modificar una occurrence de otro PlanItem mediante un batch.
 
 ---
 
-# 18. DELETE — weekly / interval_days
+# 15. Validación de semana
 
-Si la occurrence proviene de un GenerationSlot recurrente:
+Para update:
 
 ```text
-sourceGenerationSlotId != null
+la occurrence ORIGINAL debe estar dentro de la semana objetivo
 ```
 
-y el mode es:
+y:
 
 ```text
-weekly
-interval_days
+la nueva date también debe quedar dentro de esa misma semana
 ```
 
-debe ocurrir atómicamente:
+Para create:
 
 ```text
-insert generation_slot_excluded_dates
-    slot_id
-    occurrence_date
+date debe quedar dentro de la semana objetivo
+```
+
+No permitir que Apply Week modifique otra semana.
+
+---
+
+# 16. No duplicar occurrenceId
+
+Un occurrenceId puede aparecer como máximo UNA vez en el batch.
+
+Inválido:
+
+```text
+update O1
+delete O1
+```
+
+o:
+
+```text
+update O1
+update O1
+```
+
+Responder:
+
+```text
+400 invalid_payload
+```
+
+---
+
+# 17. Update recurrente — misma fecha
+
+Misma semántica que 05.6.4.1:
+
+```text
+Occurrence cambia date/time solicitado
+GenerationSlot NO cambia
+sourceGenerationSlotId se conserva
+```
+
+Si la fecha no cambia:
+
+```text
+no crear slot exclusion
+```
+
+---
+
+# 18. Update recurrente — fecha distinta dentro de semana
+
+Misma semántica que 05.6.4.1:
+
+```text
+slot exclusion
+→ fecha original
+
+Occurrence
+→ fecha nueva
+
+sourceGenerationSlotId
+→ preservado
+```
+
+No modificar GenerationSlot.
+
+---
+
+# 19. Delete recurrente
+
+Misma semántica que 05.6.4.1:
+
+```text
+generation_slot_excluded_dates
+slot + occurrence original date
 
 delete occurrence
 ```
 
-Resultado:
-
-```text
-solo ese slot desaparece ese día
-```
-
-Los demás slots del mismo PlanItem/fecha permanecen.
+El slot sigue existiendo.
 
 ---
 
-# 19. DELETE — manual_dates
-
-Si la occurrence proviene de:
-
-```text
-manual_dates
-```
-
-y NO es la última entry del PlanItem:
-
-```text
-delete occurrence
-delete GenerationSlot
-```
-
-La eliminación del slot debe limpiar mediante CASCADE:
-
-```text
-generation_slot_dates
-```
-
-y cualquier detalle dependiente.
-
-No afectar otras manual entries.
-
----
-
-# 20. DELETE — última manual entry
-
-Si es la última entry del PlanItem:
-
-```text
-rechazar
-```
-
-No dejar:
-
-```text
-manual_dates entries=[]
-```
-
-No borrar automáticamente PlanItem.
-
-Respuesta:
-
-```text
-409
-```
-
-con error de dominio sanitizado.
-
----
-
-# 21. DELETE — occurrence ad-hoc
+# 20. Update/Delete ad-hoc
 
 Si:
 
@@ -686,49 +564,384 @@ Si:
 sourceGenerationSlotId IS NULL
 ```
 
-y la política temporal/status permite eliminación:
+Update:
 
 ```text
-delete occurrence
+modifica solo occurrence
 ```
 
-No crear exclusión.
+Delete:
 
-No modificar configuration.
+```text
+elimina solo occurrence
+```
+
+No crear slot exclusion.
 
 ---
 
-# 22. DELETE — atomicidad
+# 21. Create de semana
 
-La eliminación completa debe utilizar:
-
-```text
-una sola conexión
-una sola transacción
-```
-
-Ejemplo recurring:
+Cada create produce:
 
 ```text
-BEGIN
-
-lock occurrence
-validate temporal/status
-insert slot exclusion
-delete occurrence
-
-COMMIT
+Occurrence nueva
+sourceGenerationSlotId = NULL
 ```
 
-Si cualquier paso falla:
+No modificar:
 
 ```text
-ROLLBACK
+GenerationSlots
+generation_config
 ```
+
+La próxima semana NO aparece esa occurrence automáticamente.
 
 ---
 
-# 23. DELETE — respuesta
+# 22. Final-state validation
+
+Este punto es crítico.
+
+NO validar el batch simplemente ejecutando cada operación una por una
+contra el estado original.
+
+Debe construirse conceptualmente:
+
+```text
+estado inicial de la semana
++
+todas las operaciones
+=
+estado final candidato
+```
+
+y validar ese estado final.
+
+---
+
+# 23. Evitar falsos conflictos internos
+
+Ejemplo:
+
+```text
+O1 08–09
+O2 09–10
+```
+
+Batch:
+
+```text
+O1 → 09–10
+O2 → 08–09
+```
+
+El resultado final no se solapa.
+
+Una validación secuencial ingenua podría rechazar el primer update porque
+O2 todavía ocupa 09–10.
+
+Apply Week debe considerar:
+
+```text
+el resultado FINAL del batch
+```
+
+No el orden accidental de las operaciones.
+
+---
+
+# 24. Conflictos internos
+
+Después de aplicar conceptualmente todas las operaciones:
+
+```text
+occurrences del mismo PlanItem
+```
+
+no deben quedar con solapamientos inválidos según las reglas actuales.
+
+Intervalos contiguos continúan permitidos.
+
+---
+
+# 25. Conflictos externos
+
+Validar el estado final contra occurrences de otros PlanItems.
+
+Preservar:
+
+```text
+priority
+completed conflict
+intervalos semiabiertos
+priority override requirement
+```
+
+Si cualquier cambio del batch requiere confirmación de priority override:
+
+```text
+rechazar batch completo con 409
+```
+
+No aplicar parcialmente.
+
+No implementar todavía un nuevo handshake batch si no existe diseño
+aprobado.
+
+---
+
+# 26. Unicidad slot + date
+
+Preservar:
+
+```text
+sourceGenerationSlotId + date
+```
+
+como identidad lógica recurrente.
+
+El estado final no puede contener:
+
+```text
+dos occurrences del mismo source slot
+en la misma fecha
+```
+
+salvo que alguna sea ad-hoc con source NULL.
+
+---
+
+# 27. Batch moves y constraint intermedia
+
+La validación debe basarse en el estado final.
+
+Si dos movimientos forman un resultado final válido pero el orden SQL
+podría chocar temporalmente con:
+
+```text
+UNIQUE(source_generation_slot_id, occurrence_date)
+```
+
+no rechazar únicamente por orden de ejecución.
+
+Implementar una estrategia transaccional segura para preservar:
+
+```text
+occurrence.id
+sourceGenerationSlotId
+```
+
+sin exponer estado intermedio.
+
+No eliminar procedencia como resultado final.
+
+Documentar la estrategia utilizada.
+
+---
+
+# 28. Temporal integrity
+
+Apply Week sigue sujeto a la política temporal existente.
+
+No modificar historia congelada.
+
+Para una semana que contiene fechas editables y congeladas:
+
+```text
+las occurrences congeladas pueden permanecer sin cambios
+```
+
+pero cualquier operación que intente modificarlas/eliminarlas debe fallar.
+
+No fallar únicamente porque la semana contiene una fecha congelada si el
+batch no intenta tocarla.
+
+---
+
+# 29. Status
+
+No modificar:
+
+```text
+status
+statusContext
+```
+
+mediante operaciones update.
+
+Create inicia:
+
+```text
+pending
+```
+
+Delete respeta las reglas actuales de status.
+
+Occurrences protegidas por relaciones/statusContext deben conservar las
+protecciones implementadas en 05.6.4.1.
+
+---
+
+# 30. Slot exclusions
+
+Apply Week puede producir:
+
+```text
+slot.excludedDates
+```
+
+mediante deletes/moves de occurrences recurrentes.
+
+Estas exclusiones continúan reconstruyéndose por:
+
+```text
+GET /api/planner-state
+```
+
+No crear exclusiones globales de PlanItem para representar cambios
+semanales de slots concretos.
+
+---
+
+# 31. Generación general permanece intacta
+
+Después de Apply Week:
+
+```text
+generation_slots
+```
+
+debe ser idéntico al anterior salvo que una operación fuera explícitamente
+de otro tipo permitido, lo cual esta fase NO contempla.
+
+Verificar mediante test SQL.
+
+---
+
+# 32. Semana siguiente
+
+Caso obligatorio:
+
+Regla:
+
+```text
+lunes 14–17
+```
+
+Esta semana:
+
+```text
+lunes → update 15–18
+```
+
+Semana siguiente:
+
+```text
+materialización debe seguir produciendo 14–17
+```
+
+Apply Week nunca debe convertir 15–18 en la nueva regla recurrente.
+
+---
+
+# 33. Frontend/domain local
+
+La funcionalidad local Apply Week que quedó bloqueada para multi-slot en
+MVP 05.6.1 puede adaptarse ahora.
+
+Debe compartir la misma semántica:
+
+```text
+update
+delete
+create
+```
+
+dentro de una semana.
+
+NO conectar todavía HTTP fetch si la integración frontend/backend sigue
+fuera del alcance actual.
+
+No implementar Apply Future.
+
+---
+
+# 34. UI
+
+Preservar conceptualmente las opciones:
+
+```text
+Solo este día
+Aplicar a esta semana
+Aplicar de aquí en adelante
+```
+
+En esta fase:
+
+```text
+Solo este día
+→ comportamiento existente
+
+Aplicar a esta semana
+→ habilitar semántica multi-slot correspondiente
+
+Aplicar de aquí en adelante
+→ puede continuar bloqueado/controlado hasta 05.6.4.3
+```
+
+No rediseñar visualmente la aplicación salvo adaptación mínima necesaria.
+
+---
+
+# 35. Manual dates en frontend
+
+No ofrecer Apply Week como una transformación especial para:
+
+```text
+manual_dates
+```
+
+si puede evitarse limpiamente.
+
+Las entries manuales ya son instrucciones explícitas.
+
+Mantener edición/eliminación individual.
+
+---
+
+# 36. Backend architecture
+
+Mantener:
+
+```text
+app.py
+→ HTTP
+
+services
+→ orquestación/domain
+
+scheduling_policy
+→ reglas compartidas
+
+repositories
+→ SQL
+```
+
+Crear un servicio de week mutation si mejora claridad.
+
+No convertir:
+
+```text
+app.py
+```
+
+en implementación de reglas de negocio.
+
+---
+
+# 37. Endpoint response
 
 Respuesta correcta:
 
@@ -736,318 +949,66 @@ Respuesta correcta:
 HTTP 200
 ```
 
-Contrato mínimo:
+Contrato sugerido:
 
 ```json
 {
-  "deletedOccurrenceId": "UUID"
+  "weekStart": "YYYY-MM-DD",
+  "weekEnd": "YYYY-MM-DD",
+  "occurrences": []
 }
 ```
 
-No es necesario devolver todo planner-state.
+`occurrences` contiene el estado persistido final de ESE PlanItem dentro
+de la semana después del batch.
 
-La futura integración frontend podrá refrescar:
-
-```text
-GET /api/planner-state
-```
-
-después de una mutación.
-
----
-
-# 24. GET /api/planner-state — slot exclusions
-
-Actualizar el contrato de lectura para que:
+Cada occurrence usa el contrato canónico existente:
 
 ```text
-generation_slot_excluded_dates
+id
+planItemId
+sourceGenerationSlotId?
+date
+startTime
+endTime
+status
+statusContext?
 ```
 
-ya NO se considere automáticamente inconsistencia.
-
-Debe reconstruirse en cada slot recurrente.
-
-Weekly:
-
-```js
-{
-  id,
-  isoWeekday,
-  startTime,
-  endTime,
-  excludedDates: ["YYYY-MM-DD"]
-}
-```
-
-Interval:
-
-```js
-{
-  id,
-  startTime,
-  endTime,
-  excludedDates: ["YYYY-MM-DD"]
-}
-```
-
-Omitir `excludedDates` cuando esté vacío si esa es la convención ya usada
-por el frontend.
-
----
-
-# 25. GET manual_dates
-
-Una fila en:
+Orden determinista:
 
 ```text
-generation_slot_excluded_dates
-```
-
-asociada a un slot `manual_dates` sigue considerándose estado persistido
-no canónico para esta fase.
-
-No inventar semántica.
-
-Debe producir error de integridad controlado.
-
----
-
-# 26. JavaScript domain — slot exclusions
-
-Adaptar el dominio local para aceptar:
-
-```text
-slot.excludedDates
-```
-
-en:
-
-```text
-weekly
-interval_days
-```
-
-El materializador JavaScript debe verificar:
-
-```text
-config.excludedDates
-OR
-slot.excludedDates
-```
-
-antes de generar una occurrence.
-
----
-
-# 27. Python materializer — slot exclusions
-
-El materializador Python debe aplicar exactamente la misma semántica.
-
-Para cada candidate:
-
-```text
-si candidateDate está en config.excludedDates
-→ no generar ningún slot
-
-si candidateDate está en slot.excludedDates
-→ no generar ese slot
-
-si no
-→ generar normalmente
-```
-
-Mantener paridad JS ↔ Python.
-
----
-
-# 28. Materialización idempotente después de edición
-
-Una occurrence recurrente editada solo en horario conserva:
-
-```text
-sourceGenerationSlotId + date
-```
-
-Por tanto, una rematerialización NO debe generar otra occurrence con el
-horario original.
-
-Ejemplo:
-
-```text
-S2 = 14:00–17:00
-
-O2 editada:
-15:00–18:00
-source=S2
-date=2026-09-21
-```
-
-Materializar nuevamente:
-
-```text
-NO crear otro 14:00–17:00
+date
+startTime
+endTime
+id
 ```
 
 ---
 
-# 29. Materialización después de DELETE
+# 38. Error handling
 
-Después de eliminar:
-
-```text
-S2
-2026-09-21
-```
-
-debe existir:
-
-```text
-slot.excludedDates includes 2026-09-21
-```
-
-Por tanto una rematerialización:
-
-```text
-NO recrea S2 ese día
-```
-
-Los demás slots continúan generándose.
-
----
-
-# 30. Temporal integrity
-
-Preservar las reglas actuales.
-
-No ampliar la ventana editable.
-
-No permitir cambios en historia congelada.
-
-No permitir borrar/modificar statuses protegidos si actualmente están
-protegidos.
-
-Usar las mismas funciones/reglas existentes cuando sea posible.
-
----
-
-# 31. Status
-
-PATCH de esta fase modifica:
-
-```text
-date/time
-```
-
-NO modifica status.
-
-DELETE respeta las reglas de status existentes.
-
-No implementar persistencia general de status en esta tarea si todavía
-pertenece a otra fase.
-
----
-
-# 32. UUIDs
-
-Validar:
-
-```text
-occurrence_id de URL
-```
-
-como UUID válido según la política backend actual.
-
-Los slot IDs existentes se preservan.
-
-PATCH no genera slot UUID salvo que otra operación existente lo requiera,
-lo cual no debería suceder en esta fase.
-
-DELETE no reutiliza IDs.
-
----
-
-# 33. Repository layer
-
-Mantener arquitectura:
-
-```text
-app.py
-→ HTTP
-
-service/domain
-→ reglas/orquestación
-
-repository
-→ SQL
-```
-
-No poner reglas de mode en Flask route.
-
-No poner lógica temporal en repository.
-
-No introducir ORM.
-
----
-
-# 34. Bloqueos/concurrencia
-
-Las mutations deben bloquear las filas relevantes.
-
-Utilizar:
-
-```text
-SELECT ... FOR UPDATE
-```
-
-o el mecanismo equivalente ya existente.
-
-Evitar que dos ediciones/eliminaciones concurrentes produzcan:
-
-```text
-duplicated exclusions
-lost update
-partial mutation
-```
-
-La PK:
-
-```text
-(slot_id, excluded_date)
-```
-
-protege también la exclusión.
-
-La operación puede insertar exclusión de forma idempotente cuando sea
-apropiado.
-
----
-
-# 35. Error handling
-
-Mantener respuestas sanitizadas.
+Mantener errores sanitizados.
 
 Como mínimo:
 
 ```text
-400
-invalid_payload / invalid identifier
+400 invalid_payload
+400 invalid_identifier
 
-404
-occurrence_not_found
+404 plan_item_not_found
+404 occurrence_not_found
 
-409
-domain conflict
-history frozen
-status conflict
-last_manual_entry
-slot/date uniqueness conflict
+409 unsupported_mode
+409 history_frozen
+409 status conflict
+409 schedule conflict
+409 slot_date_conflict
+409 priority_override_required
+409 concurrent_modification
 
-500
-persisted state invalid
-
-503
-database unavailable
+500 persisted state invalid
+503 database unavailable
 ```
 
 No exponer:
@@ -1056,68 +1017,13 @@ No exponer:
 SQL
 DSN
 password
-driver messages
+driver internals
 traceback
 ```
 
 ---
 
-# 36. Frontend persistente
-
-NO conectar todavía el frontend a:
-
-```text
-PATCH /api/occurrences
-DELETE /api/occurrences
-```
-
-La UI/local domain puede adaptarse para representar correctamente
-slot exclusions.
-
-La integración HTTP pertenece a una fase posterior.
-
----
-
-# 37. Apply Week
-
-NO implementar todavía la persistencia de:
-
-```text
-Apply Week
-```
-
-Si el código local existente necesita adaptación mínima para no perder
-`slot.excludedDates`, hacerlo.
-
-No diseñar todavía su endpoint persistente.
-
----
-
-# 38. Apply Future
-
-NO implementar todavía:
-
-```text
-Apply Future persistente
-modificación masiva de generation_slots
-effectiveDate
-reconciliación futura completa
-```
-
-Eso pertenece a MVP 05.6.4.3.
-
----
-
 # 39. PostgreSQL
-
-NO crear nuevas migraciones.
-
-El esquema 003 ya contiene:
-
-```text
-generation_slot_excluded_dates
-source_generation_slot_id
-```
 
 No modificar:
 
@@ -1127,27 +1033,38 @@ No modificar:
 003
 ```
 
-Si se detecta un defecto real del esquema:
+No crear migración 004 para Apply Week.
+
+El modelo actual ya permite representar:
+
+```text
+updates concretos
+slot exclusions
+ad-hoc occurrences
+```
+
+Si se descubre que el esquema NO puede representar correctamente una
+semántica necesaria:
 
 ```text
 detenerse y reportarlo
 ```
 
-No crear `004` por iniciativa propia.
+No improvisar migración.
 
 ---
 
 # 40. vcs_dev
 
-Codex NO debe modificar:
+NO modificar:
 
 ```text
 vcs_dev
 ```
 
-No usar credenciales reales.
+durante implementación automática.
 
-Utilizar PostgreSQL 16 aislado/efímero para integración.
+Usar PostgreSQL 16 aislado/efímero.
 
 Aplicar:
 
@@ -1159,361 +1076,233 @@ Aplicar:
 
 ---
 
-# 41. Tests — DELETE recurrente multi-slot
+# 41. Test principal
 
-Probar:
+PlanItem recurring con:
 
 ```text
-PlanItem
-S1 08:00–11:00
-S2 14:00–17:00
+lunes
+S1 08–11
+S2 14–17
 
-misma fecha
-O1 ← S1
-O2 ← S2
+martes
+S3 08–11
+S4 14–17
+
+miércoles
+S5 08–11
+S6 14–17
 ```
 
-Eliminar O2.
-
-Verificar:
+Batch de esta semana:
 
 ```text
-O1 permanece
-O2 desaparece
+update S2 occurrence
+14–17 → 15–18
 
-slot S1 permanece
-slot S2 permanece
+delete S4 occurrence
 
-generation_slot_excluded_dates:
-S2 + date
-
-NO:
-S1 + date
-```
-
-Rematerializar.
-
-Verificar:
-
-```text
-O2 NO reaparece
-O1 no se duplica
-```
-
----
-
-# 42. Tests — PATCH recurrente
-
-Probar:
-
-```text
-S2 14:00–17:00
-O2 14:00–17:00
-```
-
-PATCH:
-
-```text
-O2 → 15:00–18:00
+create miércoles
+20–21
 ```
 
 Verificar:
 
 ```text
-S2 sigue 14:00–17:00
-O2 es 15:00–18:00
-sourceGenerationSlotId = S2
-```
+S2 GenerationSlot sigue 14–17
 
-Rematerializar:
+S4 GenerationSlot sigue existiendo
+S4 excludedDates incluye martes de esta semana
 
-```text
-no aparece duplicado 14:00–17:00
+miércoles ad-hoc:
+sourceGenerationSlotId = NULL
+
+demás occurrences intactas
 ```
 
 ---
 
-# 43. Tests — mover fecha recurrente
+# 42. Semana siguiente test
 
-Mover:
+Materializar semana siguiente.
+
+Esperar:
 
 ```text
-O2
-2026-09-20
+S2 vuelve 14–17
+S4 vuelve a aparecer normalmente
+ad-hoc 20–21 no reaparece
 ```
 
-a:
+---
+
+# 43. Batch rollback
+
+Crear batch con:
 
 ```text
-2026-09-21
+varias operaciones válidas
++
+una inválida al final
 ```
 
 Verificar:
 
 ```text
-slot exclusion:
-S2 + 2026-09-20
-
-occurrence:
-date = 2026-09-21
-
-sourceGenerationSlotId = S2
+0 cambios persistidos
 ```
 
-Rematerializar fecha original:
+Incluyendo:
 
 ```text
-no reaparece
+0 slot exclusions nuevas
+0 updates parciales
+0 deletes parciales
+0 creates parciales
 ```
 
 ---
 
-# 44. Tests — manual_dates edit
+# 44. Batch final-state conflict
 
-Verificar que PATCH actualiza coherentemente:
+Crear escenario donde:
 
 ```text
-generation_slots
-generation_slot_dates
-occurrence
+operaciones individuales parecen chocar con estado viejo
+pero estado final es válido
 ```
 
-preservando:
+Debe aceptar.
+
+Crear otro donde:
 
 ```text
-slot.id
-occurrence.id
-sourceGenerationSlotId
+estado final realmente se solapa
+```
+
+Debe rechazar todo.
+
+---
+
+# 45. Wrong week
+
+Intentar:
+
+```text
+anchorDate semana A
+update occurrence semana B
+```
+
+Debe rechazarse.
+
+Create fuera de semana:
+
+```text
+rechazado
+```
+
+Update que mueve occurrence fuera de semana:
+
+```text
+rechazado
 ```
 
 ---
 
-# 45. Tests — manual_dates delete
+# 46. Wrong PlanItem
 
-Con dos entries:
-
-```text
-S1
-S2
-```
-
-eliminar S2.
-
-Verificar:
+Intentar incluir occurrence de:
 
 ```text
-S1 permanece
-S2 desaparece
-O2 desaparece
-PlanItem sigue válido
+PlanItem B
 ```
 
-Intentar luego eliminar S1 como última entry:
+en Apply Week de:
 
 ```text
-409
-last_manual_entry
+PlanItem A
 ```
 
-y verificar rollback completo.
+Debe rechazarse y hacer rollback completo.
 
 ---
 
-# 46. Tests — ad-hoc
+# 47. Frozen history
 
-Occurrence con:
+Semana actual con algún día congelado.
 
-```text
-sourceGenerationSlotId = null
-```
-
-PATCH:
+Cambiar solo fechas editables:
 
 ```text
-actualiza solo occurrence
+permitido
 ```
 
-DELETE:
+Intentar modificar occurrence congelada:
 
 ```text
-elimina solo occurrence
+rechazado
 ```
 
-No crea:
-
-```text
-GenerationSlot
-slot exclusion
-```
+Batch completo hace rollback.
 
 ---
 
-# 47. Tests — slot excludedDates GET
+# 48. Concurrency test
 
-Insertar:
-
-```text
-S2 + 2026-09-20
-```
-
-en:
+Dos transacciones Apply Week concurrentes sobre:
 
 ```text
-generation_slot_excluded_dates
+mismo PlanItem
+misma semana
 ```
 
-GET planner-state debe devolver:
+no deben mezclar parcialmente sus resultados.
 
-```js
-{
-  id: "S2",
-  ...
-  excludedDates: ["2026-09-20"]
-}
-```
-
-sin HTTP 500.
+Probar comportamiento real bajo PostgreSQL.
 
 ---
 
-# 48. Tests — slot exclusions materializer parity
-
-JS y Python deben producir exactamente la misma semántica.
-
-Fixture:
-
-```text
-S1
-S2 excluded on selected date
-S3
-```
-
-Resultado:
-
-```text
-S1 generated
-S2 omitted
-S3 generated
-```
-
-La prueba JS ↔ Python debe continuar verde.
-
----
-
-# 49. Tests — rollback
-
-Probar rollback real si falla:
-
-```text
-insert slot exclusion
-update occurrence
-delete occurrence
-manual slot update
-manual slot delete
-```
-
-No dejar mutaciones parciales.
-
----
-
-# 50. Regresión
+# 49. Regression
 
 Ejecutar:
 
 ```text
 todas las pruebas backend
-9 suites frontend
+todas las suites frontend
 JS/Python parity
 PostgreSQL integration
+health routes
+POST plan-items
+GET planner-state
+PATCH occurrence
+DELETE occurrence
 git diff --check
 ```
 
-Health endpoints deben permanecer verdes.
-
-POST y GET existentes deben continuar funcionando.
+No introducir regresiones de 05.6.4.1.
 
 ---
 
-# 51. Caso de aceptación principal
-
-Dado:
-
-```text
-Prueba multi-slot
-2026-09-20
-
-08:00–11:00 ← S1
-14:00–17:00 ← S2
-```
-
-debe ser posible eliminar únicamente:
-
-```text
-14:00–17:00
-```
-
-y obtener:
-
-```text
-08:00–11:00 permanece
-
-S2 sigue siendo regla válida
-pero:
-S2.excludedDates incluye 2026-09-20
-```
-
-La rematerialización no debe recrear el segundo horario.
-
----
-
-# 52. Segundo caso de aceptación
-
-Dado:
-
-```text
-S2 recurrente
-14:00–17:00
-```
-
-una occurrence concreta puede cambiar a:
-
-```text
-15:00–18:00
-```
-
-sin cambiar S2.
-
-Las siguientes occurrences siguen:
-
-```text
-14:00–17:00
-```
-
----
-
-# 53. Fuera de alcance
+# 50. Fuera de alcance
 
 NO implementar:
 
 ```text
+Apply Future
+effective-dated GenerationSlot versions
 PlanItem deletion
-Apply Week persistente
-Apply Future persistente
-mass slot replacement
-slot versioning
-soft-delete de slots
-frontend fetch integration
 auth
 multiusuario
 Supabase
 deployment
 notifications
 timezone por usuario
+frontend/backend fetch integration completa
 ```
 
 ---
 
-# 54. Git
+# 51. Git
 
 Codex NO debe:
 
@@ -1521,44 +1310,49 @@ Codex NO debe:
 commit
 push
 merge
-cambiar de rama
+cambiar rama
 ```
 
 El usuario controla Git.
 
 ---
 
-# 55. Reporte requerido
+# 52. Reporte requerido
 
 Al terminar reportar:
 
 1. archivos creados/modificados;
-2. contrato exacto de PATCH occurrence;
-3. contrato exacto de DELETE occurrence;
-4. cómo se representan `slot.excludedDates`;
-5. cómo se reconstruyen desde PostgreSQL;
-6. cómo JS materializer aplica exclusión por slot;
-7. cómo Python materializer aplica exclusión por slot;
-8. comportamiento PATCH recurrente misma fecha;
-9. comportamiento PATCH recurrente movida de fecha;
-10. comportamiento PATCH manual;
-11. comportamiento PATCH ad-hoc;
-12. comportamiento DELETE recurring;
-13. comportamiento DELETE manual;
-14. protección de última manual entry;
-15. comportamiento DELETE ad-hoc;
-16. atomicidad/rollback;
-17. locking/concurrencia;
-18. resultado JS/Python parity;
-19. número y resultado de tests backend;
-20. resultado de suites frontend;
-21. resultado PostgreSQL integration;
-22. cualquier limitación o riesgo encontrado.
+2. endpoint exacto de Apply Week;
+3. payload exacto;
+4. respuesta exacta;
+5. cálculo de semana ISO;
+6. semántica update;
+7. semántica delete;
+8. semántica create ad-hoc;
+9. cómo preserva GenerationSlots;
+10. cómo utiliza slot exclusions;
+11. estrategia de final-state validation;
+12. cómo evita falsos conflictos entre operaciones del batch;
+13. cómo resuelve `sourceGenerationSlotId + date`;
+14. atomicidad;
+15. locking y SERIALIZABLE;
+16. comportamiento temporal;
+17. comportamiento con status/statusContext;
+18. frontend/domain local Apply Week;
+19. resultado de semana siguiente;
+20. rollback real;
+21. prueba de concurrencia;
+22. número/resultados de tests backend;
+23. resultado frontend;
+24. resultado JS/Python parity;
+25. resultado PostgreSQL integration;
+26. limitaciones/riesgos.
 
 Confirmar explícitamente:
 
 ```text
 vcs_dev no fue modificado
 001/002/003 no fueron modificadas
+Apply Future no fue implementado
 no se hizo commit/push/merge
 ```

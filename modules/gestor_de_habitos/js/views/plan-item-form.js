@@ -527,7 +527,8 @@ export function createPlanItemFormView(options) {
         recurrenceScopeField.hidden = !isRecurringEdit || configsEqual(draftConfig, originalGenerationConfig);
         const weekScopeInput = form.querySelector('input[name="recurrenceScope"][value="week"]');
         const futureScopeInput = form.querySelector('input[name="recurrenceScope"][value="future"]');
-        const supportsWeekScope = originalGenerationConfig?.mode === "weekly" && scheduleMode.value === "weekly";
+        const supportsWeekScope = ["weekly", "interval_days"].includes(originalGenerationConfig?.mode)
+            && scheduleMode.value === originalGenerationConfig.mode;
         weekScopeInput.closest("label").hidden = !supportsWeekScope;
         if (!supportsWeekScope) futureScopeInput.checked = true;
         submitButton.textContent = formContext.mode === "edit_schedule" && recurrenceScopeField.hidden
@@ -792,7 +793,7 @@ export function createPlanItemFormView(options) {
             dateInput.value = context.selectedDate;
             dateInput.readOnly = true;
             occurrenceDateLabel.textContent = "Fecha del día seleccionado";
-            referenceMessage.textContent = "Este día contiene varios horarios. Puedes revisar el conjunto completo; los cambios con alcance se detienen si requieren semántica multi-slot todavía aplazada.";
+            referenceMessage.textContent = "Este día contiene varios horarios. Puedes aplicar el conjunto solo a esta semana; los cambios de aquí en adelante continúan aplazados.";
             referenceMessage.hidden = false;
             updateScopeVisibility();
         }

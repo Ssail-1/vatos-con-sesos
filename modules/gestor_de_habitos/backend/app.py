@@ -6,6 +6,7 @@ import database
 import occurrence_mutation_service
 import plan_item_creation_service
 import planner_state_service
+import week_mutation_service
 from repositories import plan_item_repository
 
 
@@ -141,6 +142,51 @@ def delete_occurrence(occurrence_id):
         result = occurrence_mutation_service.delete_occurrence(occurrence_id)
     except occurrence_mutation_service.OccurrenceMutationError as error:
         return _occurrence_mutation_error_response(error)
+    return jsonify(result)
+
+
+def _week_mutation_error_response(error):
+    if isinstance(error, week_mutation_service.WeekValidationError):
+        return jsonify(
+            status="error",
+            code=error.code,
+            message="El identificador o payload de Apply Week no es válido.",
+        ), 400
+    if isinstance(error, week_mutation_service.WeekPlanItemNotFoundError):
+        return jsonify(
+            status="error",
+            code="plan_item_not_found",
+            message="El PlanItem no existe.",
+        ), 404
+    if isinstance(error, week_mutation_service.WeekOccurrenceNotFoundError):
+        return jsonify(
+            status="error",
+            code="occurrence_not_found",
+            message="Una occurrence no existe en la semana solicitada.",
+        ), 404
+    if isinstance(error, week_mutation_service.WeekConflictError):
+        return jsonify(status="error", code=error.code, message=str(error)), 409
+    if isinstance(error, week_mutation_service.WeekConsistencyError):
+        return jsonify(
+            status="error",
+            code="persisted_state_invalid",
+            message="El estado persistido del planner no es válido.",
+        ), 500
+    return jsonify(
+        status="error",
+        code="database_unavailable",
+        message="No se pudo aplicar el cambio semanal.",
+    ), 503
+
+
+@app.post("/api/plan-items/<plan_item_id>/apply-week")
+def apply_week(plan_item_id):
+    try:
+        result = week_mutation_service.apply_week(
+            plan_item_id, request.get_json(silent=True)
+        )
+    except week_mutation_service.WeekMutationError as error:
+        return _week_mutation_error_response(error)
     return jsonify(result)
 
 

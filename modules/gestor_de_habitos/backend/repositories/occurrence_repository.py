@@ -9,6 +9,21 @@ def set_serializable_transaction(connection):
         cursor.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
 
+def lock_plan_item_identity(connection, plan_item_id):
+    """Serializa todas las mutaciones semanales del mismo PlanItem."""
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT id
+            FROM public.plan_items
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (plan_item_id,),
+        )
+        return cursor.fetchone()
+
+
 def find_occurrence_owner(connection, occurrence_id):
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
@@ -31,6 +46,11 @@ def lock_plan_item_context(connection, plan_item_id):
                 plan_item.kind,
                 plan_item.subtype,
                 config.mode,
+                config.start_date,
+                config.end_date,
+                config.indefinite,
+                config.interval_days,
+                config.stopped_from_date,
                 (
                     SELECT COUNT(*)
                     FROM public.generation_slots AS slot
@@ -50,6 +70,98 @@ def lock_plan_item_context(connection, plan_item_id):
             (plan_item_id,),
         )
         return cursor.fetchone()
+
+
+def lock_plan_item_week_occurrences(connection, plan_item_id, week_start, week_end):
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                plan_item_id,
+                occurrence_date,
+                start_time,
+                end_time,
+                status,
+                status_reason,
+                source_occurrence_id,
+                source_generation_slot_id
+            FROM public.occurrences
+            WHERE plan_item_id = %s
+              AND occurrence_date BETWEEN %s AND %s
+            ORDER BY occurrence_date, start_time, end_time, id
+            FOR UPDATE
+            """,
+            (plan_item_id, week_start, week_end),
+        )
+        return cursor.fetchall()
+
+
+def lock_external_blocking_occurrences(connection, plan_item_id, occurrence_dates):
+    if not occurrence_dates:
+        return []
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                occurrence.id,
+                occurrence.plan_item_id,
+                occurrence.occurrence_date,
+                occurrence.start_time,
+                occurrence.end_time,
+                occurrence.status,
+                plan_item.kind,
+                plan_item.subtype
+            FROM public.occurrences AS occurrence
+            INNER JOIN public.plan_items AS plan_item
+                ON plan_item.id = occurrence.plan_item_id
+            WHERE occurrence.plan_item_id <> %s
+              AND occurrence.occurrence_date = ANY(%s::date[])
+              AND occurrence.status IN ('pending', 'in_progress', 'completed')
+            ORDER BY
+                occurrence.occurrence_date,
+                occurrence.start_time,
+                occurrence.end_time,
+                occurrence.id
+            FOR UPDATE OF occurrence
+            """,
+            (plan_item_id, occurrence_dates),
+        )
+        return cursor.fetchall()
+
+
+def lock_status_context_dependents_for_sources(connection, occurrence_ids):
+    if not occurrence_ids:
+        return []
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT id, source_occurrence_id
+            FROM public.occurrences
+            WHERE source_occurrence_id = ANY(%s::uuid[])
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (occurrence_ids,),
+        )
+        return cursor.fetchall()
+
+
+def lock_occurrences_for_slots(connection, slot_ids):
+    if not slot_ids:
+        return []
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT id, source_generation_slot_id, occurrence_date
+            FROM public.occurrences
+            WHERE source_generation_slot_id = ANY(%s::uuid[])
+            ORDER BY source_generation_slot_id, occurrence_date, id
+            FOR UPDATE
+            """,
+            (slot_ids,),
+        )
+        return cursor.fetchall()
 
 
 def lock_occurrence(connection, occurrence_id):
@@ -273,6 +385,23 @@ def insert_slot_exclusion(connection, slot_id, excluded_date):
         )
 
 
+def insert_slot_exclusions(connection, exclusions):
+    if not exclusions:
+        return
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO public.generation_slot_excluded_dates (
+                slot_id,
+                excluded_date
+            )
+            VALUES (%s, %s)
+            ON CONFLICT (slot_id, excluded_date) DO NOTHING
+            """,
+            exclusions,
+        )
+
+
 def update_occurrence_schedule(
     connection, occurrence_id, occurrence_date, start_time, end_time
 ):
@@ -288,6 +417,77 @@ def update_occurrence_schedule(
             (occurrence_date, start_time, end_time, occurrence_id),
         )
         return cursor.rowcount
+
+
+def stage_occurrence_dates(connection, staged_dates):
+    """Libera claves slot+date antes de aplicar movimientos finales."""
+    with connection.cursor() as cursor:
+        for occurrence_id, temporary_date in staged_dates:
+            cursor.execute(
+                """
+                UPDATE public.occurrences
+                SET occurrence_date = %s
+                WHERE id = %s
+                """,
+                (temporary_date, occurrence_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+    return True
+
+
+def insert_ad_hoc_occurrences(connection, occurrences):
+    if not occurrences:
+        return
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO public.occurrences (
+                id,
+                plan_item_id,
+                occurrence_date,
+                start_time,
+                end_time,
+                status,
+                source_generation_slot_id
+            )
+            VALUES (%s, %s, %s, %s, %s, 'pending', NULL)
+            """,
+            [
+                (
+                    occurrence["id"],
+                    occurrence["plan_item_id"],
+                    occurrence["occurrence_date"],
+                    occurrence["start_time"],
+                    occurrence["end_time"],
+                )
+                for occurrence in occurrences
+            ],
+        )
+
+
+def list_plan_item_week_occurrences(connection, plan_item_id, week_start, week_end):
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                plan_item_id,
+                occurrence_date,
+                start_time,
+                end_time,
+                status,
+                status_reason,
+                source_occurrence_id,
+                source_generation_slot_id
+            FROM public.occurrences
+            WHERE plan_item_id = %s
+              AND occurrence_date BETWEEN %s AND %s
+            ORDER BY occurrence_date, start_time, end_time, id
+            """,
+            (plan_item_id, week_start, week_end),
+        )
+        return cursor.fetchall()
 
 
 def update_generation_slot_schedule(connection, slot_id, start_time, end_time):
