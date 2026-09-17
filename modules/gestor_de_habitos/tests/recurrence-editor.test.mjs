@@ -24,7 +24,7 @@ for (const [kind, type] of [
 ]) {
     const id = `${kind}-${type}-pending`;
     const store = createPlannerStore([classifiedItem(id, kind, type)], [], "2026-08-24");
-    const result = store.applyGenerationConfigFromDate(id, "2026-08-24", revisedWeekly);
+    const result = store.applyGenerationConfigFromDate(id, { ...revisedWeekly, startDate: "2026-08-24" });
     const effectiveOccurrence = store.getOccurrencesForDate("2026-08-24")[0];
     assert.equal(effectiveOccurrence.status, "pending", `${id}: effectiveDate permanece pending`);
     assert.equal(effectiveOccurrence.startTime, "10:00", `${id}: effectiveDate adopta el horario nuevo`);
@@ -40,7 +40,7 @@ for (const [kind, type] of [
         const store = createPlannerStore([classifiedItem(id, kind, type)], [], "2026-08-24");
         const effectiveOccurrence = store.getOccurrencesForDate("2026-08-24")[0];
         store.setOccurrenceStatus(effectiveOccurrence.id, status);
-        const result = store.applyGenerationConfigFromDate(id, "2026-08-24", revisedWeekly);
+        const result = store.applyGenerationConfigFromDate(id, { ...revisedWeekly, startDate: "2026-08-24" });
         const preserved = store.getOccurrenceById(effectiveOccurrence.id);
         assert.equal(preserved.status, status, `${id}: conserva status histórico`);
         assert.equal(preserved.startTime, "08:00", `${id}: conserva horario histórico`);
@@ -113,8 +113,8 @@ for (const [kind, type] of [
     const inProgress = store.getOccurrencesForDate("2026-08-31")[0];
     const cancelled = store.getOccurrencesForDate("2026-09-02")[0];
     const horizon = store.getMaterializedThrough();
-    const result = store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({
-        days: [2, 4], startTime: "10:00", endTime: "11:00",
+    const result = store.applyGenerationConfigFromDate("weekly", weekly({
+        days: [2, 4], startDate: "2026-08-25", startTime: "10:00", endTime: "11:00",
         perDayTimes: { "4": { startTime: "12:00", endTime: "13:00" } },
     }));
     assert.equal(result.planItem.generationConfig.startDate, "2026-08-25");
@@ -137,18 +137,18 @@ for (const [kind, type] of [
     ], [], "2026-08-24");
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();
-    expectError(() => store.applyGenerationConfigFromDate("weekly", "2026-08-25", weekly({ days: [2, 4], startTime: "10:00", endTime: "11:00" })), "time_conflict");
+    expectError(() => store.applyGenerationConfigFromDate("weekly", weekly({ days: [2, 4], startDate: "2026-08-25", startTime: "10:00", endTime: "11:00" })), "priority_conflict");
     assert.deepEqual(store.getPlanItems(), beforeItems, "Apply future no cambia config si falla");
     assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply future no retira pending si falla");
 }
 
 {
     const store = createPlannerStore([item("weekly")], [], "2026-08-24");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ perDayTimes: { "5": { startTime: "09:00", endTime: "10:00" } } }));
+    store.applyGenerationConfigFromDate("weekly", weekly({ startDate: "2026-08-24", perDayTimes: { "5": { startTime: "09:00", endTime: "10:00" } } }));
     assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "09:00", "crea horario diferente");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly({ perDayTimes: { "5": { startTime: "10:00", endTime: "11:00" } } }));
+    store.applyGenerationConfigFromDate("weekly", weekly({ startDate: "2026-08-24", perDayTimes: { "5": { startTime: "10:00", endTime: "11:00" } } }));
     assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "10:00", "actualiza horario diferente");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-24", weekly());
+    store.applyGenerationConfigFromDate("weekly", weekly({ startDate: "2026-08-24" }));
     assert.equal(store.getPlanItemById("weekly").generationConfig.slots.find(({ isoWeekday }) => isoWeekday === 5).startTime, "08:00", "restaura el horario general visual");
 }
 

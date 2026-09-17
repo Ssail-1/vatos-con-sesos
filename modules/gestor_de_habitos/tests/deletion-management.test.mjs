@@ -249,8 +249,7 @@ for (const [id, config] of modeCases) {
     const store = createPlannerStore([planItem("preserved-controls", config)], [], REFERENCE_DATE);
     store.applyGenerationConfigFromDate(
         "preserved-controls",
-        REFERENCE_DATE,
-        weeklyConfig({ startTime: "10:00", endTime: "11:00" }),
+        weeklyConfig({ startDate: REFERENCE_DATE, startTime: "10:00", endTime: "11:00" }),
     );
     const updated = store.getPlanItemById("preserved-controls").generationConfig;
     assert.deepEqual(updated.excludedDates, ["2026-09-30"]);

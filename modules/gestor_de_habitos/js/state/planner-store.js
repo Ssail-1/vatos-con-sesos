@@ -77,16 +77,6 @@ function getGenerationSlotIds(planItem) {
     return (config.mode === "manual_dates" ? config.entries : config.slots).map(({ id }) => id);
 }
 
-function generationConfigHasMultipleSlotsPerDate(config) {
-    if (config?.mode === "interval_days") return config.slots.length > 1;
-    const groupingValues = config?.mode === "weekly"
-        ? config.slots.map(({ isoWeekday }) => isoWeekday)
-        : config?.mode === "manual_dates"
-            ? config.entries.map(({ date }) => date)
-            : [];
-    return new Set(groupingValues).size !== groupingValues.length;
-}
-
 function normalizePlanItemDraft(draft) {
     const planItem = {
         name: typeof draft?.name === "string" ? draft.name.trim() : "",
@@ -464,26 +454,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         occurrences.sort(compareOccurrences);
         materializedThrough = targetHorizon;
         return created.map(cloneOccurrence);
-    }
-
-    function buildWeeklyCandidate(planItem, generationConfig, rangeStart, rangeEnd, removableOccurrences) {
-        const candidatePlanItem = {
-            ...planItem,
-            generationConfig: preserveGenerationControls(planItem.generationConfig, generationConfig),
-        };
-        validatePlanItem(candidatePlanItem);
-        validateGenerationSlotOwnership(candidatePlanItem, planItem.id);
-        const removableIds = new Set(removableOccurrences.map(({ id }) => id));
-        const preservedOccurrences = occurrences.filter(({ id }) => !removableIds.has(id));
-        const preservedDates = new Set(
-            preservedOccurrences
-                .filter((occurrence) => occurrence.planItemId === planItem.id && occurrence.date >= rangeStart)
-                .map(({ date }) => date),
-        );
-        const drafts = materializeOccurrenceDrafts(candidatePlanItem, rangeStart, rangeEnd)
-            .filter(({ date }) => !preservedDates.has(date));
-        validateDraftSet(drafts, preservedOccurrences);
-        return { candidatePlanItem, preservedOccurrences, drafts };
     }
 
     function evaluatePriorityConflicts(candidatePlanItem, candidateDrafts, ignoredOccurrenceId = null) {
@@ -1319,63 +1289,234 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             };
         },
 
-        applyGenerationConfigFromDate(planItemId, effectiveDate, generationConfig) {
+        applyGenerationConfigFromDate(planItemId, generationConfig) {
             const planItem = getPlanItemReference(planItemId);
-            if (!planItem || !isValidDateKey(effectiveDate)) {
-                throw new PlannerStoreError("not_found", "El registro o la fecha efectiva no existe.");
+            if (!planItem) throw new PlannerStoreError("not_found", "El registro no existe.");
+            const currentMode = planItem.generationConfig?.mode;
+            if (currentMode === "manual_dates") {
+                throw new PlannerStoreError("unsupported_mode", "Apply Future no está disponible para manual_dates.");
             }
-            requireScheduleMutableDate(effectiveDate);
+            if (!["weekly", "interval_days"].includes(currentMode)) {
+                throw new PlannerStoreError("invalid_generation_config", "Apply Future requiere una configuración recurrente.");
+            }
+            const effectiveDate = generationConfig?.startDate;
+            if (!isValidDateKey(effectiveDate)) {
+                throw new PlannerStoreError("invalid_generation_config", "futureConfig.startDate no es una fecha válida.");
+            }
+            const { referenceDate } = requireScheduleMutableDate(effectiveDate);
             const normalizedConfig = cloneGenerationConfig(generationConfig);
-            if (["weekly", "interval_days"].includes(normalizedConfig?.mode)) {
-                normalizedConfig.startDate = effectiveDate;
-                if (!normalizedConfig.indefinite && normalizedConfig.endDate < effectiveDate) {
-                    throw new PlannerStoreError("invalid_generation_config", "La fecha final es anterior a la fecha efectiva.");
-                }
-            }
-            validateGenerationConfig(normalizedConfig);
-            if (generationConfigHasMultipleSlotsPerDate(normalizedConfig)) {
+            if (normalizedConfig?.mode !== currentMode) {
                 throw new PlannerStoreError(
-                    "ambiguous_future",
-                    "Apply future no modifica todavía una configuración que produce varios horarios por fecha.",
+                    "mode_change_not_supported",
+                    "Apply Future debe conservar el modo recurrente actual.",
                 );
             }
-            const occurrenceCountByDate = new Map();
-            occurrences
-                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= effectiveDate)
-                .forEach(({ date }) => {
-                    occurrenceCountByDate.set(date, (occurrenceCountByDate.get(date) ?? 0) + 1);
-                });
-            if ([...occurrenceCountByDate.values()].some((count) => count > 1)) {
+            if (!normalizedConfig.indefinite && normalizedConfig.endDate < effectiveDate) {
                 throw new PlannerStoreError(
-                    "ambiguous_future",
-                    "Hay varios horarios del mismo registro en una fecha; Apply future multi-slot pertenece a una fase posterior.",
+                    "invalid_generation_config",
+                    "La fecha final es anterior a la fecha efectiva.",
                 );
             }
-            const removable = occurrences.filter(
-                (occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= effectiveDate,
-            );
-            const preservedEffectiveDateOccurrences = occurrences
-                .filter(
-                    (occurrence) =>
-                        occurrence.planItemId === planItemId &&
-                        occurrence.date === effectiveDate &&
-                        occurrence.status !== "pending",
-                )
-                .map(cloneOccurrence);
-            const { candidatePlanItem, preservedOccurrences, drafts } = buildWeeklyCandidate(
-                planItem,
+            const candidateConfig = preserveGenerationControls(
+                planItem.generationConfig,
                 normalizedConfig,
-                effectiveDate,
-                materializedThrough,
-                removable,
             );
-            const created = assignOccurrenceIds(drafts);
+            validateGenerationConfig(candidateConfig);
+            if (candidateConfig.stoppedFromDate && effectiveDate >= candidateConfig.stoppedFromDate) {
+                throw new PlannerStoreError(
+                    "planning_stopped",
+                    "La fecha efectiva no puede reactivar una planificación detenida.",
+                );
+            }
+            const candidatePlanItem = { ...planItem, generationConfig: candidateConfig };
+            validatePlanItem(candidatePlanItem);
+            validateGenerationSlotOwnership(candidatePlanItem, planItem.id);
+
+            const oldBaselineByKey = new Map(
+                (effectiveDate <= materializedThrough
+                    ? materializeOccurrenceDrafts(planItem, effectiveDate, materializedThrough)
+                    : []
+                ).map((draft) => [occurrenceKey(draft), draft]),
+            );
+            const futureOccurrences = occurrences.filter((occurrence) => (
+                occurrence.planItemId === planItemId && occurrence.date >= effectiveDate
+            ));
+            const baselineByKey = new Map();
+            const preserved = [];
+            futureOccurrences.forEach((occurrence) => {
+                const expected = occurrence.sourceGenerationSlotId
+                    ? oldBaselineByKey.get(occurrenceKey(occurrence))
+                    : null;
+                if (
+                    expected &&
+                    occurrence.startTime === expected.startTime &&
+                    occurrence.endTime === expected.endTime
+                ) {
+                    baselineByKey.set(occurrenceKey(occurrence), occurrence);
+                } else {
+                    preserved.push(cloneOccurrence(occurrence));
+                }
+            });
+
+            const desired = effectiveDate <= materializedThrough
+                ? materializeOccurrenceDrafts(
+                    candidatePlanItem,
+                    effectiveDate,
+                    materializedThrough,
+                )
+                : [];
+            const preservedKeys = new Set(
+                preserved
+                    .filter(({ sourceGenerationSlotId }) => sourceGenerationSlotId)
+                    .map(occurrenceKey),
+            );
+            const desiredKeys = new Set();
+            const reconciled = [];
+            const newDrafts = [];
+            const changedForConflicts = [];
+            const preservedEffectiveDateOccurrences = preserved
+                .filter((occurrence) => occurrence.date === effectiveDate && occurrence.status !== "pending")
+                .map(cloneOccurrence);
+            const canReconcile = (occurrence) => occurrence.status === "pending" && getIndividualDeletionPolicy({
+                occurrences: [occurrence],
+                referenceDate,
+                historyEditWindowDays,
+                hasGenerationConfig: true,
+            }).allowed;
+            const hasStatusContextDependent = (occurrence) => occurrences.some(
+                (candidate) => candidate.statusContext?.sourceOccurrenceId === occurrence.id,
+            );
+            const requireStatusContextUnlocked = (occurrence) => {
+                if (hasStatusContextDependent(occurrence)) {
+                    throw new PlannerStoreError(
+                        "status_context_locked",
+                        "Una occurrence que cambiaría conserva contexto de prioridad dependiente.",
+                    );
+                }
+            };
+
+            desired.forEach((draft) => {
+                const key = occurrenceKey(draft);
+                if (desiredKeys.has(key)) {
+                    throw new PlannerStoreError(
+                        "slot_date_conflict",
+                        "El nuevo motor produciría dos occurrences para slot + fecha.",
+                    );
+                }
+                desiredKeys.add(key);
+                if (preservedKeys.has(key)) return;
+                const existing = baselineByKey.get(key);
+                if (!existing) {
+                    newDrafts.push(draft);
+                    reconciled.push(draft);
+                    changedForConflicts.push(draft);
+                    return;
+                }
+                const changed = existing.startTime !== draft.startTime || existing.endTime !== draft.endTime;
+                if (changed && !canReconcile(existing)) {
+                    const protectedOccurrence = cloneOccurrence(existing);
+                    preserved.push(protectedOccurrence);
+                    if (existing.date === effectiveDate) {
+                        preservedEffectiveDateOccurrences.push(cloneOccurrence(existing));
+                    }
+                    return;
+                }
+                if (changed) requireStatusContextUnlocked(existing);
+                const updated = { ...existing, startTime: draft.startTime, endTime: draft.endTime };
+                reconciled.push(updated);
+                if (changed) changedForConflicts.push(updated);
+            });
+
+            baselineByKey.forEach((occurrence, key) => {
+                if (desiredKeys.has(key)) return;
+                if (canReconcile(occurrence)) {
+                    requireStatusContextUnlocked(occurrence);
+                    return;
+                }
+                const protectedOccurrence = cloneOccurrence(occurrence);
+                preserved.push(protectedOccurrence);
+                if (occurrence.date === effectiveDate) {
+                    preservedEffectiveDateOccurrences.push(cloneOccurrence(occurrence));
+                }
+            });
+
+            const finalFuture = [...preserved, ...reconciled];
+            const sourceDates = new Set();
+            finalFuture.forEach((occurrence) => {
+                validateOccurrenceDraft(occurrence);
+                if (!occurrence.sourceGenerationSlotId) return;
+                const key = occurrenceKey(occurrence);
+                if (sourceDates.has(key)) {
+                    throw new PlannerStoreError(
+                        "slot_date_conflict",
+                        "Un GenerationSlot tendría dos occurrences en una fecha.",
+                    );
+                }
+                sourceDates.add(key);
+            });
+            const internalConflict = findConflictInDraftSet(finalFuture, []);
+            if (internalConflict) {
+                throw new PlannerStoreError(
+                    "time_conflict",
+                    "El estado final de Apply Future contiene horarios que se superponen.",
+                    { conflictingOccurrence: describeConflict(internalConflict.conflict) },
+                );
+            }
+
+            const externalOccurrences = occurrences.filter(({ planItemId: ownerId }) => ownerId !== planItemId);
+            const conflictsById = new Map();
+            changedForConflicts.forEach((candidate) => {
+                findOccurrenceConflicts(candidate, externalOccurrences).forEach((conflict) => {
+                    conflictsById.set(conflict.id, conflict);
+                });
+            });
+            const conflicts = [...conflictsById.values()];
+            if (conflicts.some(({ status }) => status === "completed")) {
+                throw new PlannerStoreError("completed_conflict", "El intervalo contiene un registro completado y protegido.");
+            }
+            const candidatePriority = getSchedulingPriority(candidatePlanItem);
+            if (conflicts.some((conflict) => {
+                const existingPlanItem = getPlanItemReference(conflict.planItemId);
+                return !existingPlanItem || candidatePriority <= getSchedulingPriority(existingPlanItem);
+            })) {
+                throw new PlannerStoreError("priority_conflict", "La prioridad del PlanItem no permite desplazar los conflictos.");
+            }
+            if (conflicts.length) {
+                throw new PlannerStoreError(
+                    "priority_override_required",
+                    "Apply Future requiere confirmar un desplazamiento por prioridad.",
+                );
+            }
+
+            const created = assignOccurrenceIds(newDrafts);
+            const createdByKey = new Map(created.map((occurrence) => [occurrenceKey(occurrence), occurrence]));
+            const persistedFuture = finalFuture.map((occurrence) => (
+                occurrence.id ? occurrence : createdByKey.get(occurrenceKey(occurrence))
+            ));
+            const removedSlotIds = new Set(
+                planItem.generationConfig.slots
+                    .filter(({ id }) => !candidateConfig.slots.some((slot) => slot.id === id))
+                    .map(({ id }) => id),
+            );
+            const withoutRemovedSource = (occurrence) => {
+                if (!removedSlotIds.has(occurrence.sourceGenerationSlotId)) return occurrence;
+                const { sourceGenerationSlotId: _removedSource, ...preservedOccurrence } = occurrence;
+                return preservedOccurrence;
+            };
+            const untouched = occurrences
+                .filter((occurrence) => occurrence.planItemId !== planItemId || occurrence.date < effectiveDate)
+                .map((occurrence) => withoutRemovedSource(cloneOccurrence(occurrence)));
             const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
             planItems[planItemIndex] = candidatePlanItem;
-            occurrences = [...preservedOccurrences, ...created].sort(compareOccurrences);
+            occurrences = [
+                ...untouched,
+                ...persistedFuture.map((occurrence) => withoutRemovedSource(cloneOccurrence(occurrence))),
+            ].sort(compareOccurrences);
             return {
                 planItem: clonePlanItem(candidatePlanItem),
-                occurrences: created.map(cloneOccurrence),
+                occurrences: occurrences
+                    .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= effectiveDate)
+                    .map(cloneOccurrence),
                 preservedEffectiveDateOccurrences,
             };
         },

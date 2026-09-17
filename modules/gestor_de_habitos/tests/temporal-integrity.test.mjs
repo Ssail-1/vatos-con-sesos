@@ -97,7 +97,10 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     expectCode(() => store.updateOccurrence(occurrence.id, { date: occurrence.date, startTime: "10:00", endTime: "11:00" }), "history_frozen");
     expectCode(() => store.prepareOccurrenceUpdate(frozenWeekly.id, { name: frozenWeekly.name, kind: "activity", activityType: "periodic" }, occurrence.id, { date: occurrence.date, startTime: "10:00", endTime: "11:00" }), "history_frozen");
     expectCode(() => store.applyWeeklyToWeek(frozenWeekly.id, occurrence.date, frozenWeekly.generationConfig), "history_frozen");
-    expectCode(() => store.applyGenerationConfigFromDate(frozenWeekly.id, occurrence.date, frozenWeekly.generationConfig), "history_frozen");
+    expectCode(() => store.applyGenerationConfigFromDate(frozenWeekly.id, {
+        ...frozenWeekly.generationConfig,
+        startDate: occurrence.date,
+    }), "history_frozen");
     expectCode(() => store.prepareOccurrenceAddition(frozenWeekly.id, { date: occurrence.date, startTime: "12:00", endTime: "13:00" }), "history_frozen");
     expectCode(
         () => store.preparePlanItemCreation(activity("prepared-in-frozen-history", occurrence.date)),

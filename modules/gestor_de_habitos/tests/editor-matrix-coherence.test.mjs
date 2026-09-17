@@ -61,16 +61,16 @@ const expectError = (action, code) => assert.throws(action, (error) => error ins
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();
     expectError(
-        () => store.applyGenerationConfigFromDate("ambiguous", "2026-08-27", weekly({ days: [4] })),
-        "ambiguous_future",
+        () => store.applyGenerationConfigFromDate("ambiguous", weekly({ days: [4], startDate: "2026-08-27" })),
+        "unsupported_mode",
     );
-    assert.deepEqual(store.getPlanItems(), beforeItems, "Apply future ambiguo no cambia generationConfig");
-    assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply future ambiguo no destruye occurrences");
+    assert.deepEqual(store.getPlanItems(), beforeItems, "Apply future no cambia manual_dates");
+    assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply future no destruye manual_dates");
 }
 
 {
     const store = createPlannerStore([item("weekly")], [], "2026-08-24");
-    store.applyGenerationConfigFromDate("weekly", "2026-08-27", weekly({ days: [4, 6] }));
+    store.applyGenerationConfigFromDate("weekly", weekly({ days: [4, 6], startDate: "2026-08-27" }));
     assert.deepEqual(store.getPlanItemById("weekly").generationConfig.slots.map(({ isoWeekday }) => isoWeekday), [4, 6]);
     assert.equal(store.getPlanItemById("weekly").generationConfig.startDate, "2026-08-27");
     assert.equal(store.getOccurrencesForDate("2026-08-27").filter(({ planItemId }) => planItemId === "weekly").length, 1);

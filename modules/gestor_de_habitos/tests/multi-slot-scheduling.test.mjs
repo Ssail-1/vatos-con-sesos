@@ -310,12 +310,10 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     const beforeOccurrences = store.getOccurrencesForPlanItem("scope-guard");
     const weekResult = store.applyWeeklyToWeek("scope-guard", "2026-09-14", config);
     assert.equal(weekResult.length, 2, "Apply week multi-slot conserva un estado idéntico");
-    assert.throws(
-        () => store.applyGenerationConfigFromDate("scope-guard", "2026-09-14", config),
-        (error) => error instanceof PlannerStoreError && error.code === "ambiguous_future",
-    );
-    assert.deepEqual(store.getPlanItemById("scope-guard"), beforeItem, "Apply week no altera GenerationSlots");
-    assert.deepEqual(store.getOccurrencesForPlanItem("scope-guard"), beforeOccurrences, "Apply week multi-slot no reduce N slots a uno");
+    const futureResult = store.applyGenerationConfigFromDate("scope-guard", config);
+    assert.deepEqual(futureResult.planItem.generationConfig, beforeItem.generationConfig, "Apply future conserva los GenerationSlots sin cambios");
+    assert.equal(store.getOccurrenceById(first.id).status, "completed", "Apply future preserva la occurrence protegida");
+    assert.equal(store.getOccurrencesForPlanItem("scope-guard").length, beforeOccurrences.length, "Apply future multi-slot no reduce N slots a uno");
 }
 
 {
@@ -422,6 +420,150 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
         () => manual.applyWeekOperations("week-manual", "2026-09-15", [{ type: "create", date: "2026-09-15", startTime: "10:00", endTime: "11:00" }]),
         (error) => error instanceof PlannerStoreError && error.code === "unsupported_mode",
     );
+}
+
+{
+    const original = weeklyConfig({
+        days: [1, 2],
+        startDate: "2026-09-14",
+        endDate: "2026-10-05",
+        indefinite: false,
+        perDayTimes: {
+            "1": { startTime: "08:00", endTime: "11:00" },
+            "2": { startTime: "14:00", endTime: "17:00" },
+        },
+    });
+    const [mondaySlot, tuesdaySlot] = original.slots;
+    const store = createPlannerStore([activity("future-weekly", original)], [], "2026-09-14");
+    const history = store.getOccurrencesForPlanItem("future-weekly")
+        .filter(({ date }) => date < "2026-09-21")
+        .map(({ id, date, startTime, endTime, status }) => ({ id, date, startTime, endTime, status }));
+    const override = store.getOccurrencesForDate("2026-09-22")
+        .find(({ sourceGenerationSlotId }) => sourceGenerationSlotId === tuesdaySlot.id);
+    store.updateOccurrence(override.id, { date: override.date, startTime: "15:00", endTime: "18:00" });
+    const excluded = store.getOccurrencesForDate("2026-09-28")
+        .find(({ sourceGenerationSlotId }) => sourceGenerationSlotId === mondaySlot.id);
+    store.applyWeekOperations("future-weekly", "2026-09-28", [
+        { type: "delete", occurrenceId: excluded.id },
+    ]);
+    store.applyWeekOperations("future-weekly", "2026-09-25", [
+        { type: "create", date: "2026-09-25", startTime: "20:00", endTime: "21:00" },
+    ]);
+    const newSlot = generationSlot({ isoWeekday: 3, startTime: "20:00", endTime: "22:00" });
+    const result = store.applyGenerationConfigFromDate("future-weekly", {
+        mode: "weekly",
+        startDate: "2026-09-21",
+        endDate: original.endDate,
+        indefinite: false,
+        slots: [
+            { ...mondaySlot, startTime: "09:00", endTime: "12:00" },
+            newSlot,
+        ],
+    });
+    assert.equal(result.planItem.generationConfig.startDate, "2026-09-21", "startDate es la frontera futura");
+    assert.deepEqual(
+        result.planItem.generationConfig.slots.map(({ id }) => id).sort(),
+        [mondaySlot.id, newSlot.id].sort(),
+        "conserva el UUID existente, agrega el nuevo y elimina el omitido",
+    );
+    assert.deepEqual(
+        result.planItem.generationConfig.slots.find(({ id }) => id === mondaySlot.id).excludedDates,
+        ["2026-09-28"],
+        "preserva slot exclusions del slot sobreviviente",
+    );
+    const preservedOverride = store.getOccurrenceById(override.id);
+    assert.equal(preservedOverride.startTime, "15:00", "preserva el override explícito futuro");
+    assert.equal(preservedOverride.sourceGenerationSlotId, undefined, "el override del slot eliminado queda ad-hoc");
+    assert.equal(
+        store.getOccurrencesForDate("2026-09-23").find(({ planItemId }) => planItemId === "future-weekly").sourceGenerationSlotId,
+        newSlot.id,
+        "el slot nuevo materializa desde la frontera",
+    );
+    assert.equal(
+        store.getOccurrencesForDate("2026-09-16").some(({ sourceGenerationSlotId }) => sourceGenerationSlotId === newSlot.id),
+        false,
+        "el slot nuevo nunca aparece antes de startDate",
+    );
+    assert.deepEqual(
+        store.getOccurrencesForPlanItem("future-weekly")
+            .filter(({ date }) => date < "2026-09-21")
+            .map(({ id, date, startTime, endTime, status }) => ({ id, date, startTime, endTime, status })),
+        history,
+        "Apply Future conserva íntegros los datos históricos",
+    );
+}
+
+{
+    const original = intervalConfig({
+        intervalDays: 2,
+        startDate: "2026-09-14",
+        endDate: "2026-09-30",
+        indefinite: false,
+        times: [
+            { startTime: "08:00", endTime: "09:00" },
+            { startTime: "18:00", endTime: "19:00" },
+        ],
+    });
+    const [survivingSlot] = original.slots;
+    const newSlot = generationSlot({ startTime: "20:00", endTime: "21:00" });
+    const store = createPlannerStore([activity("future-interval", original)], [], "2026-09-14");
+    const result = store.applyGenerationConfigFromDate("future-interval", {
+        mode: "interval_days",
+        startDate: "2026-09-21",
+        endDate: original.endDate,
+        indefinite: false,
+        intervalDays: 3,
+        slots: [
+            { ...survivingSlot, startTime: "09:00", endTime: "10:00" },
+            newSlot,
+        ],
+    });
+    assert.deepEqual(
+        [...new Set(result.occurrences.map(({ date }) => date))],
+        ["2026-09-21", "2026-09-24", "2026-09-27", "2026-09-30"],
+        "interval_days reinicia su fase desde el nuevo startDate",
+    );
+    assert.equal(result.occurrences.length, 8, "cada fecha de la nueva fase contiene ambos slots");
+}
+
+{
+    const date = "2026-09-21";
+    const lower = activity("future-dependent", explicitDate(date, "08:00", "10:00"));
+    const store = createPlannerStore([lower], [], "2026-09-17");
+    const sourceConfig = weeklyConfig({
+        days: [1],
+        startDate: date,
+        endDate: date,
+        indefinite: false,
+        startTime: "09:00",
+        endTime: "09:30",
+    });
+    const prepared = store.preparePlanItemCreation({
+        name: "future-source",
+        kind: "activity",
+        activityType: "event",
+        generationConfig: sourceConfig,
+    });
+    const created = store.commitPreparedScheduleChange(prepared);
+    const sourceOccurrence = created.occurrences[0];
+    const dependent = store.getOccurrencesForPlanItem("future-dependent")[0];
+    assert.equal(dependent.statusContext.sourceOccurrenceId, sourceOccurrence.id);
+    const beforeItems = store.getPlanItems();
+    const beforeOccurrences = store.getOccurrences();
+
+    assert.throws(
+        () => store.applyGenerationConfigFromDate(created.planItem.id, {
+            ...sourceConfig,
+            slots: sourceConfig.slots.map((slot) => ({
+                ...slot,
+                startTime: "10:00",
+                endTime: "10:30",
+            })),
+        }),
+        (error) => error instanceof PlannerStoreError && error.code === "status_context_locked",
+    );
+    assert.deepEqual(store.getPlanItems(), beforeItems, "Apply Future conserva el motor si statusContext bloquea la mutación");
+    assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply Future conserva occurrences si statusContext bloquea la mutación");
 }
 
 console.log("multi-slot-scheduling.test.mjs: todas las pruebas pasaron");

@@ -111,16 +111,16 @@ for (const itemType of ["event", "periodic"]) {
     const historical = store.getOccurrencesForDate(entryA.date)[0];
     store.setOccurrenceStatus(historical.id, "completed");
     const revisedEntryB = { ...entryB, startTime: "18:00", endTime: "19:00" };
-    store.applyGenerationConfigFromDate(original.id, entryA.date, {
-        mode: "manual_dates",
-        entries: [{ ...entryA, startTime: "12:00", endTime: "13:00" }, revisedEntryB],
-    });
-    assert.equal(store.getOccurrenceById(historical.id).startTime, entryA.startTime, "Apply future conserva historial manual");
-    assert.deepEqual(
-        store.getOccurrencesForDate(entryB.date).map(({ date, startTime, endTime }) => ({ date, startTime, endTime })),
-        [revisedEntryB].map(({ date, startTime, endTime }) => ({ date, startTime, endTime })),
-        "Apply future genera cada entry con su propio horario",
+    const before = store.getOccurrences();
+    assert.throws(
+        () => store.applyGenerationConfigFromDate(original.id, {
+            mode: "manual_dates",
+            entries: [{ ...entryA, startTime: "12:00", endTime: "13:00" }, revisedEntryB],
+        }),
+        (error) => error instanceof PlannerStoreError && error.code === "unsupported_mode",
     );
+    assert.equal(store.getOccurrenceById(historical.id).startTime, entryA.startTime, "Apply future conserva historial manual");
+    assert.deepEqual(store.getOccurrences(), before, "Apply future no modifica manual_dates");
 }
 
 console.log("manual-dates-form.test.mjs: todas las pruebas pasaron");

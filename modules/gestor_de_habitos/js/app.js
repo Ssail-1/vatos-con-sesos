@@ -193,7 +193,10 @@ function commitPreparedChange(prepared, context) {
 }
 
 function applyFuturePlanning(planItemId, effectiveDate, generationConfig) {
-    const result = plannerStore.applyGenerationConfigFromDate(planItemId, effectiveDate, generationConfig);
+    const result = plannerStore.applyGenerationConfigFromDate(planItemId, {
+        ...generationConfig,
+        startDate: effectiveDate,
+    });
     return result.preservedEffectiveDateOccurrences.length ? PRESERVED_HISTORY_NOTICE : null;
 }
 

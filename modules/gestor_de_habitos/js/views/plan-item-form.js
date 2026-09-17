@@ -793,7 +793,7 @@ export function createPlanItemFormView(options) {
             dateInput.value = context.selectedDate;
             dateInput.readOnly = true;
             occurrenceDateLabel.textContent = "Fecha del día seleccionado";
-            referenceMessage.textContent = "Este día contiene varios horarios. Puedes aplicar el conjunto solo a esta semana; los cambios de aquí en adelante continúan aplazados.";
+            referenceMessage.textContent = "Este día contiene varios horarios. Puedes aplicar el conjunto solo a esta semana o usar la fecha seleccionada como inicio de la nueva programación futura.";
             referenceMessage.hidden = false;
             updateScopeVisibility();
         }

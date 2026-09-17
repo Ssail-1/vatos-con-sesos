@@ -11,6 +11,7 @@ import psycopg
 
 from app import app
 import database
+import future_schedule_service
 import occurrence_mutation_service as mutation_service
 import plan_item_creation_service as creation_service
 from plan_item_materializer import materialize_occurrence_drafts
@@ -131,6 +132,13 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
                 patch.object(week_mutation_service, "_today", return_value=reference_date):
             return app.test_client().post(
                 f"/api/plan-items/{plan_item_id}/apply-week", json=payload
+            )
+
+    def _apply_future(self, plan_item_id, payload, reference_date=REFERENCE_DATE):
+        with patch.object(database, "get_database_url", return_value=self.database_url), \
+                patch.object(future_schedule_service, "_today", return_value=reference_date):
+            return app.test_client().post(
+                f"/api/plan-items/{plan_item_id}/apply-future", json=payload
             )
 
     def _weekly_two_slot_payload(self, name="Weekly mutation"):
@@ -1254,6 +1262,456 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
             if item["id"] == editable["id"]
         )
         self.assertEqual(persisted_editable["startTime"], "09:00")
+
+    def test_apply_future_weekly_preserves_history_overrides_exclusions_and_ad_hoc(self):
+        created = self._post(
+            activity(
+                {
+                    "mode": "weekly",
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-10-05",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(901), "isoWeekday": 1, "startTime": "08:00", "endTime": "11:00"},
+                        {"id": slot_id(902), "isoWeekday": 2, "startTime": "14:00", "endTime": "17:00"},
+                    ],
+                },
+                "Apply Future weekly",
+            )
+        ).get_json()
+        plan_item_id = created["planItem"]["id"]
+        by_slot_date = {
+            (item["sourceGenerationSlotId"], item["date"]): item
+            for item in created["occurrences"]
+        }
+        historical = {
+            item["id"]: dict(item)
+            for item in created["occurrences"]
+            if item["date"] < "2026-09-21"
+        }
+
+        override = self._patch_occurrence(
+            by_slot_date[(slot_id(902), "2026-09-22")]["id"],
+            {"date": "2026-09-22", "startTime": "15:00", "endTime": "18:00"},
+        )
+        self.assertEqual(override.status_code, 200, override.get_data(as_text=True))
+        excluded = self._delete_occurrence(
+            by_slot_date[(slot_id(901), "2026-09-28")]["id"]
+        )
+        self.assertEqual(excluded.status_code, 200, excluded.get_data(as_text=True))
+        ad_hoc_response = self._apply_week(
+            plan_item_id,
+            {
+                "anchorDate": "2026-09-25",
+                "operations": [
+                    {"type": "create", "date": "2026-09-25", "startTime": "20:00", "endTime": "21:00"}
+                ],
+            },
+        )
+        self.assertEqual(ad_hoc_response.status_code, 200, ad_hoc_response.get_data(as_text=True))
+        ad_hoc_id = next(
+            item["id"]
+            for item in ad_hoc_response.get_json()["occurrences"]
+            if item["date"] == "2026-09-25"
+        )
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "INSERT INTO public.generation_excluded_dates (plan_item_id, excluded_date) VALUES (%s, '2026-09-30')",
+                (plan_item_id,),
+            )
+            connection.execute(
+                "UPDATE public.generation_configs SET stopped_from_date = '2026-10-01' WHERE plan_item_id = %s",
+                (plan_item_id,),
+            )
+
+        response = self._apply_future(
+            plan_item_id,
+            {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-10-05",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(901), "isoWeekday": 1, "startTime": "09:00", "endTime": "12:00"},
+                        {"id": slot_id(903), "isoWeekday": 3, "startTime": "20:00", "endTime": "22:00"},
+                    ],
+                }
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        result = response.get_json()
+        config = result["planItem"]["generationConfig"]
+        self.assertEqual(config["startDate"], "2026-09-21")
+        self.assertEqual(config["stoppedFromDate"], "2026-10-01")
+        self.assertEqual(config["excludedDates"], ["2026-09-30"])
+        surviving = next(slot for slot in config["slots"] if slot["id"] == slot_id(901))
+        self.assertEqual(surviving["excludedDates"], ["2026-09-28"])
+        self.assertEqual({slot["id"] for slot in config["slots"]}, {slot_id(901), slot_id(903)})
+
+        future = {item["id"]: item for item in result["occurrences"]}
+        override_id = override.get_json()["occurrence"]["id"]
+        self.assertEqual((future[override_id]["startTime"], future[override_id]["endTime"]), ("15:00", "18:00"))
+        self.assertNotIn("sourceGenerationSlotId", future[override_id])
+        self.assertEqual(future[ad_hoc_id]["startTime"], "20:00")
+        self.assertNotIn("sourceGenerationSlotId", future[ad_hoc_id])
+        self.assertTrue(any(
+            item.get("sourceGenerationSlotId") == slot_id(903) and item["date"] == "2026-09-23"
+            for item in future.values()
+        ))
+        self.assertFalse(any(
+            item.get("sourceGenerationSlotId") == slot_id(901) and item["date"] == "2026-09-28"
+            for item in future.values()
+        ))
+        self.assertFalse(any(
+            item.get("sourceGenerationSlotId") == slot_id(903) and item["date"] == "2026-09-30"
+            for item in future.values()
+        ))
+
+        state = self._get_state().get_json()
+        persisted_by_id = {item["id"]: item for item in state["occurrences"]}
+        for occurrence_id, before in historical.items():
+            after = persisted_by_id[occurrence_id]
+            for field in ("id", "date", "startTime", "endTime", "status"):
+                self.assertEqual(after[field], before[field])
+        removed_slot_history = historical[
+            by_slot_date[(slot_id(902), "2026-09-15")]["id"]
+        ]
+        self.assertNotIn(
+            "sourceGenerationSlotId", persisted_by_id[removed_slot_history["id"]]
+        )
+
+    def test_apply_future_interval_restarts_phase_and_preserves_history(self):
+        created = self._post(
+            activity(
+                {
+                    "mode": "interval_days",
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-09-30",
+                    "indefinite": False,
+                    "intervalDays": 2,
+                    "slots": [
+                        {"id": slot_id(911), "startTime": "08:00", "endTime": "09:00"},
+                        {"id": slot_id(912), "startTime": "18:00", "endTime": "19:00"},
+                    ],
+                },
+                "Apply Future interval",
+            )
+        ).get_json()
+        plan_item_id = created["planItem"]["id"]
+        historical = [item for item in created["occurrences"] if item["date"] < "2026-09-21"]
+        response = self._apply_future(
+            plan_item_id,
+            {
+                "futureConfig": {
+                    "mode": "interval_days",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-30",
+                    "indefinite": False,
+                    "intervalDays": 3,
+                    "slots": [
+                        {"id": slot_id(911), "startTime": "09:00", "endTime": "10:00"},
+                        {"id": slot_id(913), "startTime": "20:00", "endTime": "21:00"},
+                    ],
+                }
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        future = response.get_json()["occurrences"]
+        self.assertEqual(
+            sorted({item["date"] for item in future}),
+            ["2026-09-21", "2026-09-24", "2026-09-27", "2026-09-30"],
+        )
+        self.assertTrue(all(
+            item["startTime"] in {"09:00", "20:00"} for item in future
+        ))
+        state = self._get_state().get_json()
+        by_id = {item["id"]: item for item in state["occurrences"]}
+        for before in historical:
+            self.assertEqual(by_id[before["id"]]["date"], before["date"])
+            self.assertEqual(by_id[before["id"]]["startTime"], before["startTime"])
+
+    def test_apply_future_rejects_mode_change_manual_stopped_and_frozen(self):
+        weekly = self._post(self._weekly_apply_payload("Future guards")).get_json()
+        weekly_id = weekly["planItem"]["id"]
+        before = self._get_state().get_json()
+        mode_change = self._apply_future(
+            weekly_id,
+            {
+                "futureConfig": {
+                    "mode": "interval_days",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-27",
+                    "indefinite": False,
+                    "intervalDays": 2,
+                    "slots": [
+                        {"id": slot_id(801), "startTime": "08:00", "endTime": "11:00"}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(mode_change.status_code, 409)
+        self.assertEqual(mode_change.get_json()["code"], "mode_change_not_supported")
+        self.assertEqual(self._get_state().get_json(), before)
+
+        frozen = self._apply_future(
+            weekly_id,
+            {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-12",
+                    "endDate": "2026-09-27",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(801), "isoWeekday": 1, "startTime": "08:00", "endTime": "11:00"}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(frozen.status_code, 409)
+        self.assertEqual(frozen.get_json()["code"], "history_frozen")
+
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.generation_configs SET stopped_from_date = '2026-09-21' WHERE plan_item_id = %s",
+                (weekly_id,),
+            )
+        stopped = self._apply_future(
+            weekly_id,
+            {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-27",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(801), "isoWeekday": 1, "startTime": "08:00", "endTime": "11:00"}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(stopped.status_code, 409)
+        self.assertEqual(stopped.get_json()["code"], "planning_stopped")
+
+        manual = self._post(manual_payload(940, day="2026-10-10")).get_json()
+        unsupported = self._apply_future(
+            manual["planItem"]["id"],
+            {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-27",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(941), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"}
+                    ],
+                }
+            },
+        )
+        self.assertEqual(unsupported.status_code, 409)
+        self.assertEqual(unsupported.get_json()["code"], "unsupported_mode")
+
+    def test_apply_future_rejects_mutating_status_context_source(self):
+        source = self._post(
+            activity(
+                {
+                    "mode": "weekly",
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-09-28",
+                    "indefinite": False,
+                    "slots": [
+                        {
+                            "id": slot_id(950),
+                            "isoWeekday": 1,
+                            "startTime": "08:00",
+                            "endTime": "09:00",
+                        }
+                    ],
+                },
+                "Priority source",
+            )
+        ).get_json()
+        source_occurrence = next(
+            item for item in source["occurrences"] if item["date"] == "2026-09-21"
+        )
+        dependent_occurrence = next(
+            item for item in source["occurrences"] if item["date"] == "2026-09-14"
+        )
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                """
+                UPDATE public.occurrences
+                SET status = 'cancelled',
+                    status_reason = 'priority_override',
+                    source_occurrence_id = %s
+                WHERE id = %s
+                """,
+                (source_occurrence["id"], dependent_occurrence["id"]),
+            )
+
+        before = self._get_state().get_json()
+        response = self._apply_future(
+            source["planItem"]["id"],
+            {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-28",
+                    "indefinite": False,
+                    "slots": [
+                        {
+                            "id": slot_id(950),
+                            "isoWeekday": 1,
+                            "startTime": "09:00",
+                            "endTime": "10:00",
+                        }
+                    ],
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["code"], "status_context_locked")
+        self.assertEqual(self._get_state().get_json(), before)
+
+    def test_apply_future_late_failure_rolls_back_config_slots_and_occurrences(self):
+        created = self._post(self._weekly_apply_payload("Rollback future")).get_json()
+        plan_item_id = created["planItem"]["id"]
+        with psycopg.connect(self.database_url) as connection:
+            before = connection.execute(
+                """
+                SELECT config.start_date::text, config.end_date::text,
+                       slot.id::text, slot.start_time::text, slot.end_time::text,
+                       weekday.iso_weekday
+                FROM public.generation_configs AS config
+                JOIN public.generation_slots AS slot ON slot.plan_item_id = config.plan_item_id
+                LEFT JOIN public.generation_slot_weekdays AS weekday ON weekday.slot_id = slot.id
+                WHERE config.plan_item_id = %s
+                ORDER BY slot.id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+            occurrences_before = connection.execute(
+                """
+                SELECT id::text, occurrence_date::text, start_time::text,
+                       end_time::text, source_generation_slot_id::text
+                FROM public.occurrences WHERE plan_item_id = %s ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+        with psycopg.connect(self.database_url, autocommit=True) as connection:
+            connection.execute(
+                """
+                CREATE TRIGGER reject_apply_future_create
+                BEFORE INSERT ON public.occurrences
+                FOR EACH ROW EXECUTE FUNCTION public.reject_test_insert()
+                """
+            )
+        try:
+            response = self._apply_future(
+                plan_item_id,
+                {
+                    "futureConfig": {
+                        "mode": "weekly",
+                        "startDate": "2026-09-21",
+                        "endDate": "2026-09-27",
+                        "indefinite": False,
+                        "slots": [
+                            {"id": slot_id(802), "isoWeekday": 1, "startTime": "15:00", "endTime": "18:00"},
+                            {"id": slot_id(920), "isoWeekday": 4, "startTime": "20:00", "endTime": "21:00"},
+                        ],
+                    }
+                },
+            )
+            self.assertEqual(response.status_code, 503)
+        finally:
+            with psycopg.connect(self.database_url, autocommit=True) as connection:
+                connection.execute(
+                    "DROP TRIGGER IF EXISTS reject_apply_future_create ON public.occurrences"
+                )
+        with psycopg.connect(self.database_url) as connection:
+            after = connection.execute(
+                """
+                SELECT config.start_date::text, config.end_date::text,
+                       slot.id::text, slot.start_time::text, slot.end_time::text,
+                       weekday.iso_weekday
+                FROM public.generation_configs AS config
+                JOIN public.generation_slots AS slot ON slot.plan_item_id = config.plan_item_id
+                LEFT JOIN public.generation_slot_weekdays AS weekday ON weekday.slot_id = slot.id
+                WHERE config.plan_item_id = %s
+                ORDER BY slot.id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+            occurrences_after = connection.execute(
+                """
+                SELECT id::text, occurrence_date::text, start_time::text,
+                       end_time::text, source_generation_slot_id::text
+                FROM public.occurrences WHERE plan_item_id = %s ORDER BY id
+                """,
+                (plan_item_id,),
+            ).fetchall()
+        self.assertEqual(after, before)
+        self.assertEqual(occurrences_after, occurrences_before)
+
+    def test_concurrent_apply_future_has_one_coherent_winner(self):
+        created = self._post(
+            activity(
+                {
+                    "mode": "weekly",
+                    "startDate": "2026-09-14",
+                    "endDate": "2026-09-28",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(931), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"}
+                    ],
+                },
+                "Concurrent future",
+            )
+        ).get_json()
+        plan_item_id = created["planItem"]["id"]
+        barrier = __import__("threading").Barrier(2)
+        original_lock = occurrence_repository.lock_plan_item_identity
+
+        def synchronized_lock(connection, locked_plan_item_id):
+            barrier.wait(timeout=5)
+            return original_lock(connection, locked_plan_item_id)
+
+        def attempt(start_time, new_slot_number, weekday):
+            payload = {
+                "futureConfig": {
+                    "mode": "weekly",
+                    "startDate": "2026-09-21",
+                    "endDate": "2026-09-28",
+                    "indefinite": False,
+                    "slots": [
+                        {"id": slot_id(931), "isoWeekday": 1, "startTime": start_time, "endTime": "12:00"},
+                        {"id": slot_id(new_slot_number), "isoWeekday": weekday, "startTime": "20:00", "endTime": "21:00"},
+                    ],
+                }
+            }
+            try:
+                return future_schedule_service.apply_future(
+                    plan_item_id, payload, reference_date=REFERENCE_DATE
+                )["planItem"]["generationConfig"]
+            except future_schedule_service.FutureConflictError as error:
+                return error.code
+
+        with patch.object(database, "get_database_url", return_value=self.database_url), \
+                patch.object(occurrence_repository, "lock_plan_item_identity", side_effect=synchronized_lock):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(attempt, "09:00", 932, 2),
+                    executor.submit(attempt, "10:00", 933, 3),
+                ]
+                results = [future.result(timeout=10) for future in futures]
+
+        winners = [result for result in results if isinstance(result, dict)]
+        losers = [result for result in results if isinstance(result, str)]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(losers, ["concurrent_modification"])
+        persisted = self._get_state().get_json()["planItems"][0]["generationConfig"]
+        self.assertEqual(persisted, winners[0])
 
     def test_concurrent_apply_week_has_one_complete_winner(self):
         created = self._post(self._weekly_apply_payload("Concurrent week")).get_json()
