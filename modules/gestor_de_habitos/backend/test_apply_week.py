@@ -315,7 +315,7 @@ class ApplyWeekOrchestrationTests(unittest.TestCase):
                 patch.object(occurrence_repository, "lock_plan_item_context", return_value=plan_item_context()), \
                 patch.object(occurrence_repository, "lock_plan_item_slots", return_value=slots()) as slot_lock, \
                 patch.object(occurrence_repository, "lock_plan_item_week_occurrences", side_effect=lambda *_args: [dict(row) for row in persisted_rows]), \
-                patch.object(occurrence_repository, "lock_status_context_dependents_for_sources", return_value=[]), \
+                patch.object(occurrence_repository, "lock_status_context_dependents_for_sources", return_value=[]) as context_lock, \
                 patch.object(occurrence_repository, "lock_external_blocking_occurrences", return_value=[]), \
                 patch.object(occurrence_repository, "lock_occurrences_for_slots", return_value=[]), \
                 patch.object(occurrence_repository, "stage_occurrence_dates", return_value=True), \
@@ -338,6 +338,9 @@ class ApplyWeekOrchestrationTests(unittest.TestCase):
         self.assertEqual(recorded_exclusions, [(slot_id(4), date(2026, 9, 15))])
         isolation.assert_called_once_with(connection)
         slot_lock.assert_called_once()
+        context_lock.assert_called_once_with(
+            connection, [occurrence_id(4), occurrence_id(2)]
+        )
         connection.transaction.assert_called_once_with()
 
 

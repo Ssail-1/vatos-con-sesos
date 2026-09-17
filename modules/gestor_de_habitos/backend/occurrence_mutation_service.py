@@ -451,6 +451,20 @@ def patch_occurrence(occurrence_id, payload, reference_date=None):
                 _validate_mutable_dates(
                     original_date, candidate["date"], current_date
                 )
+                schedule_changed = (
+                    candidate["date"] != original_date
+                    or candidate["startTime"]
+                    != _db_time(occurrence["start_time"], "start_time")
+                    or candidate["endTime"]
+                    != _db_time(occurrence["end_time"], "end_time")
+                )
+                if schedule_changed and occurrence_repository.lock_status_context_dependents(
+                    connection, occurrence["id"]
+                ):
+                    raise OccurrenceConflictError(
+                        "status_context_locked",
+                        "La occurrence conserva contexto de prioridad dependiente.",
+                    )
 
                 source_slot = occurrence["source_generation_slot_id"]
                 mode = context["planItem"]["mode"]

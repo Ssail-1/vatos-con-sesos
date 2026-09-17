@@ -278,6 +278,23 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return occurrences.find((candidate) => candidate.id === occurrenceId) ?? null;
     }
 
+    function requireStatusContextSourceUnlocked(occurrence) {
+        if (occurrences.some(
+            (candidate) => candidate.statusContext?.sourceOccurrenceId === occurrence.id,
+        )) {
+            throw new PlannerStoreError(
+                "status_context_locked",
+                "La occurrence conserva contexto de prioridad dependiente.",
+            );
+        }
+    }
+
+    function occurrenceScheduleChanged(occurrence, candidate) {
+        return occurrence.date !== candidate.date ||
+            occurrence.startTime !== candidate.startTime ||
+            occurrence.endTime !== candidate.endTime;
+    }
+
     function getCurrentReferenceDate() {
         const currentReferenceDate = getCurrentDateKey();
         if (!isValidDateKey(currentReferenceDate)) {
@@ -1069,6 +1086,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!decision.allowed) {
                 throwForDeletionDecision(decision, "eliminar la occurrence");
             }
+            requireStatusContextSourceUnlocked(occurrence);
             let candidateConfig = cloneGenerationConfig(planItem.generationConfig);
             if (
                 occurrence.sourceGenerationSlotId &&
@@ -1143,6 +1161,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 occurrence.planItemId === planItemId &&
                 shouldRemoveOccurrenceWhenStopping(occurrence, stoppedFromDate, referenceDate)
             );
+            removedOccurrences.forEach(requireStatusContextSourceUnlocked);
             const removedIds = new Set(removedOccurrences.map(({ id }) => id));
             const preservedOccurrences = occurrences.filter(({ id }) => !removedIds.has(id));
 
@@ -1227,9 +1246,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                         hasGenerationConfig: true,
                     });
                     if (!decision.allowed) throwForDeletionDecision(decision, "eliminar la occurrence");
-                    if (occurrences.some((candidate) => candidate.statusContext?.sourceOccurrenceId === occurrence.id)) {
-                        throw new PlannerStoreError("deletion_status_locked", "La occurrence conserva contexto de prioridad dependiente.");
-                    }
+                    requireStatusContextSourceUnlocked(occurrence);
                     deletedIds.add(occurrence.id);
                     candidateConfig = addSlotExclusion(
                         candidateConfig,
@@ -1243,6 +1260,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                     throw new PlannerStoreError("invalid_payload", "El movimiento debe quedar dentro de la semana objetivo.");
                 }
                 requireScheduleMutableDate(operation.date);
+                if (occurrenceScheduleChanged(occurrence, operation)) {
+                    requireStatusContextSourceUnlocked(occurrence);
+                }
                 if (operation.date !== occurrence.date) {
                     candidateConfig = addSlotExclusion(
                         candidateConfig,
@@ -1383,18 +1403,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 historyEditWindowDays,
                 hasGenerationConfig: true,
             }).allowed;
-            const hasStatusContextDependent = (occurrence) => occurrences.some(
-                (candidate) => candidate.statusContext?.sourceOccurrenceId === occurrence.id,
-            );
-            const requireStatusContextUnlocked = (occurrence) => {
-                if (hasStatusContextDependent(occurrence)) {
-                    throw new PlannerStoreError(
-                        "status_context_locked",
-                        "Una occurrence que cambiaría conserva contexto de prioridad dependiente.",
-                    );
-                }
-            };
-
             desired.forEach((draft) => {
                 const key = occurrenceKey(draft);
                 if (desiredKeys.has(key)) {
@@ -1421,7 +1429,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                     }
                     return;
                 }
-                if (changed) requireStatusContextUnlocked(existing);
+                if (changed) requireStatusContextSourceUnlocked(existing);
                 const updated = { ...existing, startTime: draft.startTime, endTime: draft.endTime };
                 reconciled.push(updated);
                 if (changed) changedForConflicts.push(updated);
@@ -1430,7 +1438,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             baselineByKey.forEach((occurrence, key) => {
                 if (desiredKeys.has(key)) return;
                 if (canReconcile(occurrence)) {
-                    requireStatusContextUnlocked(occurrence);
+                    requireStatusContextSourceUnlocked(occurrence);
                     return;
                 }
                 const protectedOccurrence = cloneOccurrence(occurrence);
@@ -1596,6 +1604,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 startTime: occurrenceChanges.startTime,
                 endTime: occurrenceChanges.endTime,
             };
+            if (occurrenceScheduleChanged(occurrence, candidateOccurrence)) {
+                requireStatusContextSourceUnlocked(occurrence);
+            }
             validateOccurrenceDraft(candidateOccurrence);
             requireSourceSlotDateAvailable(occurrence, candidateOccurrence.date);
             const conflict = findOccurrenceConflict(candidateOccurrence, occurrences, occurrence.id);
@@ -1628,6 +1639,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 startTime: occurrenceChanges.startTime,
                 endTime: occurrenceChanges.endTime,
             };
+            if (occurrenceScheduleChanged(occurrence, candidate)) {
+                requireStatusContextSourceUnlocked(occurrence);
+            }
             validateOccurrenceDraft(candidate);
             requireScheduleMutableDate(candidate.date);
             requireSourceSlotDateAvailable(occurrence, candidate.date);

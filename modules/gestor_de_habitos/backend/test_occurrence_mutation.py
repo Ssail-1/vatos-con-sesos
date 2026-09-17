@@ -158,6 +158,7 @@ class PatchOrchestrationTests(unittest.TestCase):
             "occurrence_update": started[7],
             "slot_update": started[8],
             "date_update": started[9],
+            "status_dependents": started[12],
         }
         return result, connection, mocks
 
@@ -187,6 +188,24 @@ class PatchOrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(result["occurrence"]["date"], "2026-09-21")
         self.assertEqual(result["occurrence"]["sourceGenerationSlotId"], str(SLOT_ID))
+
+    def test_status_context_dependents_protect_patch_source(self):
+        connection, patches = database_mocks(context())
+        started = [item.start() for item in patches]
+        started[12].return_value = [{"id": UUID(int=90)}]
+        try:
+            with self.assertRaises(service.OccurrenceConflictError) as error:
+                service.patch_occurrence(
+                    str(OCCURRENCE_ID),
+                    {"date": "2026-09-20", "startTime": "15:00", "endTime": "18:00"},
+                    reference_date=REFERENCE_DATE,
+                )
+            self.assertEqual(error.exception.code, "status_context_locked")
+            started[7].assert_not_called()
+            self.assertIsNotNone(connection)
+        finally:
+            for item in reversed(patches):
+                item.stop()
 
     def test_manual_patch_updates_slot_date_and_occurrence(self):
         result, _, mocks = self._run(

@@ -1,1187 +1,1107 @@
 # CURRENT TASK
 
-## MVP 05.6.4.3 — Persisted Apply Future / rewrite recurring schedule from effective date
+## MVP 05.6.5 — Verificación integral del dominio persistente
 
-### Documento normativo
+### Propósito
 
-La especificación global multi-slot está en:
+Esta fase NO agrega una nueva feature principal.
 
-`docs/codex/gestor_de_habitos/planeacion/MVP_05_6/MULTI_SLOT_SCHEDULING.md`
-
-Este documento define exclusivamente:
-
-```text
-MVP 05.6.4.3
-Aplicar de aquí en adelante
-```
+Su objetivo es verificar integralmente que el dominio persistente del
+Gestor de hábitos sea coherente antes de conectar el frontend real con la API.
 
 Estado actual:
 
 ```text
 05.6.1    Frontend/domain multi-slot                 ✅
 05.6.2    PostgreSQL multi-slot                      ✅
-05.6.3    Backend multi-slot                         ✅
+05.6.3    Backend/API multi-slot                     ✅
 05.6.4.1  Solo este día                              ✅
 05.6.4.2  Aplicar a esta semana                      ✅
-05.6.4.3  Aplicar de aquí en adelante                ← ACTUAL
-```
+05.6.4.3  Aplicar de aquí en adelante                ✅
 
----
-
-# 1. Decisión arquitectónica cerrada
-
-NO se implementará versionado histórico de GenerationSlots.
-
-NO necesitamos conservar:
-
-```text
-cómo era históricamente el GenerationSlot
-cuando creó una occurrence
-```
-
-La fuente de verdad histórica es:
-
-```text
-Occurrence
-```
-
-porque almacena independientemente:
-
-```text
-date
-startTime
-endTime
-status
-```
-
-`GenerationSlot` representa el motor/programación ACTUAL.
-
----
-
-# 2. Significado de sourceGenerationSlotId
-
-`sourceGenerationSlotId` es una referencia OPERACIONAL.
-
-Sirve para:
-
-```text
-idempotencia slot + date
-slot exclusions
-single-day mutations
-Apply Week
-Apply Future
-relacionar una occurrence recurrente con su regla lógica actual
-```
-
-NO significa:
-
-```text
-versión histórica exacta de la regla que produjo la occurrence
-```
-
-Una occurrence histórica puede apuntar a un slot cuyo horario actual ya
-sea diferente.
-
-Eso es válido.
-
----
-
-# 3. Occurrence vs GenerationSlot
-
-Mantener esta separación:
-
-```text
-PlanItem
-→ qué actividad/hábito es
-
-GenerationSlot
-→ cuándo puede generarse una occurrence
-
-Occurrence
-→ aparición concreta materializada
-```
-
-Ejemplo:
-
-```text
-GenerationSlot S1
-lunes 14:00–17:00
-
-puede producir:
-
-O1 lunes 14 Sep
-O2 lunes 21 Sep
-O3 lunes 28 Sep
-```
-
-No tratar occurrence y slot como la misma entidad.
-
----
-
-# 4. Semántica de los tres scopes
-
-## Solo este día
-
-```text
-Occurrence concreta
-```
-
-Ya implementado.
-
-## Aplicar a esta semana
-
-```text
-Occurrences concretas + excepciones
-```
-
-GenerationSlots permanecen intactos.
-
-Ya implementado.
-
-## Aplicar de aquí en adelante
-
-```text
-Modificar el motor recurrente actual
-+
-reconciliar occurrences futuras materializadas
-```
-
-Esta es la tarea actual.
-
----
-
-# 5. Principio de Apply Future
-
-Apply Future significa:
-
-> Desde una fecha efectiva, esta será la nueva programación recurrente
-> del PlanItem.
-
-La programación anterior NO necesita seguir representada por
-generationConfig/GenerationSlots.
-
-Las occurrences anteriores ya contienen la historia real.
-
----
-
-# 6. No effective-dated slot versions
-
-NO introducir:
-
-```text
-effective_from en generation_slots
-effective_until
-slot_versions
-generation_config_versions
-temporal tables
-history tables de reglas
-```
-
-No crear versiones:
-
-```text
-S1 viejo
-S2 nuevo
-```
-
-solo por cambiar el horario.
-
-Si sigue siendo el mismo slot lógico:
-
-```text
-editar S1 en sitio
-preservar S1.id
-```
-
----
-
-# 7. Identidad de slots
-
-Regla:
-
-```text
-slot existente editado
-→ conserva UUID
-
-slot nuevo
-→ nuevo UUID v4 generado por frontend
-
-slot eliminado
-→ desaparece del motor actual
-```
-
-No generar UUID nuevo únicamente porque cambió:
-
-```text
-startTime
-endTime
-isoWeekday
-```
-
-si el frontend conserva su identidad lógica.
-
----
-
-# 8. Slots eliminados e historia
-
-Si Apply Future elimina un GenerationSlot:
-
-```text
-generation_slots row
-→ puede eliminarse
-```
-
-La FK existente:
-
-```text
-occurrences.source_generation_slot_id
-ON DELETE SET NULL
-```
-
-puede desprender occurrences anteriores.
-
-Esto es aceptable.
-
-La occurrence histórica conserva:
-
-```text
-date
-time
-status
-```
-
-y sigue siendo válida.
-
-No preservar un slot únicamente para mantener esa FK histórica.
-
----
-
-# 9. Endpoint
-
-Implementar:
-
-```text
-POST /api/plan-items/<plan_item_id>/apply-future
-```
-
-No usar PATCH genérico para esta operación porque es una mutación
-compuesta con reconciliación.
-
----
-
-# 10. Payload
-
-Payload:
-
-```json
-{
-  "futureConfig": {
-    "mode": "weekly",
-    "startDate": "2026-09-21",
-    "endDate": null,
-    "indefinite": true,
-    "slots": [
-      {
-        "id": "UUID-v4",
-        "isoWeekday": 1,
-        "startTime": "15:00",
-        "endTime": "18:00"
-      }
-    ]
-  }
-}
-```
-
-Para interval:
-
-```json
-{
-  "futureConfig": {
-    "mode": "interval_days",
-    "startDate": "2026-09-21",
-    "endDate": null,
-    "indefinite": true,
-    "intervalDays": 1,
-    "slots": [
-      {
-        "id": "UUID-v4",
-        "startTime": "08:00",
-        "endTime": "09:00"
-      }
-    ]
-  }
-}
-```
-
----
-
-# 11. startDate ES la fecha efectiva
-
-No agregar además:
-
-```text
-effectiveDate
-```
-
-para evitar dos fuentes de verdad.
-
-La fecha efectiva es:
-
-```text
-futureConfig.startDate
-```
-
-Conceptualmente:
-
-```text
-antes de startDate
-→ occurrences ya materializadas representan la historia/calendario previo
-
-desde startDate
-→ aplica el nuevo motor
-```
-
----
-
-# 12. Temporal integrity de startDate
-
-`futureConfig.startDate` no puede estar dentro de historia congelada.
-
-Debe pasar la política temporal existente.
-
-Puede ser:
-
-```text
-fecha editable actual
-o fecha futura
-```
-
-No reescribir occurrences congeladas.
-
----
-
-# 13. Modos soportados
-
-Soportar:
-
-```text
-weekly
-interval_days
-```
-
-`manual_dates` no utiliza Apply Future.
-
-Si se intenta:
-
-```text
-409 unsupported_mode
-```
-
----
-
-# 14. Cambio de mode
-
-En esta fase NO cambiar:
-
-```text
-weekly ↔ interval_days
-```
-
-El `futureConfig.mode` debe coincidir con el mode persistido.
-
-Si difiere:
-
-```text
-409 mode_change_not_supported
-```
-
-o código equivalente sanitizado.
-
-La modificación de tipo de recurrencia puede diseñarse después si se
-necesita.
-
----
-
-# 15. Weekly futureConfig
-
-Validar:
-
-```text
-startDate
-endDate / indefinite
-slots[]
-```
-
-Cada slot:
-
-```text
-UUID v4
-isoWeekday 1..7
-startTime < endTime
-```
-
-No solapamientos dentro del mismo weekday.
-
-Contiguos permitidos.
-
-Debe existir al menos un slot.
-
----
-
-# 16. Interval futureConfig
-
-Validar:
-
-```text
-startDate
-endDate / indefinite
-intervalDays > 0
-slots[]
-```
-
-Cada slot:
-
-```text
-UUID v4
-startTime < endTime
-```
-
-No solapamientos.
-
-Debe existir al menos un slot.
-
----
-
-# 17. excludedDates globales
-
-Apply Future NO elimina automáticamente:
-
-```text
-generation_excluded_dates
-```
-
-Son excepciones explícitas del calendario y deben preservarse.
-
-No exigir que frontend las reenvíe en `futureConfig`.
-
-`futureConfig` NO acepta:
-
-```text
-excludedDates
-```
-
-en esta fase.
-
----
-
-# 18. slot.excludedDates
-
-Para slots que conservan el mismo UUID:
-
-```text
-generation_slot_excluded_dates
-```
-
-se preservan.
-
-Apply Future no debe borrar excepciones de días concretos ya realizadas.
-
-Para slots eliminados:
-
-```text
-sus slot exclusions pueden desaparecer por CASCADE
-```
-
-porque la regla ya no existe.
-
-Los slots nuevos comienzan sin exclusiones.
-
-`futureConfig.slots` NO necesita reenviar `excludedDates`.
-
----
-
-# 19. stoppedFromDate
-
-Apply Future NO redefine automáticamente:
-
-```text
-stoppedFromDate
-```
-
-Preservar la política persistida existente.
-
-Si `stoppedFromDate` hace que el nuevo futureConfig no pueda aplicarse de
-forma coherente:
-
-```text
-rechazar con conflicto de dominio
-```
-
-No reactivar silenciosamente un PlanItem detenido.
-
----
-
-# 20. Actualización de generation_configs
-
-Apply Future actualiza el motor ACTUAL.
-
-Para weekly:
-
-```text
-mode permanece weekly
-start_date = futureConfig.startDate
-end_date
-indefinite
-interval_days = NULL
-```
-
-Para interval:
-
-```text
-mode permanece interval_days
-start_date = futureConfig.startDate
-end_date
-indefinite
-interval_days = futureConfig.intervalDays
-```
-
-No conservar el startDate histórico anterior como metadata.
-
-Las occurrences anteriores ya representan la historia.
-
----
-
-# 21. Reconciliación
-
-Apply Future debe reconciliar:
-
-```text
-occurrences materializadas
-con date >= futureConfig.startDate
-```
-
-dentro del horizonte actualmente materializado.
-
-No intentar materializar infinito.
-
-El materializador normal utilizará el nuevo motor para extender el futuro
-más adelante.
-
----
-
-# 22. No tocar occurrences anteriores
-
-Toda occurrence con:
-
-```text
-date < futureConfig.startDate
-```
-
-permanece intacta.
-
-No cambiar:
-
-```text
-date
-time
-status
-statusContext
-```
-
-aunque su GenerationSlot actual cambie.
-
----
-
-# 23. Clasificar occurrences futuras
-
-Antes de mutar slots/config, clasificar las occurrences futuras del
-PlanItem.
-
-Distinguir:
-
-```text
-baseline recurring occurrence
-explicit override occurrence
-ad-hoc occurrence
-```
-
----
-
-# 24. Ad-hoc occurrence
-
-Si:
-
-```text
-sourceGenerationSlotId = NULL
-```
-
-es una aparición explícita.
-
-Apply Future debe preservarla.
-
-NO borrarla únicamente por cambiar el motor recurrente.
-
----
-
-# 25. Baseline recurring occurrence
-
-Una occurrence recurrente se considera baseline si coincide con la regla
-persistida ANTES del Apply Future.
-
-Conceptualmente:
-
-```text
-source slot existente
-+
-fecha válida según config/slot anterior
-+
-start/end iguales al slot anterior
-```
-
-Estas occurrences pueden ser reconciliadas con el nuevo motor.
-
----
-
-# 26. Explicit recurring override
-
-Una occurrence con source slot puede ser una excepción concreta si ya fue
-modificada por:
-
-```text
-Solo este día
-Apply Week
-```
-
-Ejemplos:
-
-```text
-horario distinto del slot original
-fecha movida
-```
-
-Estas occurrences son verdad explícita del calendario.
-
-Apply Future debe preservarlas cuando sea posible.
-
-No sobrescribir automáticamente una excepción concreta únicamente porque
-cambió el baseline.
-
----
-
-# 27. Slot exclusions existentes
-
-Una occurrence eliminada mediante:
-
-```text
-Solo este día
-Apply Week
-```
-
-puede estar representada por:
-
-```text
-generation_slot_excluded_dates
-```
-
-Estas exclusiones se preservan para slots que sobreviven.
-
-Por tanto Apply Future NO debe recrear una occurrence explícitamente
-eliminada para esa fecha.
-
----
-
-# 28. Slot existente modificado
-
-Ejemplo:
-
-```text
-S1 viejo
-14:00–17:00
-
-futureConfig:
-S1
-15:00–18:00
-```
-
-Actualizar:
-
-```text
-generation_slots.start_time
-generation_slots.end_time
-```
-
-preservando:
-
-```text
-S1.id
-```
-
-Las occurrences históricas previas no cambian.
-
----
-
-# 29. Weekly weekday edit
-
-Si S1 cambia:
-
-```text
-lunes
-→ martes
-```
-
-preservar S1.id si el frontend mantuvo ese UUID.
-
-Actualizar:
-
-```text
-generation_slot_weekdays.iso_weekday
-```
-
-Reconciliar baseline future occurrences.
-
-No tocar historia anterior a startDate.
-
----
-
-# 30. Slot nuevo
-
-Un slot presente en futureConfig pero inexistente en DB:
-
-```text
-insert generation_slots
-```
-
-y weekday detail cuando corresponda.
-
-Debe utilizar exactamente el UUID recibido.
-
-Generar sus baseline occurrences únicamente desde:
-
-```text
-futureConfig.startDate
-```
-
-Nunca antes.
-
----
-
-# 31. Slot eliminado
-
-Un slot existente que no aparece en futureConfig:
-
-```text
-deja de formar parte del motor
-```
-
-Eliminar sus baseline occurrences desde startDate.
-
-Las explicit overrides asociadas a ese slot NO deben perderse.
-
-Antes de eliminar el slot:
-
-```text
-preservar esas occurrences
-```
-
-Después la FK:
-
-```text
-ON DELETE SET NULL
-```
-
-puede convertirlas en ad-hoc.
-
-Luego eliminar GenerationSlot.
-
----
-
-# 32. Historia de slot eliminado
-
-Occurrences anteriores a startDate pueden quedar:
-
-```text
-sourceGenerationSlotId = NULL
-```
-
-tras eliminar el slot.
-
-Esto es aceptable.
-
-NO crear una copia/version histórica del slot.
-
----
-
-# 33. Reused slot + baseline occurrence
-
-Si un slot sigue existiendo y una baseline occurrence futura corresponde
-todavía a una fecha válida:
-
-```text
-preservar occurrence.id si es razonable
-actualizar horario al nuevo baseline
-preservar sourceGenerationSlotId
-```
-
-Evitar borrar/recrear innecesariamente si puede actualizarse de forma
-segura.
-
----
-
-# 34. Baseline occurrence ya no válida
-
-Si después del nuevo futureConfig:
-
-```text
-una fecha ya no debe tener ese slot
-```
-
-eliminar esa baseline occurrence.
-
-No crear slot exclusion, porque esto no es una excepción:
-
-```text
-la regla general cambió
-```
-
----
-
-# 35. Nueva baseline occurrence
-
-Si el nuevo futureConfig requiere:
-
-```text
-slot + fecha
-```
-
-y no existe baseline/override/exclusion que la cubra:
-
-```text
-crear occurrence
-```
-
-con:
-
-```text
-UUID v4 backend
-sourceGenerationSlotId = slot.id
-status = pending
-```
-
----
-
-# 36. Override con slot reutilizado
-
-Si existe una explicit override:
-
-```text
-S1 baseline viejo 14–17
-Occurrence concreta 15–18
-```
-
-y Apply Future cambia S1:
-
-```text
-16–19
-```
-
-la occurrence concreta:
-
-```text
-15–18
-```
-
-se preserva.
-
-Su:
-
-```text
-sourceGenerationSlotId = S1
-```
-
-también puede preservarse.
-
-Por `slot + date` idempotency, no crear además una baseline 16–19 ese mismo
-día.
-
----
-
-# 37. Override cuyo slot se elimina
-
-Si una explicit override pertenece a un slot que Apply Future elimina:
-
-```text
-preservar occurrence
-```
-
-y permitir que:
-
-```text
-sourceGenerationSlotId → NULL
-```
-
-por eliminación del slot.
-
-La appearance explícita sigue existiendo.
-
----
-
-# 38. Apply Week previo
-
-Apply Future NO debe destruir automáticamente decisiones previas de:
-
-```text
-Apply Week
-```
-
-Los siguientes datos son excepciones explícitas:
-
-```text
-ad-hoc occurrences
-edited recurring occurrences
-slot exclusions
-```
-
-y deben sobrevivir cuando sea coherente.
-
----
-
-# 39. Materializer boundary
-
-Después de Apply Future:
-
-```text
-generation_configs.start_date
-=
-futureConfig.startDate
-```
-
-Esto es crítico.
-
-El materializador nunca debe aplicar nuevos slots antes de esa fecha.
-
-Por eso no necesitamos:
-
-```text
-effective_from por slot
-```
-
----
-
-# 40. Interval phase
-
-Para `interval_days`, el nuevo:
-
-```text
-startDate
-```
-
-define también el nuevo origen del intervalo.
-
-Ejemplo:
-
-```text
-startDate = Sep 21
-intervalDays = 3
-```
-
-produce:
-
-```text
-Sep 21
-Sep 24
-Sep 27
-...
-```
-
-Esto es intencional.
-
-Apply Future redefine el motor desde su nueva fecha efectiva.
-
----
-
-# 41. Final-state validation
-
-Como Apply Week, validar conceptualmente:
-
-```text
-estado persistido actual
-+
-nuevo motor
-+
-reconciliación
-=
-estado final candidato
-```
-
-antes de confirmar.
-
-No depender de un orden accidental de UPDATE/DELETE/INSERT.
-
----
-
-# 42. Conflictos internos
-
-El estado final del PlanItem no puede contener:
-
-```text
-solapamientos inválidos
-duplicados source slot + date
-```
-
-Intervalos contiguos permanecen válidos.
-
-Preservar explicit overrides y ad-hoc únicamente si el estado final sigue
-siendo válido.
-
----
-
-# 43. Conflictos externos
-
-Validar las nuevas/actualizadas occurrences contra otros PlanItems.
-
-Mantener:
-
-```text
-priority
-completed conflict
-intervalos semiabiertos
-priority_override_required
-```
-
-Si el nuevo motor requiere un override no confirmado:
-
-```text
-rechazar TODO Apply Future
-```
-
-No aplicar parcialmente.
-
----
-
-# 44. Status
-
-No cambiar automáticamente status de occurrences preservadas.
-
-Baseline occurrences nuevas:
-
-```text
-pending
-```
-
-Si una occurrence futura existente tiene un status que impide
-reconciliación:
-
-```text
-respetar scheduling_policy
-```
-
-y rechazar la operación completa si corresponde.
-
-No forzar cambios de status para hacer pasar la operación.
-
----
-
-# 45. statusContext / sourceOccurrenceId
-
-Preservar las protecciones existentes.
-
-No eliminar/modificar una occurrence requerida por un:
-
-```text
-priority_override
-sourceOccurrenceId
-```
-
-sin respetar las reglas actuales.
-
-`sourceOccurrenceId` NO tiene relación con GenerationSlot versioning.
-
----
-
-# 46. Atomicidad
-
-Apply Future debe ser:
-
-```text
-TODO O NADA
-```
-
-Una sola:
-
-```text
-connection
-transaction
-```
-
-Mantener:
-
-```text
-SERIALIZABLE
-```
-
-salvo razón técnica documentada.
-
----
-
-# 47. Locking
-
-Antes de modificar:
-
-```text
-lock PlanItem
-lock generation_config
-lock GenerationSlots actuales
-lock occurrences relevantes desde startDate
-lock dependencias/statusContext necesarias
-lock conflictos externos pertinentes
-```
-
-Evitar:
-
-```text
-lost update
-partial reconciliation
-slot/config mismatch
-concurrent Apply Future mezclado
-```
-
----
-
-# 48. Concurrencia
-
-Dos Apply Future concurrentes sobre el mismo PlanItem:
-
-```text
-no pueden mezclarse
+05.6.5    Verificación integral                      ← ACTUAL
 ```
 
 Resultado esperado:
 
 ```text
-una transacción completa gana
-otra falla/reintenta de manera controlada
+Dominio persistente estable
+        ↓
+listo para integración frontend ↔ backend
 ```
-
-Usar el mecanismo de:
-
-```text
-concurrent_modification
-```
-
-ya establecido cuando corresponda.
 
 ---
 
-# 49. No migración 004
+# 1. Naturaleza de esta fase
 
-Con la decisión arquitectónica actual:
+Esta fase es principalmente:
 
 ```text
-NO necesitamos migración 004
-para versionar slots.
+auditoría
+verificación
+regresión
+integración
+detección de huecos
 ```
 
-No modificar:
+NO:
+
+```text
+rediseño
+nueva feature grande
+refactorización cosmética
+optimización prematura
+```
+
+Si todo está correcto:
+
+```text
+no modificar código innecesariamente
+```
+
+Si se detecta un defecto real que contradice contratos ya aprobados:
+
+```text
+corregir únicamente el defecto
+añadir regresión
+volver a verificar
+```
+
+Si resolverlo exige una nueva decisión arquitectónica:
+
+```text
+DETENERSE Y REPORTAR
+```
+
+No inventar la decisión.
+
+---
+
+# 2. Documentos normativos
+
+Leer antes de auditar:
+
+```text
+/AGENTS.md
+/docs/codex/CURRENT_TASK.md
+/docs/codex/gestor_de_habitos/planeacion/MVP_05_6/MULTI_SLOT_SCHEDULING.md
+```
+
+Consultar implementaciones y tests relacionados según sea necesario.
+
+No es obligatorio releer indiscriminadamente todo el repositorio si una
+fuente concreta ya basta para comprobar un punto.
+
+Pero verificar el código real antes de asumir contratos de:
+
+```text
+PostgreSQL
+API
+materialización
+mutaciones
+```
+
+---
+
+# 3. Modelo conceptual que debe quedar validado
+
+```text
+PlanItem
+→ qué actividad/hábito es
+
+generationConfig
+→ reglas generales de recurrencia
+
+GenerationSlot
+→ horario/regla concreta dentro del motor
+
+Occurrence
+→ aparición concreta materializada
+```
+
+Un PlanItem puede tener:
+
+```text
+1 o múltiples GenerationSlots
+```
+
+Una fecha puede contener:
+
+```text
+0, 1 o múltiples Occurrences del mismo PlanItem
+```
+
+Cada occurrence es independiente en:
+
+```text
+date
+startTime
+endTime
+status
+```
+
+---
+
+# 4. sourceGenerationSlotId
+
+Validar que su semántica permanezca:
+
+```text
+referencia operacional al GenerationSlot lógico
+```
+
+Sirve para:
+
+```text
+idempotencia
+slot exclusions
+Single Day
+Apply Week
+Apply Future
+```
+
+NO representa:
+
+```text
+una versión histórica inmutable de la regla
+```
+
+Una occurrence histórica puede conservar:
+
+```text
+sourceGenerationSlotId = S1
+```
+
+aunque S1 haya cambiado posteriormente.
+
+Eso es válido.
+
+---
+
+# 5. sourceOccurrenceId
+
+Validar independientemente:
+
+```text
+sourceOccurrenceId
+```
+
+solo para:
+
+```text
+statusContext.reason = priority_override
+```
+
+No mezclarlo con:
+
+```text
+sourceGenerationSlotId
+```
+
+Verificar que las protecciones actuales impidan modificar/eliminar
+incorrectamente una occurrence necesaria por una relación de
+`statusContext`.
+
+---
+
+# 6. Modos canónicos
+
+Solo existen:
+
+```text
+weekly
+interval_days
+manual_dates
+```
+
+Buscar regresiones o restos activos de:
+
+```text
+single_date
+```
+
+No debe existir como modo persistido ni API canónica.
+
+La UI visual:
+
+```text
+Una fecha
+```
+
+continúa representándose mediante:
+
+```text
+manual_dates
+```
+
+con una sola entry.
+
+---
+
+# 7. Contratos multi-slot
+
+Validar:
+
+## weekly
+
+```js
+{
+  mode,
+  startDate,
+  endDate,
+  indefinite,
+  slots: [
+    {
+      id,
+      isoWeekday,
+      startTime,
+      endTime,
+      excludedDates?
+    }
+  ],
+  excludedDates?,
+  stoppedFromDate?
+}
+```
+
+## interval_days
+
+```js
+{
+  mode,
+  startDate,
+  endDate,
+  indefinite,
+  intervalDays,
+  slots: [
+    {
+      id,
+      startTime,
+      endTime,
+      excludedDates?
+    }
+  ],
+  excludedDates?,
+  stoppedFromDate?
+}
+```
+
+## manual_dates
+
+```js
+{
+  mode: "manual_dates",
+  entries: [
+    {
+      id,
+      date,
+      startTime,
+      endTime
+    }
+  ],
+  stoppedFromDate?
+}
+```
+
+No introducir `slot.excludedDates` para manual_dates.
+
+---
+
+# 8. UUID de GenerationSlot
+
+Validar integralmente:
+
+```text
+frontend genera UUID v4
+backend valida
+backend preserva
+PostgreSQL persiste
+GET devuelve exactamente el mismo UUID
+```
+
+No remapping.
+
+No UUID nuevo por editar un slot lógico existente.
+
+Slot nuevo:
+
+```text
+UUID nuevo
+```
+
+Slot eliminado:
+
+```text
+desaparece del motor
+```
+
+---
+
+# 9. POST /api/plan-items
+
+Auditar creación persistente para:
+
+```text
+weekly
+interval_days
+manual_dates
+```
+
+Verificar:
+
+```text
+atomicidad
+validación estricta
+UUID preservation
+multi-slot
+sourceGenerationSlotId
+priority conflicts
+rollback
+```
+
+No aceptar:
+
+```text
+single_date
+modelo legacy defaultStartTime/defaultEndTime
+campos desconocidos
+occurrences suministradas por cliente
+PlanItem.id enviado por cliente
+```
+
+---
+
+# 10. GET /api/planner-state
+
+Verificar round-trip real:
+
+```text
+PostgreSQL
+→ repository
+→ service
+→ API
+```
+
+Debe reconstruir exactamente:
+
+```text
+planItems
+occurrences
+GenerationSlots
+slot exclusions
+global exclusions
+statusContext
+```
+
+Usar una sola conexión y mantener la estrategia de lectura consistente
+actual.
+
+Verificar orden determinista.
+
+No inventar estado ante inconsistencias persistidas.
+
+---
+
+# 11. Single Day — PATCH occurrence
+
+Verificar:
+
+```text
+PATCH /api/occurrences/<id>
+```
+
+Casos:
+
+```text
+recurrente misma fecha
+recurrente cambio de fecha
+manual_dates
+ad-hoc
+```
+
+Debe preservar:
+
+```text
+Occurrence.id
+status
+statusContext
+```
+
+según corresponda.
+
+Recurrente misma fecha:
+
+```text
+solo cambia occurrence
+GenerationSlot intacto
+```
+
+Recurrente movida:
+
+```text
+slot exclusion en fecha original
+occurrence movida
+sourceGenerationSlotId preservado
+```
+
+---
+
+# 12. Single Day — DELETE occurrence
+
+Verificar:
+
+## recurrente
+
+```text
+slot exclusion + delete occurrence
+slot permanece
+```
+
+## manual
+
+```text
+delete occurrence
+delete slot/entry
+```
+
+excepto:
+
+```text
+última manual entry
+→ 409 last_manual_entry
+```
+
+## ad-hoc
+
+```text
+delete occurrence únicamente
+```
+
+---
+
+# 13. Apply Week
+
+Verificar:
+
+```text
+POST /api/plan-items/<id>/apply-week
+```
+
+Operaciones:
+
+```text
+update
+delete
+create
+```
+
+Semántica:
+
+```text
+solo cambia la semana ISO seleccionada
+GenerationSlots generales permanecen intactos
+semana siguiente vuelve a regla normal
+```
+
+Create:
+
+```text
+ad-hoc
+sourceGenerationSlotId = NULL
+```
+
+Delete recurrente:
+
+```text
+slot exclusion
+```
+
+Update recurrente:
+
+```text
+occurrence concreta
+```
+
+---
+
+# 14. Apply Week — final state
+
+Verificar específicamente que el batch se valide por:
+
+```text
+estado final candidato
+```
+
+y no secuencialmente contra el estado viejo.
+
+Caso obligatorio:
+
+```text
+O1 08–09
+O2 09–10
+
+swap:
+O1 → 09–10
+O2 → 08–09
+```
+
+Debe funcionar si el estado final es válido.
+
+---
+
+# 15. Apply Future
+
+Verificar:
+
+```text
+POST /api/plan-items/<id>/apply-future
+```
+
+Semántica:
+
+```text
+antes de futureConfig.startDate
+→ occurrences intactas
+
+desde futureConfig.startDate
+→ nuevo motor
+```
+
+No existe:
+
+```text
+slot versioning
+config history
+effective_from
+effective_until
+```
+
+---
+
+# 16. Apply Future — slot reutilizado
+
+Si:
+
+```text
+S1 14–17
+```
+
+cambia a:
+
+```text
+S1 15–18
+```
+
+debe:
+
+```text
+preservar UUID S1
+actualizar motor actual
+reconciliar baseline futuro
+no tocar occurrences previas a startDate
+```
+
+---
+
+# 17. Apply Future — slot nuevo
+
+Verificar:
+
+```text
+nuevo UUID frontend
+→ insert exacto
+```
+
+No materializarlo antes de:
+
+```text
+futureConfig.startDate
+```
+
+---
+
+# 18. Apply Future — slot eliminado
+
+Verificar:
+
+```text
+slot desaparece del motor
+baseline future desaparece
+```
+
+pero:
+
+```text
+historia permanece
+explicit override permanece
+```
+
+La FK:
+
+```text
+ON DELETE SET NULL
+```
+
+puede dejar esas occurrences sin source slot.
+
+Eso es correcto.
+
+---
+
+# 19. Apply Future — overrides
+
+Verificar que sobrevivan:
+
+```text
+Single Day edits
+Apply Week edits
+ad-hoc occurrences
+slot exclusions
+global exclusions
+```
+
+si son compatibles con el nuevo estado final.
+
+No sobrescribir automáticamente una decisión explícita con el nuevo
+baseline.
+
+---
+
+# 20. Interval phase
+
+Validar:
+
+```text
+interval_days
+```
+
+después de Apply Future.
+
+Nuevo:
+
+```text
+startDate
+```
+
+reinicia la fase.
+
+Ejemplo:
+
+```text
+Sep 21
+intervalDays = 3
+
+→ Sep 21
+→ Sep 24
+→ Sep 27
+```
+
+---
+
+# 21. Materialización
+
+Auditar JS y Python.
+
+Deben compartir semántica para:
+
+```text
+weekly
+interval_days
+manual_dates
+multi-slot
+global exclusions
+slot exclusions
+stoppedFromDate
+history window
+```
+
+Cada candidate recurrente debe mantener:
+
+```text
+sourceGenerationSlotId
+```
+
+---
+
+# 22. Idempotencia
+
+Validar integralmente:
+
+```text
+sourceGenerationSlotId + date
+```
+
+como identidad recurrente.
+
+No:
+
+```text
+planItemId + date
+```
+
+Debe poder existir:
+
+```text
+S1 + date
+S2 + date
+S3 + date
+```
+
+para un mismo PlanItem.
+
+No duplicar un mismo:
+
+```text
+slot + date
+```
+
+al rematerializar.
+
+---
+
+# 23. Overrides + rematerialización
+
+Caso obligatorio:
+
+```text
+S1 baseline 14–17
+
+Occurrence editada:
+15–18
+source=S1
+misma fecha
+```
+
+Rematerializar.
+
+Esperar:
+
+```text
+NO crear adicional 14–17
+```
+
+La appearance concreta ocupa:
+
+```text
+S1 + fecha
+```
+
+---
+
+# 24. Delete + rematerialización
+
+Caso:
+
+```text
+S2 eliminado solo ese día
+```
+
+Persistido:
+
+```text
+slot.excludedDates incluye fecha
+```
+
+Rematerializar.
+
+Esperar:
+
+```text
+S2 no reaparece
+otros slots sí permanecen
+```
+
+---
+
+# 25. Exclusion global vs slot exclusion
+
+Validar diferencia:
+
+```text
+generationConfig.excludedDates
+→ bloquea TODO el PlanItem esa fecha
+
+slot.excludedDates
+→ bloquea solo ese slot
+```
+
+No mezclar ambas.
+
+---
+
+# 26. stoppedFromDate
+
+Validar:
+
+```text
+materialización
+Single Day
+Apply Week
+Apply Future
+```
+
+No debe reactivar silenciosamente planificación detenida.
+
+Apply Future incompatible:
+
+```text
+409 planning_stopped
+```
+
+según política actual.
+
+---
+
+# 27. Temporal integrity
+
+Verificar:
+
+```text
+current day
+yesterday
+older frozen history
+future
+```
+
+con la política ya aprobada.
+
+No ampliar la ventana.
+
+Historia congelada:
+
+```text
+visible
+inmutable
+```
+
+Batch con una operación congelada:
+
+```text
+rollback completo
+```
+
+---
+
+# 28. Status
+
+Estados canónicos:
+
+```text
+pending
+in_progress
+completed
+not_completed
+not_finished
+cancelled
+```
+
+Auditar transiciones relevantes y asegurar que las mutaciones de scheduling
+NO cambien status arbitrariamente.
+
+---
+
+# 29. Priority model
+
+Preservar:
+
+```text
+NORMAL       = 100
+EVENT        = 200
+UNEXPECTED   = 300
+```
+
+Verificar conflictos:
+
+```text
+pending
+in_progress
+completed
+```
+
+y el handshake existente:
+
+```text
+409 priority_override_required
+```
+
+No ejecutar override silencioso.
+
+---
+
+# 30. statusContext
+
+Validar:
+
+```js
+{
+  reason: "priority_override",
+  sourceOccurrenceId: "..."
+}
+```
+
+Solo debe aparecer cuando corresponde.
+
+Manual cancellation:
+
+```text
+no statusContext priority_override
+```
+
+Proteger occurrence referenciada cuando editar/eliminar rompería el
+contexto.
+
+---
+
+# 31. Atomicidad
+
+Auditar operaciones compuestas:
+
+```text
+POST PlanItem
+PATCH occurrence
+DELETE occurrence
+Apply Week
+Apply Future
+```
+
+Cada una debe ser:
+
+```text
+una conexión
+una transacción
+todo o nada
+```
+
+Provocar fallos tardíos en integration tests.
+
+Verificar:
+
+```text
+0 cambios parciales
+```
+
+---
+
+# 32. SERIALIZABLE y locking
+
+Verificar las mutations que actualmente dependen de:
+
+```text
+SERIALIZABLE
+FOR UPDATE
+```
+
+No cambiar aislamiento sin una razón concreta.
+
+Auditar orden de locks cuando corresponda.
+
+---
+
+# 33. Concurrencia
+
+Ejecutar pruebas PostgreSQL reales para:
+
+```text
+creación/conflictos si aplica
+Single Day
+Apply Week
+Apply Future
+```
+
+Especialmente:
+
+```text
+mismo PlanItem
+misma ventana temporal
+```
+
+Resultado:
+
+```text
+una operación coherente completa
+o conflicto controlado
+```
+
+Nunca estado mezclado.
+
+---
+
+# 34. Serialization failures
+
+Auditar cómo se transforman errores de concurrencia/serialización en:
+
+```text
+409 concurrent_modification
+```
+
+cuando corresponda.
+
+No filtrar detalles de psycopg/PostgreSQL al cliente.
+
+---
+
+# 35. Error contract
+
+Auditar respuestas sanitizadas para:
+
+```text
+400 invalid_payload
+400 invalid_identifier
+
+404 plan_item_not_found
+404 occurrence_not_found
+
+409 domain conflicts
+409 priority_override_required
+409 history_frozen
+409 last_manual_entry
+409 unsupported_mode
+409 mode_change_not_supported
+409 planning_stopped
+409 concurrent_modification
+409 status_context_locked
+
+500 persisted_state_invalid
+
+503 database_unavailable
+```
+
+No exigir exactamente todos si algunos códigos equivalentes ya están
+normalizados de forma coherente.
+
+No exponer:
+
+```text
+SQL
+DSN
+password
+traceback
+driver internals
+```
+
+---
+
+# 36. Persisted-state integrity
+
+Verificar que GET falle de forma controlada ante estados imposibles como:
+
+```text
+PlanItem sin config
+mode sin slots
+slot detail incompatible
+manual slot sin date
+weekly slot sin weekday
+overlaps persistidos inválidos
+slot perteneciente a otro PlanItem
+```
+
+No inventar datos para reparar lectura.
+
+---
+
+# 37. PostgreSQL schema
+
+Auditar el modelo actual tras:
 
 ```text
 001
@@ -1189,416 +1109,356 @@ No modificar:
 003
 ```
 
-No crear migración nueva salvo que se descubra una imposibilidad REAL del
-schema.
+No modificar migraciones por iniciativa propia.
 
-En ese caso:
+No crear:
+
+```text
+004
+```
+
+salvo que se descubra una imposibilidad REAL que invalide un contrato ya
+aprobado.
+
+Si ocurre:
 
 ```text
 DETENERSE Y REPORTAR
 ```
 
-No improvisar.
+---
+
+# 38. Migration 003 regression
+
+Ejecutar una prueba real desde legado:
+
+```text
+001
+002
+legacy fixture
+003
+```
+
+Cubrir:
+
+```text
+weekly
+interval
+manual_dates
+múltiples manual entries misma fecha
+occurrences
+global exclusions
+```
+
+Verificar:
+
+```text
+datos históricos conservados
+GenerationSlots creados correctamente
+source_generation_slot_id backfill solo cuando seguro
+```
+
+Ambiguo:
+
+```text
+NULL
+```
+
+No asociación inventada.
 
 ---
 
-# 50. GET planner-state
+# 39. Empty database
 
-Después de Apply Future debe devolver:
+Con:
 
 ```text
-generationConfig actualizada
-GenerationSlots actuales
-occurrences históricas intactas
-future occurrences reconciliadas
-explicit overrides preservadas
+001 + 002 + 003
 ```
 
-No intentar reconstruir la configuración histórica anterior.
+y DB vacía:
+
+```text
+GET /api/planner-state
+→ 200
+→ planItems []
+→ occurrences []
+```
 
 ---
 
-# 51. Respuesta endpoint
+# 40. Full lifecycle weekly
 
-HTTP:
+Crear test end-to-end:
 
 ```text
-200
+POST weekly multi-slot
+→ GET
+→ Single Day edit/delete
+→ GET
+→ Apply Week
+→ GET
+→ Apply Future
+→ GET
 ```
 
-Respuesta sugerida:
-
-```json
-{
-  "planItem": {},
-  "occurrences": []
-}
-```
-
-`planItem` contiene el contrato canónico actual después del Apply Future.
-
-`occurrences` contiene las occurrences del PlanItem dentro del horizonte
-persistido relevante desde `futureConfig.startDate`.
-
-Orden determinista.
-
-No es necesario devolver historia anterior completa.
+Verificar invariants después de cada etapa.
 
 ---
 
-# 52. Frontend/domain local
+# 41. Full lifecycle interval_days
 
-Eliminar el bloqueo multi-slot de:
+Mismo flujo:
 
 ```text
+POST
+GET
+Single Day
+Apply Week
 Apply Future
+GET
 ```
 
-y adaptar el dominio local a la misma semántica.
-
-El frontend genera/preserva IDs de GenerationSlots.
-
-Cuando se edita un slot existente:
+incluyendo cambio de:
 
 ```text
-preservar id
-```
-
-Cuando se agrega uno:
-
-```text
-crypto.randomUUID()
-```
-
-Cuando se elimina:
-
-```text
-dejar de incluirlo en futureConfig
+startDate
+intervalDays
+slots
 ```
 
 ---
 
-# 53. Frontend HTTP
-
-NO conectar todavía el frontend real al endpoint si la integración
-frontend/backend continúa fuera de alcance.
-
-La semántica local debe quedar preparada y probada.
-
----
-
-# 54. PlanItem identity
-
-Apply Future NO crea otro PlanItem.
-
-Preservar:
-
-```text
-PlanItem.id
-name
-kind
-activityType/habitType
-```
-
-Solo cambia su motor recurrente.
-
----
-
-# 55. No PlanItem deletion
-
-Un futureConfig recurrente debe conservar al menos un slot.
-
-No usar Apply Future para:
-
-```text
-eliminar el PlanItem
-```
-
-El stop/delete general continúa siendo una operación separada.
-
----
-
-# 56. Caso principal weekly
-
-Estado actual:
-
-```text
-S1 lunes 08–11
-S2 lunes 14–17
-S3 martes 08–11
-S4 martes 14–17
-```
-
-Apply Future desde Sep 21:
-
-```text
-S1 lunes 09–12       # mismo ID
-S2 lunes 15–18       # mismo ID
-S3 martes 08–11      # igual
-S4 eliminado
-S5 miércoles 20–22   # nuevo UUID
-```
+# 42. Full lifecycle manual_dates
 
 Verificar:
 
 ```text
-occurrences < Sep 21 intactas
-
-S1/S2/S3 conservan UUID
-
-S4 se elimina del motor
-
-baseline future de S4 desaparece
-
-explicit override de S4, si existe, sobrevive y queda source NULL
-
-S5 solo genera desde Sep 21
-
-no aparece S5 antes de Sep 21
+POST múltiples entries misma fecha
+GET
+PATCH una entry
+DELETE una entry
+GET
+protección última entry
 ```
+
+No Apply Week/Future.
 
 ---
 
-# 57. Caso principal interval
+# 43. Multi-slot acceptance
 
-Antes:
-
-```text
-startDate Sep 1
-intervalDays 2
-
-S1 08–09
-S2 18–19
-```
-
-Apply Future:
+Caso Uber:
 
 ```text
-startDate Sep 21
-intervalDays 3
-
-S1 09–10
-S2 eliminado
-S3 20–21
-```
-
-Verificar nueva fase:
-
-```text
-Sep 21
-Sep 24
-Sep 27
-...
-```
-
-Historia anterior intacta.
-
----
-
-# 58. Test historical occurrence
-
-Crear:
-
-```text
-S1 viejo = 14–17
-
-Occurrence histórica:
-Sep 10
+Lun–Vie
+08–11
 14–17
-source=S1
+20–22
+
+Sáb–Dom
+08–21
 ```
 
-Apply Future:
+Un solo PlanItem.
+
+Una semana completa:
 
 ```text
-S1 = 15–18
-startDate Sep 21
+17 occurrences
 ```
 
 Verificar:
 
 ```text
-Occurrence Sep 10 sigue 14–17
-source puede seguir S1
-```
-
-No exigir que S1 histórico diga 14–17.
-
----
-
-# 59. Test removed slot history
-
-Slot S2 tiene:
-
-```text
-occurrence histórica
-occurrence baseline futura
-explicit override futura
-```
-
-Eliminar S2 mediante Apply Future.
-
-Esperar:
-
-```text
-histórica permanece, source NULL
-baseline futura desaparece
-override futura permanece, source NULL
+cada occurrence ligada al slot correcto
 ```
 
 ---
 
-# 60. Test explicit override preservation
+# 44. Habit multi-slot acceptance
 
-Antes:
+Caso:
 
 ```text
-S1 baseline 14–17
+Medicamento
+interval_days = 1
 
-Sep 23 occurrence override:
-15–18
-source=S1
+08:00–08:05
+14:00–14:05
+22:00–22:05
 ```
 
-Apply Future:
+Un PlanItem.
+
+Tres occurrences por fecha válida.
+
+No restricciones artificiales por ser habit.
+
+---
+
+# 45. Adjacent intervals
+
+Debe seguir siendo válido:
 
 ```text
-S1 → 16–19
-startDate Sep 21
+08–11
+11–14
+14–17
 ```
 
-Esperar:
+Overlap real:
 
 ```text
-Sep 23 sigue 15–18
-source=S1
+08–11
+10:30–14
+```
 
-no generar además 16–19 para Sep 23
+debe rechazarse.
+
+Validar:
+
+```text
+frontend
+backend
+materializadores
 ```
 
 ---
 
-# 61. Test slot exclusion preservation
+# 46. JS ↔ Python parity
 
-Antes:
+Debe permanecer verde.
 
-```text
-S1 excludedDates:
-Sep 24
-```
-
-Apply Future conserva S1.
-
-Esperar:
+Cubrir:
 
 ```text
-Sep 24 sigue excluida
+weekly
+interval
+manual
+multi-slot
+slot exclusions
+global exclusions
+stoppedFromDate
+sourceGenerationSlotId
 ```
 
-No regenerar baseline de S1 ese día.
+No comparar UUID de occurrences aleatorios cuando no son deterministas.
 
 ---
 
-# 62. Test ad-hoc preservation
+# 47. Frontend/domain local
 
-Occurrence:
-
-```text
-Sep 25
-20–21
-source=NULL
-```
-
-Apply Future cambia motor.
-
-Esperar:
+Auditar que el dominio local soporte coherentemente:
 
 ```text
-20–21 permanece
+Single Day
+Apply Week
+Apply Future
+multi-slot
+slot exclusions
 ```
 
-salvo que produzca un conflicto real con el estado final, caso en el que
-debe rechazarse Apply Future completo.
+y que no siga existiendo un bloqueo temporal que ya debió desaparecer en
+05.6.4.x.
 
 ---
 
-# 63. Test startDate boundary
+# 48. NO conectar frontend ↔ API todavía
 
-Agregar nuevo S5 con:
+Esta fase NO realiza la integración real HTTP.
 
-```text
-futureConfig.startDate = Sep 21
-```
-
-Verificar:
+No añadir:
 
 ```text
-Sep 20 → NO S5
-Sep 21+ → S5 según regla
+fetch startup
+fetch POST
+fetch PATCH
+fetch DELETE
+Apply Week fetch
+Apply Future fetch
 ```
 
-Esto demuestra que no hace falta effective_from por slot.
+La siguiente fase se encargará de eso.
 
 ---
 
-# 64. Test frozen boundary
+# 49. UI regression
 
-Intentar:
+Comprobar al menos:
 
 ```text
-futureConfig.startDate
+desktop
+mobile
 ```
 
-en historia congelada.
+Sin:
 
-Esperar rechazo controlado.
+```text
+overflow inesperado
+errores JS
+pantalla rota
+regresiones obvias
+```
 
-No cambiar config, slots ni occurrences.
+No rediseñar UI.
 
 ---
 
-# 65. Test rollback
+# 50. Legacy terminology audit
 
-Provocar fallo después de:
-
-```text
-config update
-slot update
-slot insert
-slot delete preparation
-occurrence reconciliation
-```
-
-Esperar:
+Buscar únicamente en código activo relevante restos que indiquen
+contratos obsoletos como:
 
 ```text
-ROLLBACK completo
+single_date
+default_start_time
+default_end_time
+generation_weekdays
+generation_date_entries
 ```
 
-El motor y calendario quedan exactamente como antes.
+Distinguir:
+
+```text
+legacy migration tests
+```
+
+donde estos nombres sí pueden ser correctos.
+
+No borrar historia/tests legítimos.
 
 ---
 
-# 66. Test concurrency
+# 51. Duplication / architecture audit
 
-Dos Apply Future concurrentes sobre el mismo PlanItem con configuraciones
-distintas.
+Revisar únicamente problemas que puedan causar divergencia funcional.
 
-No permitir estado mezclado como:
+Especial atención a:
 
 ```text
-config de A
-slots de B
-occurrences de ambos
+materializer JS
+materializer Python
+scheduling policy
+mutation services
 ```
 
-Debe quedar una versión completa coherente.
+NO hacer refactor cosmético simplemente por detectar duplicación.
+
+La duplicación JS/Python es un riesgo conocido actualmente mitigado por
+paridad.
+
+Reportarlo, no rediseñarlo salvo defecto real.
 
 ---
 
-# 67. PostgreSQL test
+# 52. PostgreSQL de pruebas
 
-Usar PostgreSQL 16 aislado/efímero.
+Usar:
+
+```text
+PostgreSQL 16 aislado/efímero
+```
 
 Aplicar:
 
@@ -1608,58 +1468,171 @@ Aplicar:
 003
 ```
 
-No utilizar:
+NO utilizar:
 
 ```text
 vcs_dev
 ```
 
+No utilizar credenciales reales.
+
 ---
 
-# 68. Regression
+# 53. vcs_dev
 
-Ejecutar:
+Codex NO modifica:
 
 ```text
-todas las pruebas backend
-todas las suites frontend
-JS/Python parity
+vcs_dev
+```
+
+Después de la auditoría, el usuario podrá realizar pruebas manuales reales
+si son necesarias.
+
+---
+
+# 54. Regression suite
+
+Ejecutar como mínimo:
+
+```text
+backend completo
 PostgreSQL integration
-health
-POST plan-items
-GET planner-state
-PATCH occurrence
-DELETE occurrence
-Apply Week
+frontend completo
+JS/Python parity
+compileall
+node --check donde corresponda
 git diff --check
 ```
 
-No introducir regresiones.
+Además verificar endpoints existentes.
 
 ---
 
-# 69. Fuera de alcance
+# 55. No perseguir número de tests
+
+No crear tests artificiales únicamente para incrementar el contador.
+
+Añadir tests cuando:
+
+```text
+cubran una invariant importante
+cubran un lifecycle integral
+cubran un bug encontrado
+cubran un hueco real
+```
+
+La calidad importa más que la cantidad.
+
+---
+
+# 56. Defect classification
+
+Cada hallazgo debe clasificarse:
+
+```text
+A. bug real
+B. test faltante
+C. documentación desactualizada
+D. riesgo conocido/no bloqueante
+E. nueva decisión de producto/arquitectura
+```
+
+Para E:
+
+```text
+NO decidir por iniciativa propia
+reportar
+```
+
+---
+
+# 57. Bug fixes permitidos
+
+Si se encuentra un bug inequívoco respecto a contratos ya cerrados:
+
+```text
+corregir
+añadir test de regresión
+ejecutar suites afectadas
+```
+
+Mantener el cambio mínimo.
+
+---
+
+# 58. No features nuevas
 
 NO implementar:
 
 ```text
-slot versioning
-generationConfig history
-effective_from/effective_until
-mode change weekly ↔ interval_days
-PlanItem deletion
+frontend ↔ backend integration
 auth
 multiusuario
-Supabase
-deployment
+PlanItem deletion general
+mode change Apply Future
 notifications
 timezone por usuario
-frontend/backend fetch integration completa
+Supabase
+deployment
+analytics
+new UX features
 ```
 
 ---
 
-# 70. Git
+# 59. Criterio principal de salida
+
+MVP 05.6.5 queda completo cuando pueda afirmarse con evidencia:
+
+```text
+El dominio persistente del planner es coherente entre:
+
+Frontend/domain JS
+Backend/domain Python
+API
+PostgreSQL
+
+para creación, materialización y los tres scopes de edición.
+```
+
+Y:
+
+```text
+no existen defectos conocidos bloqueantes
+para iniciar integración frontend ↔ backend.
+```
+
+---
+
+# 60. Resultado esperado
+
+Al terminar, clasificar la fase como una de estas dos:
+
+## READY
+
+```text
+Persisted planner domain ready for frontend/API integration.
+```
+
+No hay defectos bloqueantes conocidos.
+
+## NOT READY
+
+Indicar exactamente:
+
+```text
+qué bloquea
+por qué
+qué contrato está afectado
+qué decisión/corrección necesita
+```
+
+No declarar READY si existe un defecto conocido bloqueante.
+
+---
+
+# 61. Git
 
 Codex NO debe:
 
@@ -1674,39 +1647,42 @@ El usuario controla Git.
 
 ---
 
-# 71. Reporte requerido
+# 62. Reporte requerido
 
 Al terminar reportar:
 
-1. archivos creados/modificados;
-2. endpoint exacto;
-3. payload exacto;
-4. respuesta exacta;
-5. uso de `futureConfig.startDate` como fecha efectiva;
-6. cómo actualiza generationConfig;
-7. cómo actualiza slots preservando UUID;
-8. cómo agrega slots;
-9. cómo elimina slots;
-10. qué ocurre con sourceGenerationSlotId histórico;
-11. clasificación baseline/override/ad-hoc;
-12. reconciliación de baseline future occurrences;
-13. preservación de single-day/Apply Week overrides;
-14. preservación de slot exclusions;
-15. comportamiento interval_days;
-16. final-state validation;
-17. conflictos;
-18. atomicidad;
-19. locking/SERIALIZABLE;
-20. concurrencia;
-21. frontend/domain Apply Future;
-22. resultado de boundary startDate;
-23. resultado historia intacta;
-24. rollback real;
-25. número/resultados tests backend;
-26. resultado frontend;
-27. JS/Python parity;
-28. integración PostgreSQL;
-29. riesgos/limitaciones.
+1. clasificación final READY / NOT READY;
+2. archivos modificados, si hubo;
+3. bugs reales encontrados;
+4. tests añadidos por huecos reales;
+5. documentación desactualizada encontrada;
+6. riesgos conocidos no bloqueantes;
+7. resultado creación weekly;
+8. resultado creación interval_days;
+9. resultado creación manual_dates;
+10. resultado Single Day;
+11. resultado Apply Week;
+12. resultado Apply Future;
+13. resultado multi-slot;
+14. resultado exclusiones globales/slot;
+15. resultado temporal integrity;
+16. resultado priority/statusContext;
+17. resultado idempotencia/rematerialización;
+18. resultado full lifecycle weekly;
+19. resultado full lifecycle interval;
+20. resultado full lifecycle manual;
+21. resultado Uber;
+22. resultado medicamento;
+23. resultado migration 003 legacy;
+24. resultado empty database;
+25. resultado rollback;
+26. resultado concurrencia;
+27. resultado errores sanitizados;
+28. resultado JS/Python parity;
+29. resultado frontend regression;
+30. número/resultados backend;
+31. número/resultados PostgreSQL integration;
+32. cualquier nueva decisión arquitectónica que requiera al usuario.
 
 Confirmar explícitamente:
 
@@ -1714,7 +1690,7 @@ Confirmar explícitamente:
 vcs_dev no fue modificado
 001/002/003 no fueron modificadas
 no se creó migration 004
-no se implementó slot versioning
-no se implementó mode change
+frontend no fue conectado a la API
+no se implementaron features fuera de alcance
 no se hizo commit/push/merge
 ```

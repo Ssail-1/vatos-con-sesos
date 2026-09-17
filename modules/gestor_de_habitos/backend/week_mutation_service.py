@@ -558,12 +558,13 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
                     uuid_factory,
                 )
                 delete_ids = [row["id"] for row in deletes]
+                update_ids = [original["id"] for original, _updated in updates]
                 if occurrence_repository.lock_status_context_dependents_for_sources(
-                    connection, delete_ids
+                    connection, [*delete_ids, *update_ids]
                 ):
                     raise WeekConflictError(
-                        "deletion_status_locked",
-                        "Una occurrence conserva contexto de prioridad dependiente.",
+                        "status_context_locked",
+                        "Una occurrence que cambiaría conserva contexto de prioridad dependiente.",
                     )
 
                 _validate_final_internal_state(final_rows)

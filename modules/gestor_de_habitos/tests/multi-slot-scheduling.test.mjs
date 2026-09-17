@@ -551,6 +551,26 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();
 
+    for (const mutate of [
+        () => store.updateOccurrence(sourceOccurrence.id, {
+            date,
+            startTime: "10:00",
+            endTime: "10:30",
+        }),
+        () => store.deleteOccurrenceForDate(sourceOccurrence.id),
+        () => store.applyWeekOperations(created.planItem.id, date, [{
+            type: "update",
+            occurrenceId: sourceOccurrence.id,
+            date,
+            startTime: "10:00",
+            endTime: "10:30",
+        }]),
+    ]) {
+        assert.throws(
+            mutate,
+            (error) => error instanceof PlannerStoreError && error.code === "status_context_locked",
+        );
+    }
     assert.throws(
         () => store.applyGenerationConfigFromDate(created.planItem.id, {
             ...sourceConfig,
