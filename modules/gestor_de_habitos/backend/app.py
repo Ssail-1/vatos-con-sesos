@@ -1,5 +1,7 @@
 """Aplicación HTTP para exponer el backend mínimo del Gestor de hábitos."""
 
+import os
+
 from flask import Flask, jsonify, request
 
 import database
@@ -12,6 +14,28 @@ from repositories import plan_item_repository
 
 
 app = Flask(__name__)
+
+
+def _allowed_frontend_origins():
+    return {
+        origin.strip()
+        for origin in os.getenv("VCS_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    }
+
+
+@app.after_request
+def add_planner_state_cors(response):
+    """Permite únicamente la lectura inicial desde orígenes autorizados."""
+    origin = request.headers.get("Origin")
+    if (
+        request.method == "GET"
+        and request.path == "/api/planner-state"
+        and origin in _allowed_frontend_origins()
+    ):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.vary.add("Origin")
+    return response
 
 
 @app.get("/api/health")

@@ -2,8 +2,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -219,6 +222,70 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
         with patch.object(database, "get_database_url", return_value=self.database_url):
             self.assertEqual(client.get("/api/health/db").status_code, 200)
             self.assertEqual(client.get("/api/plan-items").status_code, 200)
+
+    def test_persisted_api_state_hydrates_frontend_store_without_rematerializing(self):
+        if not shutil.which("node"):
+            self.skipTest("Node.js no está disponible para verificar hydration frontend.")
+
+        payload = activity(
+            {
+                "mode": "manual_dates",
+                "entries": [
+                    {
+                        "id": slot_id(5011),
+                        "date": "2026-09-17",
+                        "startTime": "08:00",
+                        "endTime": "08:05",
+                    },
+                    {
+                        "id": slot_id(5012),
+                        "date": "2026-09-17",
+                        "startTime": "14:00",
+                        "endTime": "14:05",
+                    },
+                    {
+                        "id": slot_id(5013),
+                        "date": "2026-09-17",
+                        "startTime": "22:00",
+                        "endTime": "22:05",
+                    },
+                ],
+            },
+            "Hydration persisted integration",
+        )
+        created = self._post(payload)
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        state_response = self._get_state()
+        self.assertEqual(state_response.status_code, 200)
+        server_state = state_response.get_json()
+        self.assertEqual(len(server_state["planItems"]), 1)
+        self.assertEqual(len(server_state["occurrences"]), 3)
+
+        store_module = (
+            Path(__file__).resolve().parents[1] / "js" / "state" / "planner-store.js"
+        ).as_uri()
+        script = f"""
+            import {{ createPlannerStore }} from {json.dumps(store_module)};
+            let input = "";
+            process.stdin.setEncoding("utf8");
+            for await (const chunk of process.stdin) input += chunk;
+            const serverState = JSON.parse(input);
+            const store = createPlannerStore([], [], "2026-09-17");
+            store.hydratePlannerState(serverState);
+            process.stdout.write(JSON.stringify({{
+                planItems: store.getPlanItems(),
+                occurrences: store.getOccurrences(),
+            }}));
+        """
+        hydrated = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            input=json.dumps(server_state),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertEqual(json.loads(hydrated.stdout), server_state)
 
     def test_weekly_interval_and_manual_post_round_trip(self):
         payloads = (

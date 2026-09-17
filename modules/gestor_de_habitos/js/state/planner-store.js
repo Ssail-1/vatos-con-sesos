@@ -152,6 +152,87 @@ function compareOccurrences(first, second) {
     );
 }
 
+function buildHydratedPlannerState(serverState) {
+    if (
+        !serverState ||
+        typeof serverState !== "object" ||
+        Array.isArray(serverState) ||
+        !Array.isArray(serverState.planItems) ||
+        !Array.isArray(serverState.occurrences)
+    ) {
+        throw new PlannerStoreError("invalid_planner_state", "El estado del planner no es válido.");
+    }
+    if (
+        !serverState.planItems.every((item) => item && typeof item === "object" && !Array.isArray(item)) ||
+        !serverState.occurrences.every((item) => item && typeof item === "object" && !Array.isArray(item))
+    ) {
+        throw new PlannerStoreError("invalid_planner_state", "El estado del planner no es válido.");
+    }
+
+    const candidatePlanItems = serverState.planItems.map(clonePlanItem);
+    const candidateOccurrences = serverState.occurrences.map(cloneOccurrence);
+    candidatePlanItems.forEach((planItem) => {
+        if (typeof planItem.id !== "string" || !planItem.id) {
+            throw new PlannerStoreError("invalid_plan_item", "El PlanItem no tiene una identidad válida.");
+        }
+        validatePlanItem(planItem);
+    });
+    if (new Set(candidatePlanItems.map(({ id }) => id)).size !== candidatePlanItems.length) {
+        throw new PlannerStoreError("duplicate_plan_item_id", "Los IDs de PlanItem deben ser únicos.");
+    }
+
+    const slotOwners = new Map();
+    candidatePlanItems.forEach((planItem) => {
+        getGenerationSlotIds(planItem).forEach((slotId) => {
+            if (slotOwners.has(slotId)) {
+                throw new PlannerStoreError(
+                    "duplicate_generation_slot_id",
+                    "Cada GenerationSlot debe tener identidad única entre todos los PlanItems.",
+                );
+            }
+            slotOwners.set(slotId, planItem.id);
+        });
+    });
+
+    const planItemIds = new Set(candidatePlanItems.map(({ id }) => id));
+    candidateOccurrences.forEach((occurrence) => {
+        if (typeof occurrence.id !== "string" || !occurrence.id) {
+            throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene una identidad válida.");
+        }
+        validateOccurrenceDraft(occurrence);
+        if (!planItemIds.has(occurrence.planItemId)) {
+            throw new PlannerStoreError(
+                "invalid_planner_state",
+                "Una occurrence referencia un PlanItem inexistente.",
+            );
+        }
+        if (
+            occurrence.sourceGenerationSlotId &&
+            slotOwners.get(occurrence.sourceGenerationSlotId) !== occurrence.planItemId
+        ) {
+            throw new PlannerStoreError(
+                "invalid_planner_state",
+                "Una occurrence referencia un GenerationSlot inválido.",
+            );
+        }
+    });
+    const occurrenceIds = new Set(candidateOccurrences.map(({ id }) => id));
+    if (occurrenceIds.size !== candidateOccurrences.length) {
+        throw new PlannerStoreError("duplicate_occurrence_id", "Los IDs de occurrence deben ser únicos.");
+    }
+    if (candidateOccurrences.some(
+        ({ statusContext }) => statusContext && !occurrenceIds.has(statusContext.sourceOccurrenceId),
+    )) {
+        throw new PlannerStoreError(
+            "invalid_planner_state",
+            "Una occurrence contiene un statusContext sin origen válido.",
+        );
+    }
+
+    candidateOccurrences.sort(compareOccurrences);
+    return { planItems: candidatePlanItems, occurrences: candidateOccurrences };
+}
+
 function getConfiguredMaterializationRange(planItem, fallbackStart, fallbackEnd) {
     const config = planItem.generationConfig;
     if (config === null || config.indefinite === true) {
@@ -864,6 +945,26 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     return {
+        hydratePlannerState(serverState) {
+            const candidate = buildHydratedPlannerState(serverState);
+            const latestOccurrenceDate = candidate.occurrences.at(-1)?.date;
+            const hydratedThrough = latestOccurrenceDate
+                ? getMonthEnd(latestOccurrenceDate)
+                : minimumHorizon;
+
+            // La asignación ocurre solo después de validar el grafo completo.
+            planItems = candidate.planItems;
+            occurrences = candidate.occurrences;
+            idSequence = 0;
+            materializedThrough = hydratedThrough > minimumHorizon
+                ? hydratedThrough
+                : minimumHorizon;
+            return {
+                planItems: planItems.map(clonePlanItem),
+                occurrences: occurrences.map(cloneOccurrence),
+            };
+        },
+
         getPlanItems() {
             return planItems.map(clonePlanItem);
         },

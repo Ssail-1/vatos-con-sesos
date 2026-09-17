@@ -1,6 +1,7 @@
 """Pruebas del repository, reconstrucción y endpoint de planner-state."""
 
 from datetime import date, datetime, time, timezone
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -614,6 +615,30 @@ class PlannerStateEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), state)
         get_state.assert_called_once_with()
+
+    def test_cors_allows_only_configured_origin_for_planner_state_get(self):
+        state = {"planItems": [], "occurrences": []}
+        with patch.dict(
+            os.environ,
+            {"VCS_ALLOWED_ORIGINS": "http://127.0.0.1:8000,http://localhost:8000"},
+        ), patch.object(planner_state_service, "get_planner_state", return_value=state):
+            allowed = self.client.get(
+                "/api/planner-state", headers={"Origin": "http://127.0.0.1:8000"}
+            )
+            rejected = self.client.get(
+                "/api/planner-state", headers={"Origin": "http://example.invalid"}
+            )
+            unrelated = self.client.get(
+                "/api/health", headers={"Origin": "http://127.0.0.1:8000"}
+            )
+
+        self.assertEqual(
+            allowed.headers.get("Access-Control-Allow-Origin"),
+            "http://127.0.0.1:8000",
+        )
+        self.assertIn("Origin", allowed.headers.get("Vary", ""))
+        self.assertNotIn("Access-Control-Allow-Origin", rejected.headers)
+        self.assertNotIn("Access-Control-Allow-Origin", unrelated.headers)
 
     def test_database_failure_returns_sanitized_503(self):
         with patch.object(

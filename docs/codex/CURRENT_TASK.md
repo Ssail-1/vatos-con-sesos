@@ -1,1466 +1,817 @@
 # CURRENT TASK
 
-## MVP 05.6.5 — Verificación integral del dominio persistente
+## MVP 05.7.1 — Frontend API client + persisted planner bootstrap
 
 ### Propósito
 
-Esta fase NO agrega una nueva feature principal.
+Conectar por primera vez el frontend real del Gestor de hábitos con el
+backend Flask.
 
-Su objetivo es verificar integralmente que el dominio persistente del
-Gestor de hábitos sea coherente antes de conectar el frontend real con la API.
+Esta fase implementa exclusivamente el flujo de LECTURA inicial:
+
+```text
+PostgreSQL
+    ↓
+Flask API
+    ↓
+GET /api/planner-state
+    ↓
+API client JavaScript
+    ↓
+Planner Store
+    ↓
+UI
+```
 
 Estado actual:
 
 ```text
-05.6.1    Frontend/domain multi-slot                 ✅
-05.6.2    PostgreSQL multi-slot                      ✅
-05.6.3    Backend/API multi-slot                     ✅
-05.6.4.1  Solo este día                              ✅
-05.6.4.2  Aplicar a esta semana                      ✅
-05.6.4.3  Aplicar de aquí en adelante                ✅
+05.6      Dominio persistente                         ✅
+05.6.5    Verificación integral                       ✅ READY
 
-05.6.5    Verificación integral                      ← ACTUAL
-```
-
-Resultado esperado:
-
-```text
-Dominio persistente estable
-        ↓
-listo para integración frontend ↔ backend
+05.7      Frontend ↔ API integration                  ← NUEVO BLOQUE
+05.7.1    Bootstrap persistente                       ← ACTUAL
+05.7.2    Crear PlanItem persistente                  → después
+05.7.3    Single Day persistente                      → después
+05.7.4    Apply Week / Apply Future persistentes      → después
+05.7.5    Mutations UX / errores / conflictos         → después
+05.7.6    Verificación local final                    → después
 ```
 
 ---
 
-# 1. Naturaleza de esta fase
+# 1. Principio de esta fase
 
-Esta fase es principalmente:
+El backend/PostgreSQL pasa a ser la fuente inicial de verdad del planner.
+
+Al abrir la aplicación:
 
 ```text
-auditoría
-verificación
-regresión
-integración
-detección de huecos
+NO:
+mockPlanItems → store → UI
+
+SÍ:
+GET /api/planner-state
+→ store
+→ UI
+```
+
+---
+
+# 2. Alcance estricto
+
+Implementar únicamente:
+
+```text
+API client frontend
+GET planner-state
+bootstrap async
+hydrate/replace store
+loading inicial
+error inicial
+empty state persistido
+configuración central de API base URL
+soporte local de CORS si realmente es necesario
+tests
+```
+
+NO conectar todavía ninguna escritura HTTP.
+
+---
+
+# 3. Endpoints permitidos en frontend
+
+En esta fase el frontend puede consumir únicamente:
+
+```text
+GET /api/planner-state
+```
+
+NO conectar todavía:
+
+```text
+POST /api/plan-items
+PATCH /api/occurrences/*
+DELETE /api/occurrences/*
+POST /api/plan-items/*/apply-week
+POST /api/plan-items/*/apply-future
+```
+
+Estos pertenecen a las siguientes subfases.
+
+---
+
+# 4. Estado persistido recibido
+
+Contrato esperado:
+
+```js
+{
+  planItems: [...],
+  occurrences: [...]
+}
+```
+
+Debe utilizar exactamente el contrato canónico que ya devuelve el backend.
+
+NO crear un segundo formato de transporte.
+
+NO mapear IDs a nuevos IDs frontend.
+
+---
+
+# 5. Hydration del store
+
+Crear una operación explícita de store equivalente conceptualmente a:
+
+```text
+hydratePlannerState(serverState)
+```
+
+o:
+
+```text
+replacePlannerState(serverState)
+```
+
+Debe reemplazar ATÓMICAMENTE:
+
+```text
+planItems
+occurrences
+```
+
+por el estado recibido.
+
+No insertar primero uno y después otro dejando temporalmente un estado
+inconsistente.
+
+---
+
+# 6. PostgreSQL/API son autoritativos durante bootstrap
+
+Durante hydration:
+
+```text
+NO regenerar occurrences
+NO volver a materializar PlanItems
+NO generar UUID nuevos
+NO inferir occurrences faltantes
+NO reconstruir estado a partir de generationConfig
+```
+
+Las occurrences recibidas por:
+
+```text
+GET /api/planner-state
+```
+
+son las occurrences materializadas persistidas.
+
+El frontend debe mostrarlas tal cual.
+
+---
+
+# 7. No duplicación por materializer
+
+Auditar el flujo de inicialización actual.
+
+Si actualmente al registrar PlanItems en el store se ejecuta
+materialización automática:
+
+```text
+NO reutilizar ese camino para hydration si provoca regeneración.
+```
+
+Crear una ruta de hydration que preserve exactamente:
+
+```text
+server planItems
+server occurrences
+```
+
+Caso obligatorio:
+
+Servidor devuelve:
+
+```text
+1 PlanItem
+3 occurrences
+```
+
+Después de bootstrap:
+
+```text
+store debe contener exactamente
+1 PlanItem
+3 occurrences
+```
+
+No:
+
+```text
+6 occurrences
+```
+
+por rematerialización accidental.
+
+---
+
+# 8. Empty database
+
+Si backend devuelve:
+
+```json
+{
+  "planItems": [],
+  "occurrences": []
+}
+```
+
+el frontend debe mostrar correctamente un planner vacío.
+
+NO cargar automáticamente:
+
+```text
+mock data
+demo data
+seed data
+```
+
+como fallback.
+
+DB vacía significa:
+
+```text
+planner vacío
+```
+
+---
+
+# 9. Mocks
+
+Los mocks existentes pueden mantenerse para:
+
+```text
+tests
+fixtures
+desarrollo explícito
+```
+
+pero NO deben ser la fuente automática de estado del runtime integrado.
+
+No eliminarlos si siguen siendo útiles para tests.
+
+---
+
+# 10. Error de bootstrap
+
+Si:
+
+```text
+backend no responde
+network error
+HTTP != 2xx
+JSON inválido
+contrato inválido
 ```
 
 NO:
 
 ```text
-rediseño
-nueva feature grande
-refactorización cosmética
-optimización prematura
+caer silenciosamente a mocks
+mostrar planner falso
+ignorar error
 ```
 
-Si todo está correcto:
+Debe mostrarse un estado de error controlado.
+
+Ejemplo conceptual:
 
 ```text
-no modificar código innecesariamente
+No se pudo cargar el planner.
 ```
 
-Si se detecta un defecto real que contradice contratos ya aprobados:
-
-```text
-corregir únicamente el defecto
-añadir regresión
-volver a verificar
-```
-
-Si resolverlo exige una nueva decisión arquitectónica:
-
-```text
-DETENERSE Y REPORTAR
-```
-
-No inventar la decisión.
+No mostrar detalles internos de backend.
 
 ---
 
-# 2. Documentos normativos
+# 11. Retry
 
-Leer antes de auditar:
-
-```text
-/AGENTS.md
-/docs/codex/CURRENT_TASK.md
-/docs/codex/gestor_de_habitos/planeacion/MVP_05_6/MULTI_SLOT_SCHEDULING.md
-```
-
-Consultar implementaciones y tests relacionados según sea necesario.
-
-No es obligatorio releer indiscriminadamente todo el repositorio si una
-fuente concreta ya basta para comprobar un punto.
-
-Pero verificar el código real antes de asumir contratos de:
+Puede existir una acción simple:
 
 ```text
-PostgreSQL
-API
-materialización
-mutaciones
+Reintentar
 ```
+
+que vuelva a ejecutar:
+
+```text
+GET /api/planner-state
+```
+
+sin recargar toda la página.
+
+Si implementarlo exige complejidad desproporcionada:
+
+```text
+reportarlo
+```
+
+pero una implementación pequeña es preferible.
 
 ---
 
-# 3. Modelo conceptual que debe quedar validado
+# 12. Loading inicial
+
+Mientras se realiza el GET inicial:
 
 ```text
-PlanItem
-→ qué actividad/hábito es
-
-generationConfig
-→ reglas generales de recurrencia
-
-GenerationSlot
-→ horario/regla concreta dentro del motor
-
-Occurrence
-→ aparición concreta materializada
+mostrar estado loading
 ```
 
-Un PlanItem puede tener:
+No renderizar momentáneamente mocks ni un planner falso.
+
+Evitar:
 
 ```text
-1 o múltiples GenerationSlots
+flash de datos mock
+flash de estado vacío incorrecto
 ```
 
-Una fecha puede contener:
-
-```text
-0, 1 o múltiples Occurrences del mismo PlanItem
-```
-
-Cada occurrence es independiente en:
-
-```text
-date
-startTime
-endTime
-status
-```
+antes de recibir respuesta.
 
 ---
 
-# 4. sourceGenerationSlotId
+# 13. Inicialización de UI
 
-Validar que su semántica permanezca:
+El bootstrap debe ser explícitamente async.
 
-```text
-referencia operacional al GenerationSlot lógico
-```
-
-Sirve para:
+Flujo conceptual:
 
 ```text
-idempotencia
-slot exclusions
-Single Day
-Apply Week
-Apply Future
+DOM ready
+    ↓
+inicializar componentes/listeners una sola vez
+    ↓
+mostrar loading
+    ↓
+GET planner-state
+    ↓
+validar respuesta
+    ↓
+hydrate store
+    ↓
+render
 ```
 
-NO representa:
-
-```text
-una versión histórica inmutable de la regla
-```
-
-Una occurrence histórica puede conservar:
-
-```text
-sourceGenerationSlotId = S1
-```
-
-aunque S1 haya cambiado posteriormente.
-
-Eso es válido.
+Evitar registrar listeners múltiples por retry.
 
 ---
 
-# 5. sourceOccurrenceId
+# 14. API client
 
-Validar independientemente:
+Crear una capa frontend dedicada.
 
-```text
-sourceOccurrenceId
-```
-
-solo para:
+Ubicación sugerida:
 
 ```text
-statusContext.reason = priority_override
+modules/gestor_de_habitos/js/api/
 ```
-
-No mezclarlo con:
-
-```text
-sourceGenerationSlotId
-```
-
-Verificar que las protecciones actuales impidan modificar/eliminar
-incorrectamente una occurrence necesaria por una relación de
-`statusContext`.
-
----
-
-# 6. Modos canónicos
-
-Solo existen:
-
-```text
-weekly
-interval_days
-manual_dates
-```
-
-Buscar regresiones o restos activos de:
-
-```text
-single_date
-```
-
-No debe existir como modo persistido ni API canónica.
-
-La UI visual:
-
-```text
-Una fecha
-```
-
-continúa representándose mediante:
-
-```text
-manual_dates
-```
-
-con una sola entry.
-
----
-
-# 7. Contratos multi-slot
-
-Validar:
-
-## weekly
-
-```js
-{
-  mode,
-  startDate,
-  endDate,
-  indefinite,
-  slots: [
-    {
-      id,
-      isoWeekday,
-      startTime,
-      endTime,
-      excludedDates?
-    }
-  ],
-  excludedDates?,
-  stoppedFromDate?
-}
-```
-
-## interval_days
-
-```js
-{
-  mode,
-  startDate,
-  endDate,
-  indefinite,
-  intervalDays,
-  slots: [
-    {
-      id,
-      startTime,
-      endTime,
-      excludedDates?
-    }
-  ],
-  excludedDates?,
-  stoppedFromDate?
-}
-```
-
-## manual_dates
-
-```js
-{
-  mode: "manual_dates",
-  entries: [
-    {
-      id,
-      date,
-      startTime,
-      endTime
-    }
-  ],
-  stoppedFromDate?
-}
-```
-
-No introducir `slot.excludedDates` para manual_dates.
-
----
-
-# 8. UUID de GenerationSlot
-
-Validar integralmente:
-
-```text
-frontend genera UUID v4
-backend valida
-backend preserva
-PostgreSQL persiste
-GET devuelve exactamente el mismo UUID
-```
-
-No remapping.
-
-No UUID nuevo por editar un slot lógico existente.
-
-Slot nuevo:
-
-```text
-UUID nuevo
-```
-
-Slot eliminado:
-
-```text
-desaparece del motor
-```
-
----
-
-# 9. POST /api/plan-items
-
-Auditar creación persistente para:
-
-```text
-weekly
-interval_days
-manual_dates
-```
-
-Verificar:
-
-```text
-atomicidad
-validación estricta
-UUID preservation
-multi-slot
-sourceGenerationSlotId
-priority conflicts
-rollback
-```
-
-No aceptar:
-
-```text
-single_date
-modelo legacy defaultStartTime/defaultEndTime
-campos desconocidos
-occurrences suministradas por cliente
-PlanItem.id enviado por cliente
-```
-
----
-
-# 10. GET /api/planner-state
-
-Verificar round-trip real:
-
-```text
-PostgreSQL
-→ repository
-→ service
-→ API
-```
-
-Debe reconstruir exactamente:
-
-```text
-planItems
-occurrences
-GenerationSlots
-slot exclusions
-global exclusions
-statusContext
-```
-
-Usar una sola conexión y mantener la estrategia de lectura consistente
-actual.
-
-Verificar orden determinista.
-
-No inventar estado ante inconsistencias persistidas.
-
----
-
-# 11. Single Day — PATCH occurrence
-
-Verificar:
-
-```text
-PATCH /api/occurrences/<id>
-```
-
-Casos:
-
-```text
-recurrente misma fecha
-recurrente cambio de fecha
-manual_dates
-ad-hoc
-```
-
-Debe preservar:
-
-```text
-Occurrence.id
-status
-statusContext
-```
-
-según corresponda.
-
-Recurrente misma fecha:
-
-```text
-solo cambia occurrence
-GenerationSlot intacto
-```
-
-Recurrente movida:
-
-```text
-slot exclusion en fecha original
-occurrence movida
-sourceGenerationSlotId preservado
-```
-
----
-
-# 12. Single Day — DELETE occurrence
-
-Verificar:
-
-## recurrente
-
-```text
-slot exclusion + delete occurrence
-slot permanece
-```
-
-## manual
-
-```text
-delete occurrence
-delete slot/entry
-```
-
-excepto:
-
-```text
-última manual entry
-→ 409 last_manual_entry
-```
-
-## ad-hoc
-
-```text
-delete occurrence únicamente
-```
-
----
-
-# 13. Apply Week
-
-Verificar:
-
-```text
-POST /api/plan-items/<id>/apply-week
-```
-
-Operaciones:
-
-```text
-update
-delete
-create
-```
-
-Semántica:
-
-```text
-solo cambia la semana ISO seleccionada
-GenerationSlots generales permanecen intactos
-semana siguiente vuelve a regla normal
-```
-
-Create:
-
-```text
-ad-hoc
-sourceGenerationSlotId = NULL
-```
-
-Delete recurrente:
-
-```text
-slot exclusion
-```
-
-Update recurrente:
-
-```text
-occurrence concreta
-```
-
----
-
-# 14. Apply Week — final state
-
-Verificar específicamente que el batch se valide por:
-
-```text
-estado final candidato
-```
-
-y no secuencialmente contra el estado viejo.
-
-Caso obligatorio:
-
-```text
-O1 08–09
-O2 09–10
-
-swap:
-O1 → 09–10
-O2 → 08–09
-```
-
-Debe funcionar si el estado final es válido.
-
----
-
-# 15. Apply Future
-
-Verificar:
-
-```text
-POST /api/plan-items/<id>/apply-future
-```
-
-Semántica:
-
-```text
-antes de futureConfig.startDate
-→ occurrences intactas
-
-desde futureConfig.startDate
-→ nuevo motor
-```
-
-No existe:
-
-```text
-slot versioning
-config history
-effective_from
-effective_until
-```
-
----
-
-# 16. Apply Future — slot reutilizado
-
-Si:
-
-```text
-S1 14–17
-```
-
-cambia a:
-
-```text
-S1 15–18
-```
-
-debe:
-
-```text
-preservar UUID S1
-actualizar motor actual
-reconciliar baseline futuro
-no tocar occurrences previas a startDate
-```
-
----
-
-# 17. Apply Future — slot nuevo
-
-Verificar:
-
-```text
-nuevo UUID frontend
-→ insert exacto
-```
-
-No materializarlo antes de:
-
-```text
-futureConfig.startDate
-```
-
----
-
-# 18. Apply Future — slot eliminado
-
-Verificar:
-
-```text
-slot desaparece del motor
-baseline future desaparece
-```
-
-pero:
-
-```text
-historia permanece
-explicit override permanece
-```
-
-La FK:
-
-```text
-ON DELETE SET NULL
-```
-
-puede dejar esas occurrences sin source slot.
-
-Eso es correcto.
-
----
-
-# 19. Apply Future — overrides
-
-Verificar que sobrevivan:
-
-```text
-Single Day edits
-Apply Week edits
-ad-hoc occurrences
-slot exclusions
-global exclusions
-```
-
-si son compatibles con el nuevo estado final.
-
-No sobrescribir automáticamente una decisión explícita con el nuevo
-baseline.
-
----
-
-# 20. Interval phase
-
-Validar:
-
-```text
-interval_days
-```
-
-después de Apply Future.
-
-Nuevo:
-
-```text
-startDate
-```
-
-reinicia la fase.
 
 Ejemplo:
 
 ```text
-Sep 21
-intervalDays = 3
+planner-api.js
+```
 
-→ Sep 21
-→ Sep 24
-→ Sep 27
+Responsabilidad:
+
+```text
+HTTP
+JSON
+status codes
+errores de transporte
+```
+
+NO poner reglas de negocio allí.
+
+---
+
+# 15. No fetch disperso
+
+No colocar llamadas directas a `fetch()` dentro de:
+
+```text
+views
+planner-store
+componentes visuales
+```
+
+La UI consume una API client/service clara.
+
+Arquitectura esperada:
+
+```text
+app/bootstrap
+      ↓
+planner-api
+      ↓
+HTTP
+
+app/bootstrap
+      ↓
+planner-store
+      ↓
+views
 ```
 
 ---
 
-# 21. Materialización
+# 16. API base URL
 
-Auditar JS y Python.
+Debe existir UNA sola fuente de configuración para el backend URL.
 
-Deben compartir semántica para:
-
-```text
-weekly
-interval_days
-manual_dates
-multi-slot
-global exclusions
-slot exclusions
-stoppedFromDate
-history window
-```
-
-Cada candidate recurrente debe mantener:
+No repetir:
 
 ```text
-sourceGenerationSlotId
+http://127.0.0.1:5000
 ```
+
+por varios archivos.
+
+Diseñar una configuración central pequeña.
+
+Preferir:
+
+```text
+same-origin por defecto
+```
+
+con posibilidad explícita de override para desarrollo local si frontend y
+Flask corren en orígenes diferentes.
+
+No introducir build system nuevo únicamente para esto.
 
 ---
 
-# 22. Idempotencia
+# 17. Local development
 
-Validar integralmente:
+El frontend se ha trabajado históricamente como sitio estático/local.
 
-```text
-sourceGenerationSlotId + date
-```
-
-como identidad recurrente.
-
-No:
+Si el frontend y Flask utilizan orígenes distintos en desarrollo:
 
 ```text
-planItemId + date
+frontend → localhost/Live Server
+backend  → localhost:5000
 ```
 
-Debe poder existir:
+resolver únicamente el CORS mínimo necesario para la integración.
 
-```text
-S1 + date
-S2 + date
-S3 + date
-```
-
-para un mismo PlanItem.
-
-No duplicar un mismo:
-
-```text
-slot + date
-```
-
-al rematerializar.
+No añadir una dependencia externa si puede evitarse limpiamente.
 
 ---
 
-# 23. Overrides + rematerialización
+# 18. CORS policy
 
-Caso obligatorio:
-
-```text
-S1 baseline 14–17
-
-Occurrence editada:
-15–18
-source=S1
-misma fecha
-```
-
-Rematerializar.
-
-Esperar:
+Si CORS es necesario:
 
 ```text
-NO crear adicional 14–17
+NO Access-Control-Allow-Origin: *
 ```
 
-La appearance concreta ocupa:
+como política general indiscriminada.
+
+Usar una allow-list configurable para desarrollo.
+
+Puede utilizarse una variable documentada equivalente a:
 
 ```text
-S1 + fecha
+VCS_ALLOWED_ORIGINS
 ```
+
+Añadir únicamente a:
+
+```text
+.env.example
+```
+
+si hace falta.
+
+Codex NO debe:
+
+```text
+leer
+mostrar
+modificar
+```
+
+el `.env` real.
 
 ---
 
-# 24. Delete + rematerialización
+# 19. CORS alcance 05.7.1
 
-Caso:
-
-```text
-S2 eliminado solo ese día
-```
-
-Persistido:
-
-```text
-slot.excludedDates incluye fecha
-```
-
-Rematerializar.
-
-Esperar:
-
-```text
-S2 no reaparece
-otros slots sí permanecen
-```
-
----
-
-# 25. Exclusion global vs slot exclusion
-
-Validar diferencia:
-
-```text
-generationConfig.excludedDates
-→ bloquea TODO el PlanItem esa fecha
-
-slot.excludedDates
-→ bloquea solo ese slot
-```
-
-No mezclar ambas.
-
----
-
-# 26. stoppedFromDate
-
-Validar:
-
-```text
-materialización
-Single Day
-Apply Week
-Apply Future
-```
-
-No debe reactivar silenciosamente planificación detenida.
-
-Apply Future incompatible:
-
-```text
-409 planning_stopped
-```
-
-según política actual.
-
----
-
-# 27. Temporal integrity
-
-Verificar:
-
-```text
-current day
-yesterday
-older frozen history
-future
-```
-
-con la política ya aprobada.
-
-No ampliar la ventana.
-
-Historia congelada:
-
-```text
-visible
-inmutable
-```
-
-Batch con una operación congelada:
-
-```text
-rollback completo
-```
-
----
-
-# 28. Status
-
-Estados canónicos:
-
-```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
-
-Auditar transiciones relevantes y asegurar que las mutaciones de scheduling
-NO cambien status arbitrariamente.
-
----
-
-# 29. Priority model
-
-Preservar:
-
-```text
-NORMAL       = 100
-EVENT        = 200
-UNEXPECTED   = 300
-```
-
-Verificar conflictos:
-
-```text
-pending
-in_progress
-completed
-```
-
-y el handshake existente:
-
-```text
-409 priority_override_required
-```
-
-No ejecutar override silencioso.
-
----
-
-# 30. statusContext
-
-Validar:
-
-```js
-{
-  reason: "priority_override",
-  sourceOccurrenceId: "..."
-}
-```
-
-Solo debe aparecer cuando corresponde.
-
-Manual cancellation:
-
-```text
-no statusContext priority_override
-```
-
-Proteger occurrence referenciada cuando editar/eliminar rompería el
-contexto.
-
----
-
-# 31. Atomicidad
-
-Auditar operaciones compuestas:
-
-```text
-POST PlanItem
-PATCH occurrence
-DELETE occurrence
-Apply Week
-Apply Future
-```
-
-Cada una debe ser:
-
-```text
-una conexión
-una transacción
-todo o nada
-```
-
-Provocar fallos tardíos en integration tests.
-
-Verificar:
-
-```text
-0 cambios parciales
-```
-
----
-
-# 32. SERIALIZABLE y locking
-
-Verificar las mutations que actualmente dependen de:
-
-```text
-SERIALIZABLE
-FOR UPDATE
-```
-
-No cambiar aislamiento sin una razón concreta.
-
-Auditar orden de locks cuando corresponda.
-
----
-
-# 33. Concurrencia
-
-Ejecutar pruebas PostgreSQL reales para:
-
-```text
-creación/conflictos si aplica
-Single Day
-Apply Week
-Apply Future
-```
-
-Especialmente:
-
-```text
-mismo PlanItem
-misma ventana temporal
-```
-
-Resultado:
-
-```text
-una operación coherente completa
-o conflicto controlado
-```
-
-Nunca estado mezclado.
-
----
-
-# 34. Serialization failures
-
-Auditar cómo se transforman errores de concurrencia/serialización en:
-
-```text
-409 concurrent_modification
-```
-
-cuando corresponda.
-
-No filtrar detalles de psycopg/PostgreSQL al cliente.
-
----
-
-# 35. Error contract
-
-Auditar respuestas sanitizadas para:
-
-```text
-400 invalid_payload
-400 invalid_identifier
-
-404 plan_item_not_found
-404 occurrence_not_found
-
-409 domain conflicts
-409 priority_override_required
-409 history_frozen
-409 last_manual_entry
-409 unsupported_mode
-409 mode_change_not_supported
-409 planning_stopped
-409 concurrent_modification
-409 status_context_locked
-
-500 persisted_state_invalid
-
-503 database_unavailable
-```
-
-No exigir exactamente todos si algunos códigos equivalentes ya están
-normalizados de forma coherente.
-
-No exponer:
-
-```text
-SQL
-DSN
-password
-traceback
-driver internals
-```
-
----
-
-# 36. Persisted-state integrity
-
-Verificar que GET falle de forma controlada ante estados imposibles como:
-
-```text
-PlanItem sin config
-mode sin slots
-slot detail incompatible
-manual slot sin date
-weekly slot sin weekday
-overlaps persistidos inválidos
-slot perteneciente a otro PlanItem
-```
-
-No inventar datos para reparar lectura.
-
----
-
-# 37. PostgreSQL schema
-
-Auditar el modelo actual tras:
-
-```text
-001
-002
-003
-```
-
-No modificar migraciones por iniciativa propia.
-
-No crear:
-
-```text
-004
-```
-
-salvo que se descubra una imposibilidad REAL que invalide un contrato ya
-aprobado.
-
-Si ocurre:
-
-```text
-DETENERSE Y REPORTAR
-```
-
----
-
-# 38. Migration 003 regression
-
-Ejecutar una prueba real desde legado:
-
-```text
-001
-002
-legacy fixture
-003
-```
-
-Cubrir:
-
-```text
-weekly
-interval
-manual_dates
-múltiples manual entries misma fecha
-occurrences
-global exclusions
-```
-
-Verificar:
-
-```text
-datos históricos conservados
-GenerationSlots creados correctamente
-source_generation_slot_id backfill solo cuando seguro
-```
-
-Ambiguo:
-
-```text
-NULL
-```
-
-No asociación inventada.
-
----
-
-# 39. Empty database
-
-Con:
-
-```text
-001 + 002 + 003
-```
-
-y DB vacía:
+Solo necesitamos garantizar correctamente:
 
 ```text
 GET /api/planner-state
-→ 200
-→ planItems []
-→ occurrences []
 ```
 
----
+desde el frontend local.
 
-# 40. Full lifecycle weekly
+No implementar una gran capa CORS para todas las futuras mutations si aún
+no es necesaria.
 
-Crear test end-to-end:
-
-```text
-POST weekly multi-slot
-→ GET
-→ Single Day edit/delete
-→ GET
-→ Apply Week
-→ GET
-→ Apply Future
-→ GET
-```
-
-Verificar invariants después de cada etapa.
-
----
-
-# 41. Full lifecycle interval_days
-
-Mismo flujo:
+Las próximas fases pueden ampliar:
 
 ```text
+OPTIONS
 POST
-GET
-Single Day
+PATCH
+DELETE
+```
+
+cuando se conecten.
+
+---
+
+# 20. Error model frontend
+
+Definir errores frontend distinguibles al menos conceptualmente entre:
+
+```text
+network error
+HTTP error
+invalid response
+```
+
+No hace falta crear una jerarquía compleja.
+
+No exponer al usuario:
+
+```text
+stack traces
+SQL
+driver errors
+```
+
+---
+
+# 21. Validación de response
+
+No asumir ciegamente que cualquier JSON recibido es planner-state válido.
+
+Validar como mínimo:
+
+```text
+objeto
+planItems array
+occurrences array
+```
+
+y cualquier invariant estructural mínima necesaria para hidratar
+seguramente el store.
+
+NO duplicar todo el dominio validator del backend.
+
+La validación frontend es defensiva, no una segunda implementación completa
+del dominio.
+
+---
+
+# 22. Store como estado en memoria
+
+Después del bootstrap:
+
+```text
+planner-store
+```
+
+continúa siendo el estado reactivo/en memoria utilizado por la UI.
+
+PostgreSQL no se consulta directamente desde views.
+
+Arquitectura:
+
+```text
+PostgreSQL
+    ↓
+API
+    ↓
+store
+    ↓
+views
+```
+
+---
+
+# 23. Mutaciones locales durante esta fase
+
+Las mutations HTTP todavía NO están conectadas.
+
+No fingir que:
+
+```text
+crear
+editar
+eliminar
 Apply Week
 Apply Future
-GET
 ```
 
-incluyendo cambio de:
+ya persisten desde la UI.
+
+El comportamiento local existente puede permanecer temporalmente para
+desarrollo, pero:
 
 ```text
-startDate
-intervalDays
-slots
+reload
+→ servidor vuelve a ser la fuente de verdad
+```
+
+No implementar LocalStorage como puente.
+
+No crear una cola offline.
+
+---
+
+# 24. No optimistic persistence todavía
+
+NO implementar aún:
+
+```text
+optimistic POST
+optimistic PATCH
+optimistic DELETE
+rollback UI de mutations
+```
+
+Eso pertenece a fases posteriores.
+
+---
+
+# 25. Estrategia futura de sincronización
+
+No implementar todavía, pero mantener compatibilidad con esta decisión
+provisional:
+
+Después de una mutation persistente, inicialmente podremos preferir:
+
+```text
+mutation API
+    ↓
+GET /api/planner-state
+    ↓
+replace/hydrate store
+```
+
+en lugar de mantener manualmente dos estados paralelos.
+
+No optimizar esto todavía.
+
+---
+
+# 26. app.js
+
+`app.js` debe coordinar bootstrap.
+
+No convertirlo en:
+
+```text
+HTTP client
+repository
+domain validator
+```
+
+Separar responsabilidades.
+
+---
+
+# 27. planner-store
+
+El store puede conocer:
+
+```text
+cómo reemplazar estado canónico
+```
+
+pero NO:
+
+```text
+cómo llamar HTTP
+```
+
+No importar `fetch` ni API client dentro del store salvo que exista una
+razón arquitectónica fuerte.
+
+Preferencia:
+
+```text
+bootstrap/service llama API
+→ bootstrap entrega resultado al store
 ```
 
 ---
 
-# 42. Full lifecycle manual_dates
+# 28. Rendering
 
-Verificar:
-
-```text
-POST múltiples entries misma fecha
-GET
-PATCH una entry
-DELETE una entry
-GET
-protección última entry
-```
-
-No Apply Week/Future.
-
----
-
-# 43. Multi-slot acceptance
-
-Caso Uber:
+Después de hydration deben seguir funcionando las vistas existentes:
 
 ```text
-Lun–Vie
-08–11
-14–17
-20–22
-
-Sáb–Dom
-08–21
-```
-
-Un solo PlanItem.
-
-Una semana completa:
-
-```text
-17 occurrences
-```
-
-Verificar:
-
-```text
-cada occurrence ligada al slot correcto
-```
-
----
-
-# 44. Habit multi-slot acceptance
-
-Caso:
-
-```text
-Medicamento
-interval_days = 1
-
-08:00–08:05
-14:00–14:05
-22:00–22:05
-```
-
-Un PlanItem.
-
-Tres occurrences por fecha válida.
-
-No restricciones artificiales por ser habit.
-
----
-
-# 45. Adjacent intervals
-
-Debe seguir siendo válido:
-
-```text
-08–11
-11–14
-14–17
-```
-
-Overlap real:
-
-```text
-08–11
-10:30–14
-```
-
-debe rechazarse.
-
-Validar:
-
-```text
-frontend
-backend
-materializadores
-```
-
----
-
-# 46. JS ↔ Python parity
-
-Debe permanecer verde.
-
-Cubrir:
-
-```text
-weekly
-interval
-manual
+planner matrix
+forms
+status visualization
 multi-slot
-slot exclusions
-global exclusions
-stoppedFromDate
-sourceGenerationSlotId
-```
-
-No comparar UUID de occurrences aleatorios cuando no son deterministas.
-
----
-
-# 47. Frontend/domain local
-
-Auditar que el dominio local soporte coherentemente:
-
-```text
-Single Day
-Apply Week
-Apply Future
-multi-slot
-slot exclusions
-```
-
-y que no siga existiendo un bloqueo temporal que ya debió desaparecer en
-05.6.4.x.
-
----
-
-# 48. NO conectar frontend ↔ API todavía
-
-Esta fase NO realiza la integración real HTTP.
-
-No añadir:
-
-```text
-fetch startup
-fetch POST
-fetch PATCH
-fetch DELETE
-Apply Week fetch
-Apply Future fetch
-```
-
-La siguiente fase se encargará de eso.
-
----
-
-# 49. UI regression
-
-Comprobar al menos:
-
-```text
-desktop
-mobile
-```
-
-Sin:
-
-```text
-overflow inesperado
-errores JS
-pantalla rota
-regresiones obvias
 ```
 
 No rediseñar UI.
 
 ---
 
-# 50. Legacy terminology audit
+# 29. Estado de loading/error
 
-Buscar únicamente en código activo relevante restos que indiquen
-contratos obsoletos como:
+La UI de loading/error debe ser pequeña y coherente con el estilo actual.
 
-```text
-single_date
-default_start_time
-default_end_time
-generation_weekdays
-generation_date_entries
-```
+No realizar un rediseño visual.
 
-Distinguir:
+Debe funcionar en:
 
 ```text
-legacy migration tests
+desktop
+mobile
 ```
-
-donde estos nombres sí pueden ser correctos.
-
-No borrar historia/tests legítimos.
 
 ---
 
-# 51. Duplication / architecture audit
+# 30. Runtime errors
 
-Revisar únicamente problemas que puedan causar divergencia funcional.
-
-Especial atención a:
+No debe haber en consola:
 
 ```text
-materializer JS
-materializer Python
-scheduling policy
-mutation services
+uncaught promise rejection
+undefined access
+duplicate listener errors
 ```
 
-NO hacer refactor cosmético simplemente por detectar duplicación.
+durante:
 
-La duplicación JS/Python es un riesgo conocido actualmente mitigado por
-paridad.
-
-Reportarlo, no rediseñarlo salvo defecto real.
+```text
+loading
+success
+empty state
+error
+retry
+```
 
 ---
 
-# 52. PostgreSQL de pruebas
+# 31. Backend contract
 
-Usar:
+NO modificar semántica de:
 
 ```text
-PostgreSQL 16 aislado/efímero
+GET /api/planner-state
 ```
 
-Aplicar:
+para acomodar un frontend incorrecto.
+
+El backend ya fue declarado:
+
+```text
+READY
+```
+
+Si la integración descubre un bug real de contrato:
+
+```text
+reportarlo
+```
+
+y corregir únicamente si es inequívoco.
+
+---
+
+# 32. No backend domain changes
+
+Esta fase NO debe modificar:
+
+```text
+materializer semantics
+Single Day semantics
+Apply Week
+Apply Future
+priorities
+temporal integrity
+```
+
+Salvo bug inequívoco descubierto por integración.
+
+---
+
+# 33. PostgreSQL
+
+No modificar:
 
 ```text
 001
@@ -1468,17 +819,13 @@ Aplicar:
 003
 ```
 
-NO utilizar:
+No crear migration 004.
 
-```text
-vcs_dev
-```
-
-No utilizar credenciales reales.
+No cambiar schema.
 
 ---
 
-# 53. vcs_dev
+# 34. vcs_dev
 
 Codex NO modifica:
 
@@ -1486,153 +833,335 @@ Codex NO modifica:
 vcs_dev
 ```
 
-Después de la auditoría, el usuario podrá realizar pruebas manuales reales
-si son necesarias.
+Las pruebas automáticas deben usar:
+
+```text
+PostgreSQL 16 aislado/efímero
+```
+
+cuando necesiten DB real.
+
+Después el usuario podrá probar manualmente contra `vcs_dev`.
 
 ---
 
-# 54. Regression suite
+# 35. Integration test — datos persistidos
 
-Ejecutar como mínimo:
+Crear un test/integration scenario con PostgreSQL temporal:
 
 ```text
-backend completo
-PostgreSQL integration
-frontend completo
+insert/create persisted PlanItem
++
+persisted occurrences
+```
+
+Llamar:
+
+```text
+GET /api/planner-state
+```
+
+y alimentar esa respuesta al flujo frontend de hydration.
+
+Verificar que el store final coincida semánticamente.
+
+No es obligatorio montar un browser real para toda esta prueba si una
+combinación backend integration + frontend test demuestra el contrato.
+
+---
+
+# 36. Browser integration
+
+Realizar al menos una verificación real en navegador de:
+
+```text
+loading
+success
+empty state o persisted state
+```
+
+Si el entorno permite Flask + frontend local:
+
+```text
+verificar fetch real
+```
+
+Si no puede automatizarse limpiamente:
+
+```text
+reportar la limitación
+```
+
+sin inventar resultados.
+
+---
+
+# 37. Success acceptance
+
+Con backend disponible y datos persistidos:
+
+```text
+abrir frontend
+→ loading
+→ GET planner-state
+→ datos aparecen
+```
+
+IDs, horarios y statuses deben corresponder al servidor.
+
+---
+
+# 38. Empty acceptance
+
+Con DB temporal vacía:
+
+```text
+abrir frontend
+→ loading
+→ GET 200 empty
+→ planner vacío
+```
+
+No mocks.
+
+---
+
+# 39. Failure acceptance
+
+Con backend no disponible o request fallido:
+
+```text
+abrir frontend
+→ loading
+→ error controlado
+```
+
+No:
+
+```text
+mock fallback
+crash
+uncaught promise
+```
+
+---
+
+# 40. Retry acceptance
+
+Si se implementa retry:
+
+```text
+primer request falla
+backend vuelve
+Reintentar
+→ GET
+→ hydrate
+→ render normal
+```
+
+No duplicar listeners ni estado.
+
+---
+
+# 41. Reload semantics
+
+Después de bootstrap exitoso, cualquier cambio solamente local que todavía
+no esté conectado a API puede perderse al recargar.
+
+Eso es aceptable temporalmente en 05.7.1.
+
+El reload debe recuperar nuevamente:
+
+```text
+verdad persistida del backend
+```
+
+---
+
+# 42. Regression
+
+Ejecutar:
+
+```text
+frontend suites
+backend suites afectadas
 JS/Python parity
-compileall
-node --check donde corresponda
+PostgreSQL integration relevante
+node --check
+compileall si backend cambia
 git diff --check
 ```
 
-Además verificar endpoints existentes.
+No es necesario repetir pruebas costosas no relacionadas si nada backend
+cambió, salvo las necesarias para demostrar integración.
 
 ---
 
-# 55. No perseguir número de tests
+# 43. Tests frontend nuevos
 
-No crear tests artificiales únicamente para incrementar el contador.
-
-Añadir tests cuando:
+Cubrir al menos:
 
 ```text
-cubran una invariant importante
-cubran un lifecycle integral
-cubran un bug encontrado
-cubran un hueco real
-```
-
-La calidad importa más que la cantidad.
-
----
-
-# 56. Defect classification
-
-Cada hallazgo debe clasificarse:
-
-```text
-A. bug real
-B. test faltante
-C. documentación desactualizada
-D. riesgo conocido/no bloqueante
-E. nueva decisión de producto/arquitectura
-```
-
-Para E:
-
-```text
-NO decidir por iniciativa propia
-reportar
+bootstrap success
+empty state
+network failure
+HTTP failure
+invalid payload
+retry si existe
+no materialization duplicate
+server IDs preserved
 ```
 
 ---
 
-# 57. Bug fixes permitidos
+# 44. Mocks regression
 
-Si se encuentra un bug inequívoco respecto a contratos ya cerrados:
+Verificar que los mocks sigan disponibles para tests si se requieren.
+
+Pero runtime integrado:
 
 ```text
-corregir
-añadir test de regresión
-ejecutar suites afectadas
+NO debe importarlos/inyectarlos automáticamente
 ```
 
-Mantener el cambio mínimo.
+como estado inicial.
 
 ---
 
-# 58. No features nuevas
+# 45. Existing planner behavior
 
-NO implementar:
+Después de hydration deben mantenerse:
 
 ```text
-frontend ↔ backend integration
+sorting
+matrix rendering
+status controls
+multi-slot rendering
+responsive behavior
+```
+
+No hacer cambios funcionales no relacionados.
+
+---
+
+# 46. Security / privacy
+
+No introducir:
+
+```text
+credenciales DB en frontend
+DATABASE_URL en JS
+passwords
+secrets
+```
+
+Frontend conoce únicamente:
+
+```text
+HTTP API base URL
+```
+
+---
+
+# 47. No direct DB access
+
+El navegador NUNCA conecta directamente a PostgreSQL.
+
+Siempre:
+
+```text
+Browser
+→ Flask
+→ PostgreSQL
+```
+
+---
+
+# 48. Observability mínima
+
+Los errores técnicos pueden registrarse de forma útil en consola durante
+desarrollo.
+
+El mensaje mostrado al usuario debe ser controlado.
+
+No saturar consola en success path.
+
+---
+
+# 49. No libraries nuevas
+
+Mantener:
+
+```text
+native JavaScript
+```
+
+No introducir:
+
+```text
+Axios
+React Query
+Redux
+framework HTTP
+```
+
+para una sola llamada GET.
+
+Usar `fetch`.
+
+---
+
+# 50. Definition of done
+
+MVP 05.7.1 queda completo cuando se demuestre:
+
+```text
+Frontend startup
+    ↓
+GET /api/planner-state
+    ↓
+persisted state
+    ↓
+atomic store hydration
+    ↓
+correct UI render
+```
+
+para:
+
+```text
+datos existentes
+DB vacía
+error de red/API
+```
+
+sin mocks silenciosos ni rematerialización accidental.
+
+---
+
+# 51. Fuera de alcance
+
+NO implementar todavía:
+
+```text
+POST frontend integration
+PATCH frontend integration
+DELETE frontend integration
+Apply Week HTTP integration
+Apply Future HTTP integration
+optimistic mutations
+offline mode
 auth
 multiusuario
-PlanItem deletion general
-mode change Apply Future
-notifications
-timezone por usuario
-Supabase
 deployment
+Supabase
+notifications
 analytics
-new UX features
 ```
 
 ---
 
-# 59. Criterio principal de salida
-
-MVP 05.6.5 queda completo cuando pueda afirmarse con evidencia:
-
-```text
-El dominio persistente del planner es coherente entre:
-
-Frontend/domain JS
-Backend/domain Python
-API
-PostgreSQL
-
-para creación, materialización y los tres scopes de edición.
-```
-
-Y:
-
-```text
-no existen defectos conocidos bloqueantes
-para iniciar integración frontend ↔ backend.
-```
-
----
-
-# 60. Resultado esperado
-
-Al terminar, clasificar la fase como una de estas dos:
-
-## READY
-
-```text
-Persisted planner domain ready for frontend/API integration.
-```
-
-No hay defectos bloqueantes conocidos.
-
-## NOT READY
-
-Indicar exactamente:
-
-```text
-qué bloquea
-por qué
-qué contrato está afectado
-qué decisión/corrección necesita
-```
-
-No declarar READY si existe un defecto conocido bloqueante.
-
----
-
-# 61. Git
+# 52. Git
 
 Codex NO debe:
 
@@ -1640,49 +1169,40 @@ Codex NO debe:
 commit
 push
 merge
-cambiar rama
+cambiar de rama
 ```
 
 El usuario controla Git.
 
 ---
 
-# 62. Reporte requerido
+# 53. Reporte requerido
 
 Al terminar reportar:
 
-1. clasificación final READY / NOT READY;
-2. archivos modificados, si hubo;
-3. bugs reales encontrados;
-4. tests añadidos por huecos reales;
-5. documentación desactualizada encontrada;
-6. riesgos conocidos no bloqueantes;
-7. resultado creación weekly;
-8. resultado creación interval_days;
-9. resultado creación manual_dates;
-10. resultado Single Day;
-11. resultado Apply Week;
-12. resultado Apply Future;
-13. resultado multi-slot;
-14. resultado exclusiones globales/slot;
-15. resultado temporal integrity;
-16. resultado priority/statusContext;
-17. resultado idempotencia/rematerialización;
-18. resultado full lifecycle weekly;
-19. resultado full lifecycle interval;
-20. resultado full lifecycle manual;
-21. resultado Uber;
-22. resultado medicamento;
-23. resultado migration 003 legacy;
-24. resultado empty database;
-25. resultado rollback;
-26. resultado concurrencia;
-27. resultado errores sanitizados;
-28. resultado JS/Python parity;
-29. resultado frontend regression;
-30. número/resultados backend;
-31. número/resultados PostgreSQL integration;
-32. cualquier nueva decisión arquitectónica que requiera al usuario.
+1. archivos creados/modificados;
+2. arquitectura del API client;
+3. estrategia de API base URL;
+4. si fue necesario CORS y cómo se configuró;
+5. secuencia exacta de bootstrap;
+6. método de store hydration;
+7. cómo evita rematerialización;
+8. qué ocurrió con mocks runtime;
+9. loading behavior;
+10. empty-state behavior;
+11. error behavior;
+12. retry behavior;
+13. validación defensiva de response;
+14. cómo preserva IDs del servidor;
+15. prueba con datos persistidos;
+16. prueba DB vacía;
+17. prueba backend unavailable;
+18. browser verification;
+19. resultado frontend suites;
+20. resultado backend/integration relevante;
+21. resultado node/compile/diff checks;
+22. cualquier bug real descubierto;
+23. riesgos/limitaciones.
 
 Confirmar explícitamente:
 
@@ -1690,7 +1210,8 @@ Confirmar explícitamente:
 vcs_dev no fue modificado
 001/002/003 no fueron modificadas
 no se creó migration 004
-frontend no fue conectado a la API
+no se conectaron mutations HTTP
+no se añadieron secretos al frontend
 no se implementaron features fuera de alcance
 no se hizo commit/push/merge
 ```

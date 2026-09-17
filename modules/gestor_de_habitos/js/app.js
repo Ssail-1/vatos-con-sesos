@@ -1,5 +1,5 @@
-import { initialPlanItems } from "./data/mock-plan-items.js";
-import { mockStatusOverrides } from "./data/mock-status-overrides.js";
+import { fetchPlannerState } from "./api/planner-api.js";
+import { createPlannerBootstrap } from "./bootstrap/planner-bootstrap.js";
 import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
@@ -14,6 +14,7 @@ const elements = Object.fromEntries([
     "previousDayButton", "nextDayButton", "previousMonthButton", "nextMonthButton", "compactPreviousMonthButton",
     "compactNextMonthButton", "toggleMonthRecordsButton",
     "matrixHead", "matrixBody", "matrixFeedback", "emptyState", "statusLegend", "addActivityButton",
+    "plannerBootstrapState", "bootstrapMessage", "retryBootstrapButton", "matrixContainer",
     "activityDialog", "activityForm", "activityDialogTitle", "insertionReference", "formErrors", "activityName",
     "planItemKind", "planItemType", "activitySubtypeField", "habitSubtypeField", "occurrenceDate", "occurrenceDateLabel",
     "occurrenceStartTime", "occurrenceEndTime", "cancelActivityButton", "scheduleMode", "weeklyFields",
@@ -35,8 +36,8 @@ function getCurrentLocalDate() {
 
 const initialCurrentDate = getCurrentLocalDate();
 const plannerStore = createPlannerStore(
-    initialPlanItems,
-    mockStatusOverrides,
+    [],
+    [],
     formatDateKey(initialCurrentDate),
     { getCurrentDateKey: () => formatDateKey(getCurrentLocalDate()) },
 );
@@ -66,10 +67,8 @@ function render() {
     const currentDate = getCurrentLocalDate();
     const currentDateKey = formatDateKey(currentDate);
     const selectedDateKey = formatDateKey(selectedDate);
-    plannerStore.reconcileTemporalState(currentDateKey);
     const year = visibleMonth.getFullYear();
     const month = visibleMonth.getMonth();
-    plannerStore.ensureMaterializedThrough(formatDateKey(new Date(year, month + 1, 0)));
     elements.monthName.textContent = formatMonth(visibleMonth);
     elements.monthPicker.value = monthValue(visibleMonth);
     elements.datePicker.value = formatDateKey(selectedDate);
@@ -101,7 +100,6 @@ function selectDate(dateKey) {
 function moveDay(offset) { const date = new Date(selectedDate); date.setDate(date.getDate() + offset); selectDate(formatDateKey(date)); }
 function synchronizeMonth(year, month, preference) {
     const monthEnd = new Date(year, month + 1, 0);
-    plannerStore.ensureMaterializedThrough(formatDateKey(monthEnd));
     const occurrences = plannerStore.getOccurrencesForMonth(year, month);
     const selectedDateKey = occurrences.length
         ? (preference === "last" ? occurrences.at(-1).date : occurrences[0].date)
@@ -278,8 +276,55 @@ const planItemFormView = createPlanItemFormView({
     onFallbackFocus: (id) => { if (!matrixView.focusPlanItemRow(id)) elements.addActivityButton.focus(); },
 });
 
+const plannerControls = [
+    elements.previousDayButton,
+    elements.nextDayButton,
+    elements.previousMonthButton,
+    elements.nextMonthButton,
+    elements.compactPreviousMonthButton,
+    elements.compactNextMonthButton,
+    elements.toggleMonthRecordsButton,
+    elements.datePickerButton,
+    elements.monthPickerButton,
+    elements.datePicker,
+    elements.monthPicker,
+    elements.addActivityButton,
+];
+
+function setPlannerControlsDisabled(disabled) {
+    plannerControls.forEach((control) => { control.disabled = disabled; });
+}
+
+function showBootstrapLoading() {
+    setPlannerControlsDisabled(true);
+    elements.matrixContainer.hidden = true;
+    elements.emptyState.hidden = true;
+    clearFeedback();
+    elements.bootstrapMessage.textContent = "Cargando planner…";
+    elements.retryBootstrapButton.hidden = true;
+    elements.plannerBootstrapState.setAttribute("role", "status");
+    elements.plannerBootstrapState.hidden = false;
+}
+
+function showBootstrapError(error) {
+    console.error("No se pudo completar el bootstrap del planner.", error);
+    setPlannerControlsDisabled(true);
+    elements.matrixContainer.hidden = true;
+    elements.emptyState.hidden = true;
+    elements.bootstrapMessage.textContent = "No se pudo cargar el planner.";
+    elements.retryBootstrapButton.hidden = false;
+    elements.plannerBootstrapState.setAttribute("role", "alert");
+    elements.plannerBootstrapState.hidden = false;
+}
+
+function showHydratedPlanner() {
+    setPlannerControlsDisabled(false);
+    elements.plannerBootstrapState.hidden = true;
+    elements.matrixContainer.hidden = false;
+    render();
+}
+
 matrixView.renderLegend();
-render();
 elements.previousDayButton.addEventListener("click", () => moveDay(-1));
 elements.nextDayButton.addEventListener("click", () => moveDay(1));
 elements.previousMonthButton.addEventListener("click", () => moveMonth(-1));
@@ -295,3 +340,13 @@ elements.monthPicker.addEventListener("change", () => {
     if (year && month) synchronizeMonth(year, month - 1, "first");
 });
 elements.addActivityButton.addEventListener("click", () => planItemFormView.openCreate(formatDateKey(selectedDate), elements.addActivityButton));
+
+const plannerBootstrap = createPlannerBootstrap({
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+    onLoading: showBootstrapLoading,
+    onReady: showHydratedPlanner,
+    onError: showBootstrapError,
+});
+elements.retryBootstrapButton.addEventListener("click", () => plannerBootstrap.retry());
+void plannerBootstrap.start();

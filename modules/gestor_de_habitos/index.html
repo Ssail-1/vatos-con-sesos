@@ -80,7 +80,18 @@
                     </div>
                 </div>
 
-                <div class="matrix-container">
+                <div
+                    id="plannerBootstrapState"
+                    class="planner-bootstrap-state"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <p id="bootstrapMessage">Cargando planner…</p>
+                    <button id="retryBootstrapButton" class="secondary-button" type="button" hidden>
+                        Reintentar
+                    </button>
+                </div>
+                <div id="matrixContainer" class="matrix-container" hidden>
                     <table class="activity-matrix">
                         <caption class="visually-hidden">
                             Actividades del mes actual y estado diario de cada una
