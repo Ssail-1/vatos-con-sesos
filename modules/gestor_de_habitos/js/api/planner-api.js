@@ -13,6 +13,24 @@ function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function isConflict(value) {
+    return isRecord(value) &&
+        typeof value.occurrenceId === "string" &&
+        typeof value.planItemId === "string" &&
+        typeof value.date === "string" &&
+        typeof value.startTime === "string" &&
+        typeof value.endTime === "string" &&
+        typeof value.status === "string";
+}
+
+async function readJson(response) {
+    try {
+        return await response.json();
+    } catch {
+        throw new PlannerApiError("invalid_response", "El backend devolvió JSON inválido.");
+    }
+}
+
 export function validatePlannerStateResponse(payload) {
     if (
         !isRecord(payload) ||
@@ -55,11 +73,71 @@ export async function fetchPlannerState({
         );
     }
 
-    let payload;
-    try {
-        payload = await response.json();
-    } catch {
-        throw new PlannerApiError("invalid_response", "El backend devolvió JSON inválido.");
-    }
+    const payload = await readJson(response);
     return validatePlannerStateResponse(payload);
+}
+
+export async function createPlanItem(payload, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+
+    let response;
+    try {
+        response = await fetchImpl(buildApiUrl("/api/plan-items", baseUrl), {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+
+    let responsePayload;
+    try {
+        responsePayload = await readJson(response);
+    } catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+
+    if (!response?.ok) {
+        const serverCode = isRecord(responsePayload) && typeof responsePayload.code === "string"
+            ? responsePayload.code
+            : "http_error";
+        const conflicts = isRecord(responsePayload) && Array.isArray(responsePayload.conflicts)
+            && responsePayload.conflicts.every(isConflict)
+            ? responsePayload.conflicts.map((conflict) => ({ ...conflict }))
+            : [];
+        throw new PlannerApiError(
+            serverCode,
+            isRecord(responsePayload) && typeof responsePayload.message === "string"
+                ? responsePayload.message
+                : "El backend no pudo crear el registro.",
+            {
+                status: Number.isInteger(response?.status) ? response.status : null,
+                conflicts,
+            },
+        );
+    }
+
+    if (
+        !isRecord(responsePayload) ||
+        !isRecord(responsePayload.planItem) ||
+        !Array.isArray(responsePayload.occurrences) ||
+        !responsePayload.occurrences.every(isRecord)
+    ) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "La creación fue aceptada, pero su respuesta no cumple el contrato esperado.",
+            { mutationConfirmed: true, status: response.status },
+        );
+    }
+    return responsePayload;
 }

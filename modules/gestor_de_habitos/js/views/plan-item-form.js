@@ -187,7 +187,7 @@ export function createPlanItemFormView(options) {
         weeklyDefaultEndTime, indefiniteSchedule, scheduleEndDateField, scheduleEndDate, weekdayOverrides,
         weekdayOverrideFields, intervalFields, intervalDays, intervalAdditionalSlots, addIntervalSlotButton,
         manualDatesField, manualDateEntries, addManualDateButton, explicitDateField, occurrenceTimeAnchor, occurrenceTimeFields,
-        recurrenceScopeField, cancelButton, fallbackFocusElement, onValidate, onSubmit, onFallbackFocus,
+        recurrenceScopeField, cancelButton, savingStatus, fallbackFocusElement, onValidate, onSubmit, onFallbackFocus,
         createSlotId = createGenerationSlotId,
     } = options;
     const submitButton = form.querySelector("button[type='submit']");
@@ -203,6 +203,8 @@ export function createPlanItemFormView(options) {
     let manualDateDraft = [];
     let explicitDateSlotId = null;
     let originalGenerationConfig = null;
+    let submitting = false;
+    let refreshPending = false;
 
     weekdayChoices.replaceChildren(...WEEKDAY_NAMES.map((name, index) => {
         const button = document.createElement("button");
@@ -538,6 +540,17 @@ export function createPlanItemFormView(options) {
                 : formContext.mode === "create" || formContext.mode === "insert_before"
                     ? "Guardar"
                     : "Aceptar";
+        if (refreshPending) submitButton.textContent = "Reintentar actualización";
+    }
+
+    function setSubmitting(value) {
+        submitting = value;
+        submitButton.disabled = value;
+        cancelButton.disabled = value;
+        if (savingStatus) {
+            savingStatus.textContent = refreshPending ? "Actualizando vista…" : "Guardando…";
+            savingStatus.hidden = !value;
+        }
     }
 
     function chooseWeekday(weekday) {
@@ -625,6 +638,8 @@ export function createPlanItemFormView(options) {
         intervalAdditionalSlotDraft = [];
         manualDateDraft = [];
         explicitDateSlotId = null;
+        refreshPending = false;
+        setSubmitting(false);
         renderManualDateEntries();
         renderIntervalAdditionalSlots();
         kindInput.value = "activity";
@@ -833,8 +848,9 @@ export function createPlanItemFormView(options) {
             updateScopeVisibility();
         }));
 
-    form.addEventListener("submit", (event) => {
+    form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (submitting) return;
         clearErrors();
         saveEditedWeekday();
         const result = validateFormValues({
@@ -866,9 +882,19 @@ export function createPlanItemFormView(options) {
         result.scope = result.recurrenceChanged ? form.elements.recurrenceScope.value : "occurrence";
         const extra = onValidate(result, formContext);
         if (extra.length) return showErrors(extra);
+        setSubmitting(true);
         try {
-            const submission = onSubmit(result, formContext);
-            if (!submission?.pendingConfirmation) dialog.close("saved");
+            const submission = await onSubmit(result, formContext);
+            if (submission?.pendingConfirmation) return;
+            if (submission?.keepOpen) {
+                refreshPending = Boolean(submission.retryRefresh);
+                showErrors([{
+                    field: "name",
+                    message: submission.message,
+                }]);
+                return;
+            }
+            dialog.close("saved");
         } catch (error) {
             const conflict = error.details?.conflictingOccurrence;
             const hasConflicts = Boolean(conflict || error.details?.conflictingOccurrences?.length);
@@ -880,6 +906,11 @@ export function createPlanItemFormView(options) {
                     ? `El horario se cruza con “${conflict.planItemName}” (${conflict.startTime}–${conflict.endTime}).`
                     : error.message,
             }]);
+        } finally {
+            if (dialog.open) {
+                setSubmitting(false);
+                updateScopeVisibility();
+            }
         }
     });
     cancelButton.addEventListener("click", () => dialog.close("cancelled"));
@@ -895,6 +926,11 @@ export function createPlanItemFormView(options) {
     });
 
     return {
+        markSavedRefreshError(message) {
+            refreshPending = true;
+            showErrors([{ field: "name", message }]);
+            updateScopeVisibility();
+        },
         completePendingSubmission() {
             if (dialog.open) dialog.close("saved");
         },

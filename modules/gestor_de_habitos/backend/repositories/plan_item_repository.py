@@ -147,7 +147,6 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
                     for slot in config["slots"]
                 ],
             )
-
         if config["mode"] == "manual_dates":
             cursor.executemany(
                 """
@@ -224,3 +223,37 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
                     for occurrence in occurrences
                 ],
             )
+
+
+def apply_priority_overrides(connection, overrides):
+    """Desplaza únicamente occurrences bloqueadas y autorizadas por el servicio."""
+    if not overrides:
+        return
+    with connection.cursor() as cursor:
+        for override in overrides:
+            target_status = (
+                "cancelled"
+                if override["currentStatus"] == "pending"
+                else "not_finished"
+            )
+            cursor.execute(
+                """
+                UPDATE public.occurrences
+                SET
+                    status = %s,
+                    status_reason = 'priority_override',
+                    source_occurrence_id = %s
+                WHERE id = %s
+                  AND status = %s
+                """,
+                (
+                    target_status,
+                    override["sourceOccurrenceId"],
+                    override["occurrenceId"],
+                    override["currentStatus"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PlanItemRepositoryError(
+                    "Una occurrence cambió durante la creación del PlanItem."
+                )

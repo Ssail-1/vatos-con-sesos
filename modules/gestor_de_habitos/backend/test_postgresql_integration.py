@@ -18,7 +18,7 @@ import future_schedule_service
 import occurrence_mutation_service as mutation_service
 import plan_item_creation_service as creation_service
 from plan_item_materializer import materialize_occurrence_drafts
-from repositories import occurrence_repository
+from repositories import occurrence_repository, plan_item_repository
 import week_mutation_service
 
 
@@ -30,12 +30,6 @@ CURRENT_MIGRATIONS = (
     "002_fix_occurrence_status_context.sql",
     "003_multi_slot_scheduling.sql",
 )
-
-
-class FixedDate(date):
-    @classmethod
-    def today(cls):
-        return cls(2026, 9, 14)
 
 
 def slot_id(number):
@@ -115,7 +109,7 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
 
     def _post(self, payload):
         with patch.object(database, "get_database_url", return_value=self.database_url), \
-                patch.object(creation_service, "date", FixedDate):
+                patch.object(creation_service, "_today", return_value=REFERENCE_DATE):
             return app.test_client().post("/api/plan-items", json=payload)
 
     def _get_state(self):
@@ -387,6 +381,233 @@ class PostgreSQLMultiSlotIntegrationTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM public.generation_slot_weekdays"
                 ).fetchone()[0],
                 2,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM public.generation_slot_dates"
+                ).fetchone()[0],
+                2,
+            )
+
+    def test_priority_override_handshake_persists_status_context_atomically(self):
+        existing_payload = activity(
+            {
+                "mode": "manual_dates",
+                "entries": [
+                    {"id": slot_id(4101), "date": "2026-09-14", "startTime": "10:00", "endTime": "11:00"},
+                    {"id": slot_id(4102), "date": "2026-09-14", "startTime": "12:00", "endTime": "13:00"},
+                ],
+            },
+            "Existing priority targets",
+        )
+        existing = self._post(existing_payload).get_json()["occurrences"]
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET status = 'in_progress' WHERE id = %s",
+                (existing[1]["id"],),
+            )
+
+        event_payload = {
+            **activity(
+                {
+                    "mode": "manual_dates",
+                    "entries": [
+                        {"id": slot_id(4201), "date": "2026-09-14", "startTime": "10:30", "endTime": "11:30"},
+                        {"id": slot_id(4202), "date": "2026-09-14", "startTime": "12:30", "endTime": "13:30"},
+                    ],
+                },
+                "Confirmed event",
+            ),
+            "activityType": "event",
+        }
+        first = self._post(event_payload)
+        self.assertEqual(first.status_code, 409)
+        first_body = first.get_json()
+        self.assertEqual(first_body["code"], "priority_override_required")
+        self.assertEqual(
+            {conflict["occurrenceId"] for conflict in first_body["conflicts"]},
+            {occurrence["id"] for occurrence in existing},
+        )
+
+        confirmed_payload = {
+            **event_payload,
+            "priorityOverride": {
+                "confirmedOccurrenceIds": [
+                    conflict["occurrenceId"] for conflict in first_body["conflicts"]
+                ]
+            },
+        }
+        confirmed = self._post(confirmed_payload)
+        self.assertEqual(confirmed.status_code, 201, confirmed.get_data(as_text=True))
+        created = confirmed.get_json()["occurrences"]
+        state = self._get_state().get_json()
+        displaced = {
+            occurrence["id"]: occurrence
+            for occurrence in state["occurrences"]
+            if occurrence["id"] in {item["id"] for item in existing}
+        }
+        self.assertEqual(displaced[existing[0]["id"]]["status"], "cancelled")
+        self.assertEqual(displaced[existing[1]["id"]]["status"], "not_finished")
+        for original in existing:
+            overridden = displaced[original["id"]]
+            source = next(
+                candidate
+                for candidate in created
+                if candidate["startTime"] < original["endTime"]
+                and candidate["endTime"] > original["startTime"]
+            )
+            self.assertEqual(
+                overridden["statusContext"],
+                {
+                    "reason": "priority_override",
+                    "sourceOccurrenceId": source["id"],
+                },
+            )
+
+    def test_priority_override_rechecks_new_and_disappeared_conflicts(self):
+        existing = self._post(manual_payload(4301)).get_json()["occurrences"][0]
+        event_payload = {
+            **manual_payload(4302),
+            "name": "TOCTOU event",
+            "activityType": "event",
+            "generationConfig": {
+                "mode": "manual_dates",
+                "entries": [{"id": slot_id(4302), "date": "2026-09-14", "startTime": "08:30", "endTime": "09:30"}],
+            },
+        }
+        first = self._post(event_payload).get_json()
+        self.assertEqual(first["code"], "priority_override_required")
+
+        extra = self._post(
+            activity(
+                {
+                    "mode": "manual_dates",
+                    "entries": [{"id": slot_id(4303), "date": "2026-09-14", "startTime": "14:00", "endTime": "15:00"}],
+                },
+                "New concurrent conflict",
+            )
+        ).get_json()["occurrences"][0]
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET start_time = '08:45', end_time = '09:15' WHERE id = %s",
+                (extra["id"],),
+            )
+
+        second = self._post({
+            **event_payload,
+            "priorityOverride": {"confirmedOccurrenceIds": [existing["id"]]},
+        })
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.get_json()["code"], "priority_override_required")
+        self.assertEqual(
+            {item["occurrenceId"] for item in second.get_json()["conflicts"]},
+            {existing["id"], extra["id"]},
+        )
+
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET status = 'cancelled' WHERE id IN (%s, %s)",
+                (existing["id"], extra["id"]),
+            )
+        disappeared = self._post({
+            **event_payload,
+            "priorityOverride": {"confirmedOccurrenceIds": [existing["id"], extra["id"]]},
+        })
+        self.assertEqual(disappeared.status_code, 201, disappeared.get_data(as_text=True))
+
+    def test_completed_cannot_be_overridden_and_override_failure_rolls_back(self):
+        existing = self._post(manual_payload(4401)).get_json()["occurrences"][0]
+        event_payload = {
+            **manual_payload(4402),
+            "activityType": "event",
+            "generationConfig": {
+                "mode": "manual_dates",
+                "entries": [{"id": slot_id(4402), "date": "2026-09-14", "startTime": "08:30", "endTime": "09:30"}],
+            },
+            "priorityOverride": {"confirmedOccurrenceIds": [existing["id"]]},
+        }
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET status = 'completed' WHERE id = %s",
+                (existing["id"],),
+            )
+        protected = self._post(event_payload)
+        self.assertEqual(protected.status_code, 409)
+        self.assertEqual(protected.get_json()["code"], "completed_conflict")
+
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET status = 'pending' WHERE id = %s",
+                (existing["id"],),
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER reject_priority_override
+                BEFORE UPDATE ON public.occurrences
+                FOR EACH ROW
+                WHEN (NEW.status_reason = 'priority_override')
+                EXECUTE FUNCTION public.reject_test_insert()
+                """
+            )
+        before = self._counts()
+        try:
+            failed = self._post(event_payload)
+            self.assertEqual(failed.status_code, 503)
+            self.assertEqual(self._counts(), before)
+            state = self._get_state().get_json()
+            persisted = next(item for item in state["occurrences"] if item["id"] == existing["id"])
+            self.assertEqual(persisted["status"], "pending")
+            self.assertNotIn("statusContext", persisted)
+        finally:
+            with psycopg.connect(self.database_url) as connection:
+                connection.execute("DROP TRIGGER IF EXISTS reject_priority_override ON public.occurrences")
+
+    def test_concurrent_confirmations_have_one_atomic_winner(self):
+        existing = self._post(manual_payload(4501)).get_json()["occurrences"][0]
+        payload = {
+            **manual_payload(4502),
+            "name": "Concurrent event",
+            "activityType": "event",
+            "generationConfig": {
+                "mode": "manual_dates",
+                "entries": [{"id": slot_id(4502), "date": "2026-09-14", "startTime": "08:30", "endTime": "09:30"}],
+            },
+            "priorityOverride": {"confirmedOccurrenceIds": [existing["id"]]},
+        }
+        barrier = __import__("threading").Barrier(2)
+        original_list = plan_item_repository.list_blocking_occurrences
+
+        def synchronized_list(connection, occurrence_dates):
+            barrier.wait(timeout=5)
+            return original_list(connection, occurrence_dates)
+
+        def attempt():
+            try:
+                creation_service.create_plan_item(payload, reference_date=REFERENCE_DATE)
+                return "created"
+            except creation_service.PlanItemCreationUnavailableError:
+                return "concurrent_rejection"
+            except creation_service.PlanItemConflictError as error:
+                return error.code
+
+        with patch.object(database, "get_database_url", return_value=self.database_url), patch.object(
+            plan_item_repository,
+            "list_blocking_occurrences",
+            side_effect=synchronized_list,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = [future.result(timeout=10) for future in (
+                    executor.submit(attempt), executor.submit(attempt)
+                )]
+
+        self.assertEqual(results.count("created"), 1)
+        self.assertEqual(len([result for result in results if result != "created"]), 1)
+        with psycopg.connect(self.database_url) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM public.plan_items WHERE name = 'Concurrent event'"
+                ).fetchone()[0],
+                1,
             )
             self.assertEqual(
                 connection.execute(

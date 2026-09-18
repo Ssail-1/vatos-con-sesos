@@ -1,5 +1,6 @@
-import { fetchPlannerState } from "./api/planner-api.js";
+import { createPlanItem, fetchPlannerState } from "./api/planner-api.js";
 import { createPlannerBootstrap } from "./bootstrap/planner-bootstrap.js";
+import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
 import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
@@ -17,7 +18,7 @@ const elements = Object.fromEntries([
     "plannerBootstrapState", "bootstrapMessage", "retryBootstrapButton", "matrixContainer",
     "activityDialog", "activityForm", "activityDialogTitle", "insertionReference", "formErrors", "activityName",
     "planItemKind", "planItemType", "activitySubtypeField", "habitSubtypeField", "occurrenceDate", "occurrenceDateLabel",
-    "occurrenceStartTime", "occurrenceEndTime", "cancelActivityButton", "scheduleMode", "weeklyFields",
+    "occurrenceStartTime", "occurrenceEndTime", "cancelActivityButton", "formSavingStatus", "scheduleMode", "weeklyFields",
     "scheduleStartDate", "weekdayChoices", "indefiniteSchedule", "scheduleEndDateField", "scheduleEndDate",
     "weekdayOverrides", "weekdayOverrideFields", "weeklyDefaultStartTime", "weeklyDefaultEndTime",
     "intervalFields", "intervalDays", "intervalAdditionalSlots", "addIntervalSlotButton", "manualDatesField",
@@ -198,14 +199,112 @@ function applyFuturePlanning(planItemId, effectiveDate, generationConfig) {
     return result.preservedEffectiveDateOccurrences.length ? PRESERVED_HISTORY_NOTICE : null;
 }
 
+const planItemCreationMutation = createPlanItemMutationCoordinator({
+    postPlanItem: createPlanItem,
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+function persistentCreationErrorMessage(error) {
+    if (error?.code === "network_error") {
+        return "No se pudo conectar con el backend. Revisa la conexión e inténtalo nuevamente.";
+    }
+    if (error?.details?.status === 400 || error?.code === "invalid_payload") {
+        return "El backend rechazó los datos del registro. Revisa el formulario.";
+    }
+    if (error?.details?.status === 409) {
+        return error.message || "La agenda cambió y el registro entra en conflicto.";
+    }
+    return "No se pudo guardar el registro. Inténtalo nuevamente.";
+}
+
+function buildPersistentOverrideConfirmation(payload, conflicts) {
+    return {
+        type: "override_required",
+        operation: { kind: "create_plan_item" },
+        candidate: {
+            name: payload.name,
+            kind: payload.kind,
+            activityType: payload.activityType,
+            habitType: payload.habitType,
+            occurrences: [],
+        },
+        conflicts: conflicts.map((conflict) => ({
+            id: conflict.occurrenceId,
+            planItemId: conflict.planItemId,
+            planItemName: plannerStore.getPlanItemById(conflict.planItemId)?.name ?? "Otro registro",
+            date: conflict.date,
+            startTime: conflict.startTime,
+            endTime: conflict.endTime,
+            status: conflict.status,
+        })),
+    };
+}
+
+function settlePersistentCreation(outcome) {
+    if (outcome.status === "synced") {
+        selectedPlanItemId = outcome.creation?.planItem?.id ?? null;
+        render();
+        showFeedback("El registro se guardó correctamente.", "notice");
+        return { status: "synced" };
+    }
+    if (outcome.status === "saved_refresh_error") {
+        return {
+            status: "saved_refresh_error",
+            keepOpen: true,
+            retryRefresh: true,
+            message: "El registro se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a crear.",
+        };
+    }
+    if (outcome.status === "post_error") {
+        throw new Error(persistentCreationErrorMessage(outcome.error));
+    }
+    throw new Error("No se pudo completar la creación persistente.");
+}
+
+function openPersistentOverride(payload, conflicts) {
+    if (!conflicts.length) {
+        throw new Error("El backend solicitó confirmación sin identificar los conflictos.");
+    }
+    overrideConfirmationView.open(
+        buildPersistentOverrideConfirmation(payload, conflicts),
+        {
+            onConfirm: async (prepared) => {
+                const outcome = await planItemCreationMutation.submit(
+                    addPriorityOverride(payload, prepared.conflicts.map((conflict) => ({
+                        occurrenceId: conflict.id,
+                    }))),
+                );
+                if (outcome.status === "override_required") {
+                    if (!outcome.conflicts.length) {
+                        throw new Error("El backend solicitó una nueva confirmación sin identificar los conflictos.");
+                    }
+                    return {
+                        nextPrepared: buildPersistentOverrideConfirmation(payload, outcome.conflicts),
+                    };
+                }
+                return settlePersistentCreation(outcome);
+            },
+            onComplete: (outcome) => {
+                if (outcome?.status === "saved_refresh_error") {
+                    planItemFormView.markSavedRefreshError(outcome.message);
+                    return;
+                }
+                planItemFormView.completePendingSubmission();
+            },
+        },
+    );
+}
+
 const planItemFormView = createPlanItemFormView({
     ...elements, dialog: elements.activityDialog, form: elements.activityForm, title: elements.activityDialogTitle,
     referenceMessage: elements.insertionReference, errorsRegion: elements.formErrors, nameInput: elements.activityName,
     kindInput: elements.planItemKind, itemTypeInput: elements.planItemType, activityTypeField: elements.activitySubtypeField,
     habitTypeField: elements.habitSubtypeField, dateInput: elements.occurrenceDate, startTimeInput: elements.occurrenceStartTime,
     endTimeInput: elements.occurrenceEndTime, cancelButton: elements.cancelActivityButton,
+    savingStatus: elements.formSavingStatus,
     fallbackFocusElement: elements.addActivityButton, onValidate: () => [],
-    onSubmit: (result, context) => {
+    onSubmit: async (result, context) => {
         let prepared;
         let futureFeedback;
         if (context.mode === "edit") {
@@ -251,10 +350,16 @@ const planItemFormView = createPlanItemFormView({
             }
             selectedPlanItemId = context.planItemId;
         } else {
-            prepared = plannerStore.preparePlanItemCreation({
+            const payload = {
                 ...result.planItem,
                 generationConfig: result.generationConfig,
-            });
+            };
+            const outcome = await planItemCreationMutation.submit(payload);
+            if (outcome.status === "override_required") {
+                openPersistentOverride(payload, outcome.conflicts);
+                return { pendingConfirmation: true };
+            }
+            return settlePersistentCreation(outcome);
         }
 
         if (prepared?.type === "ready") {

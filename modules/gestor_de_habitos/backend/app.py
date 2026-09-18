@@ -25,16 +25,25 @@ def _allowed_frontend_origins():
 
 
 @app.after_request
-def add_planner_state_cors(response):
-    """Permite únicamente la lectura inicial desde orígenes autorizados."""
+def add_frontend_cors(response):
+    """Permite solo el bootstrap y la creación desde orígenes autorizados."""
     origin = request.headers.get("Origin")
-    if (
-        request.method == "GET"
-        and request.path == "/api/planner-state"
-        and origin in _allowed_frontend_origins()
-    ):
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.vary.add("Origin")
+    if origin not in _allowed_frontend_origins():
+        return response
+    planner_read = (
+        request.method == "GET" and request.path == "/api/planner-state"
+    )
+    plan_item_creation = (
+        request.method in {"POST", "OPTIONS"}
+        and request.path == "/api/plan-items"
+    )
+    if not planner_read and not plan_item_creation:
+        return response
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.vary.add("Origin")
+    if plan_item_creation:
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
 
@@ -91,11 +100,14 @@ def create_plan_item():
             message="El PlanItem enviado no es válido.",
         ), 400
     except plan_item_creation_service.PlanItemConflictError as error:
-        return jsonify(
+        body = dict(
             status="error",
             code=error.code,
             message=str(error),
-        ), 409
+        )
+        if error.conflicts is not None:
+            body["conflicts"] = error.conflicts
+        return jsonify(body), 409
     except plan_item_creation_service.PlanItemCreationUnavailableError:
         return jsonify(
             status="error",

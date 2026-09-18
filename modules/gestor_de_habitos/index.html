@@ -112,7 +112,7 @@
                 <button id="nextMonthButton" class="desktop-month-navigation-button" type="button" aria-label="Mes siguiente">›</button>
             </div>
 
-            <p class="memory-notice">Los cambios son temporales y se perderán al recargar la página.</p>
+            <p class="memory-notice">Los nuevos registros se guardan. Las ediciones del calendario todavía son temporales.</p>
         </main>
 
         <dialog id="activityDialog" class="activity-dialog" aria-labelledby="activityDialogTitle">
@@ -213,6 +213,7 @@
                 </fieldset>
 
                 <div class="dialog-actions">
+                    <span id="formSavingStatus" class="form-saving-status" role="status" aria-live="polite" hidden>Guardando…</span>
                     <button id="cancelActivityButton" class="secondary-button" type="button">
                         Cancelar
                     </button>

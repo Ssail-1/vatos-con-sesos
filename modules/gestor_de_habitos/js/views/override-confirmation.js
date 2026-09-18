@@ -49,11 +49,14 @@ export function createOverrideConfirmationView({
     let confirmOperation = null;
     let completeOperation = null;
     let confirmedResult = null;
+    let currentPrepared = null;
+    let submitting = false;
 
     function clearError() {
         errorRegion.hidden = true;
         errorRegion.textContent = "";
-        continueButton.disabled = false;
+        continueButton.disabled = submitting;
+        backButton.disabled = submitting;
     }
 
     function render(prepared) {
@@ -61,7 +64,7 @@ export function createOverrideConfirmationView({
         const candidateType = describeCandidateType(prepared.candidate);
         candidateSummary.textContent = `${operationLabel} ${candidateType}: “${prepared.candidate.name}”`;
         candidateOccurrences.replaceChildren(
-            ...prepared.candidate.occurrences.map((occurrence) => createScheduleItem(occurrence)),
+            ...(prepared.candidate.occurrences ?? []).map((occurrence) => createScheduleItem(occurrence)),
         );
         conflictList.replaceChildren(...prepared.conflicts.map((conflict) => {
             const item = createScheduleItem(conflict, `${conflict.planItemName} · `);
@@ -96,16 +99,35 @@ export function createOverrideConfirmationView({
         event.preventDefault();
         (event.shiftKey ? lastButton : firstButton).focus();
     });
-    continueButton.addEventListener("click", () => {
+    continueButton.addEventListener("click", async () => {
+        if (submitting) return;
         clearError();
+        submitting = true;
+        continueButton.disabled = true;
+        backButton.disabled = true;
+        continueButton.textContent = "Guardando…";
         try {
-            confirmedResult = confirmOperation();
+            const result = await confirmOperation(currentPrepared);
+            if (result?.nextPrepared) {
+                currentPrepared = result.nextPrepared;
+                render(currentPrepared);
+                errorRegion.textContent = "La agenda cambió. Revisa y confirma nuevamente los conflictos actuales.";
+                errorRegion.hidden = false;
+                return;
+            }
+            confirmedResult = result;
             dialog.close("confirmed");
         } catch (error) {
             errorRegion.textContent = error.message;
             errorRegion.hidden = false;
-            continueButton.disabled = true;
-            backButton.focus();
+        } finally {
+            submitting = false;
+            continueButton.textContent = "Continuar";
+            if (dialog.open) {
+                continueButton.disabled = false;
+                backButton.disabled = false;
+                continueButton.focus();
+            }
         }
     });
 
@@ -117,6 +139,7 @@ export function createOverrideConfirmationView({
         confirmOperation = null;
         completeOperation = null;
         confirmedResult = null;
+        currentPrepared = null;
         openerElement = null;
         clearError();
 
@@ -138,6 +161,7 @@ export function createOverrideConfirmationView({
             confirmOperation = onConfirm;
             completeOperation = onComplete;
             confirmedResult = null;
+            currentPrepared = prepared;
             clearError();
             render(prepared);
             dialog.showModal();

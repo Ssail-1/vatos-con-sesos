@@ -5,6 +5,7 @@ import re
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg import IsolationLevel
 
 import database
 from plan_item_materializer import (
@@ -36,9 +37,10 @@ class PlanItemValidationError(PlanItemCreationError):
 class PlanItemConflictError(PlanItemCreationError):
     """La creación contradice el estado vigente del planner."""
 
-    def __init__(self, code, message):
+    def __init__(self, code, message, conflicts=None):
         super().__init__(message)
         self.code = code
+        self.conflicts = conflicts
 
 
 class PlanItemCreationUnavailableError(PlanItemCreationError):
@@ -47,6 +49,10 @@ class PlanItemCreationUnavailableError(PlanItemCreationError):
 
 def _invalid(message):
     raise PlanItemValidationError(message)
+
+
+def _today():
+    return date.today()
 
 
 def _require_exact_fields(value, required, optional, field_name):
@@ -377,6 +383,47 @@ def validate_plan_item_payload(payload):
     }
 
 
+def _normalize_priority_override(value):
+    _require_exact_fields(
+        value,
+        {"confirmedOccurrenceIds"},
+        set(),
+        "priorityOverride",
+    )
+    occurrence_ids = value["confirmedOccurrenceIds"]
+    if not isinstance(occurrence_ids, list):
+        _invalid("confirmedOccurrenceIds debe ser una lista.")
+    normalized = []
+    for occurrence_id in occurrence_ids:
+        if not isinstance(occurrence_id, str):
+            _invalid("Cada confirmedOccurrenceId debe ser un UUID válido.")
+        try:
+            parsed = UUID(occurrence_id)
+        except (ValueError, AttributeError):
+            _invalid("Cada confirmedOccurrenceId debe ser un UUID válido.")
+        if str(parsed) != occurrence_id:
+            _invalid("Cada confirmedOccurrenceId debe ser un UUID canónico.")
+        normalized.append(occurrence_id)
+    if len(set(normalized)) != len(normalized):
+        _invalid("confirmedOccurrenceIds no admite IDs duplicados.")
+    return frozenset(normalized)
+
+
+def validate_plan_item_command(payload):
+    """Separa el PlanItem canónico de la metadata opcional de la request."""
+    if not isinstance(payload, dict):
+        _invalid("El cuerpo JSON debe ser un objeto.")
+    plan_item_payload = dict(payload)
+    priority_override = plan_item_payload.pop("priorityOverride", None)
+    normalized = validate_plan_item_payload(plan_item_payload)
+    confirmed_ids = (
+        None
+        if priority_override is None
+        else _normalize_priority_override(priority_override)
+    )
+    return normalized, confirmed_ids
+
+
 def _overlaps(first, second):
     return occurrence_items_overlap(first, second)
 
@@ -414,21 +461,57 @@ def _existing_occurrence(row):
             "PostgreSQL devolvió una occurrence no válida."
         )
     return {
+        "id": str(row["id"]),
+        "planItemId": str(row["plan_item_id"]),
         "date": occurrence_date.isoformat(),
         "startTime": start_time.strftime("%H:%M"),
         "endTime": end_time.strftime("%H:%M"),
+        "status": row["status"],
     }
 
 
-def _validate_existing_conflicts(plan_item, drafts, rows):
-    conflicts = [
-        row
-        for row in rows
-        if any(_overlaps(draft, _existing_occurrence(row)) for draft in drafts)
+def _current_conflicts(drafts, occurrences, rows):
+    conflicts = []
+    for row in rows:
+        existing = _existing_occurrence(row)
+        source = next(
+            (
+                occurrence
+                for draft, occurrence in zip(drafts, occurrences, strict=True)
+                if _overlaps(draft, existing)
+            ),
+            None,
+        )
+        if source is not None:
+            conflicts.append((row, existing, source))
+    return conflicts
+
+
+def _public_conflicts(conflicts):
+    return [
+        {
+            "occurrenceId": existing["id"],
+            "planItemId": existing["planItemId"],
+            "date": existing["date"],
+            "startTime": existing["startTime"],
+            "endTime": existing["endTime"],
+            "status": existing["status"],
+        }
+        for _row, existing, _source in conflicts
     ]
+
+
+def _validate_existing_conflicts(
+    plan_item,
+    drafts,
+    occurrences,
+    rows,
+    confirmed_occurrence_ids,
+):
+    conflicts = _current_conflicts(drafts, occurrences, rows)
     if not conflicts:
-        return
-    if any(row["status"] == "completed" for row in conflicts):
+        return []
+    if any(row["status"] == "completed" for row, _existing, _source in conflicts):
         raise PlanItemConflictError(
             "completed_conflict",
             "El intervalo contiene un registro completado y protegido.",
@@ -437,18 +520,30 @@ def _validate_existing_conflicts(plan_item, drafts, rows):
     candidate_priority = scheduling_priority(plan_item["kind"], subtype)
     if any(
         candidate_priority <= scheduling_priority(row["kind"], row["subtype"])
-        for row in conflicts
+        for row, _existing, _source in conflicts
     ):
         raise PlanItemConflictError(
             "priority_conflict",
             "La prioridad del PlanItem no permite desplazar los conflictos.",
         )
-    # El frontend exige una confirmación antes de hacer este desplazamiento.
-    # El POST canónico todavía no incluye una señal de confirmación.
-    raise PlanItemConflictError(
-        "priority_override_required",
-        "La creación requiere confirmar un desplazamiento por prioridad.",
-    )
+    current_ids = {existing["id"] for _row, existing, _source in conflicts}
+    if (
+        confirmed_occurrence_ids is None
+        or not current_ids.issubset(confirmed_occurrence_ids)
+    ):
+        raise PlanItemConflictError(
+            "priority_override_required",
+            "La creación requiere confirmar un desplazamiento por prioridad.",
+            _public_conflicts(conflicts),
+        )
+    return [
+        {
+            "occurrenceId": existing["id"],
+            "currentStatus": row["status"],
+            "sourceOccurrenceId": source["id"],
+        }
+        for row, existing, source in conflicts
+    ]
 
 
 def _assign_ids(plan_item, drafts, uuid_factory):
@@ -478,8 +573,8 @@ def _validate_generated_ids(plan_item, occurrences):
 
 def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
     """Valida, materializa y persiste todo o nada en una transacción."""
-    normalized = validate_plan_item_payload(payload)
-    current_date = reference_date or date.today()
+    normalized, confirmed_occurrence_ids = validate_plan_item_command(payload)
+    current_date = reference_date or _today()
     if isinstance(current_date, datetime) or not isinstance(current_date, date):
         raise TypeError("reference_date debe ser date.")
 
@@ -498,18 +593,32 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
 
     try:
         with database.get_connection() as connection:
+            connection.isolation_level = IsolationLevel.SERIALIZABLE
             with connection.transaction():
                 blocking_rows = plan_item_repository.list_blocking_occurrences(
                     connection,
                     sorted({draft["date"] for draft in drafts}),
                 )
-                _validate_existing_conflicts(plan_item, drafts, blocking_rows)
+                overrides = _validate_existing_conflicts(
+                    plan_item,
+                    drafts,
+                    occurrences,
+                    blocking_rows,
+                    confirmed_occurrence_ids,
+                )
                 plan_item_repository.insert_plan_item_graph(
                     connection, plan_item, occurrences
                 )
+                plan_item_repository.apply_priority_overrides(
+                    connection, overrides
+                )
     except PlanItemConflictError:
         raise
-    except (database.DatabaseConnectionError, psycopg.Error):
+    except (
+        database.DatabaseConnectionError,
+        plan_item_repository.PlanItemRepositoryError,
+        psycopg.Error,
+    ):
         raise PlanItemCreationUnavailableError(
             "No se pudo crear el PlanItem persistente."
         ) from None
