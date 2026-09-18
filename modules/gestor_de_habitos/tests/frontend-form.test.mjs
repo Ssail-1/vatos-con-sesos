@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeWeekdayOverride, validateFormValues } from "../js/views/plan-item-form.js";
+import { configsEqual, normalizeWeekdayOverride, validateFormValues } from "../js/views/plan-item-form.js";
 import { generationSlot } from "./helpers/generation-configs.mjs";
 
 const weeklySlots = [1, 3, 5].map((isoWeekday) => generationSlot({
@@ -35,5 +35,31 @@ assert.equal(validateFormValues({ ...base, scheduleMode: "weekly", weeklySlots: 
 assert.deepEqual(normalizeWeekdayOverride("08:00", "09:00", "10:00", "11:00"), { startTime: "10:00", endTime: "11:00" });
 assert.deepEqual(normalizeWeekdayOverride("08:00", "09:00", "10:30", "11:30"), { startTime: "10:30", endTime: "11:30" });
 assert.equal(normalizeWeekdayOverride("08:00", "09:00", "08:00", "09:00"), null);
+assert.equal(configsEqual(
+    {
+        mode: "weekly",
+        startDate: "2026-09-18",
+        endDate: "2026-09-25",
+        indefinite: false,
+        slots: [{ id: "slot", isoWeekday: 5, startTime: "08:00", endTime: "11:00" }],
+    },
+    {
+        endDate: "2026-09-25",
+        indefinite: false,
+        mode: "weekly",
+        slots: [{ endTime: "11:00", id: "slot", isoWeekday: 5, startTime: "08:00" }],
+        startDate: "2026-09-18",
+    },
+), true, "el orden de propiedades del JSON hidratado no simula un cambio de recurrencia");
+const invalidExactOccurrence = validateFormValues({
+    ...base,
+    scheduleMode: "interval_days",
+    date: "invalid",
+    startTime: "11:00",
+    endTime: "10:00",
+    validateOccurrence: true,
+});
+assert.ok(invalidExactOccurrence.errors.some(({ field }) => field === "date"));
+assert.ok(invalidExactOccurrence.errors.some(({ field }) => field === "endTime"));
 
 console.log("frontend-form.test.mjs: todas las pruebas pasaron");

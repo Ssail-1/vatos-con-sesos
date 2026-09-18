@@ -1,5 +1,14 @@
-import { createPlanItem, fetchPlannerState } from "./api/planner-api.js";
+import {
+    createPlanItem,
+    deleteOccurrence,
+    fetchPlannerState,
+    updateOccurrence,
+} from "./api/planner-api.js";
 import { createPlannerBootstrap } from "./bootstrap/planner-bootstrap.js";
+import {
+    createOccurrenceMutationCoordinator,
+    getOccurrenceMutationErrorMessage,
+} from "./mutations/occurrence-mutation.js";
 import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
 import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
@@ -141,14 +150,24 @@ const matrixView = createPlannerMatrixView({
     onEdit: (item, occurrence, opener, selectedDateKey, scheduleOnly) => (
         planItemFormView.openEdit(item, occurrence, selectedDateKey, opener, scheduleOnly)
     ),
-    onDelete: (item, opener, selectedDateKey) => {
-        const options = plannerStore.getDeletionOptions(item.id, selectedDateKey);
+    onDelete: (item, occurrence, opener, selectedDateKey) => {
+        const options = plannerStore.getDeletionOptions(
+            item.id,
+            selectedDateKey,
+            occurrence?.id ?? null,
+        );
         deletionDialogView.open(options, {
-            onDeleteOccurrence: (occurrenceId) => plannerStore.deleteOccurrenceForDate(occurrenceId),
+            onDeleteOccurrence: async (occurrenceId) => {
+                const outcome = await occurrenceDeleteMutation.submit(occurrenceId);
+                return settlePersistentOccurrenceMutation(outcome, {
+                    operation: "delete",
+                    planItemId: item.id,
+                });
+            },
             onStopPlanning: (planItemId, date) => plannerStore.stopPlanItemFromDate(planItemId, date),
             onComplete: (result, operation) => {
-                selectedPlanItemId = result.planItem.id;
-                render();
+                selectedPlanItemId = result?.planItem?.id ?? item.id;
+                if (operation !== "deleted_occurrence") render();
                 showFeedback(
                     operation === "deleted_occurrence"
                         ? "La aparición fue eliminada únicamente para esta fecha."
@@ -204,6 +223,47 @@ const planItemCreationMutation = createPlanItemMutationCoordinator({
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
+
+const occurrenceUpdateMutation = createOccurrenceMutationCoordinator({
+    mutateOccurrence: updateOccurrence,
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+const occurrenceDeleteMutation = createOccurrenceMutationCoordinator({
+    mutateOccurrence: deleteOccurrence,
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) {
+    if (outcome.status === "synced") {
+        selectedPlanItemId = planItemId;
+        render();
+        showFeedback(
+            operation === "delete"
+                ? "La aparición fue eliminada y el planner quedó sincronizado."
+                : "La aparición fue actualizada y el planner quedó sincronizado.",
+            "notice",
+        );
+        return { status: "synced" };
+    }
+    if (outcome.status === "saved_refresh_error") {
+        return {
+            status: "saved_refresh_error",
+            keepOpen: true,
+            retryRefresh: true,
+            message: operation === "delete"
+                ? "La aparición se eliminó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a eliminar."
+                : "La aparición se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a modificar.",
+        };
+    }
+    if (outcome.status === "mutation_error") {
+        outcome.error.message = getOccurrenceMutationErrorMessage(outcome.error, operation);
+        throw outcome.error;
+    }
+    throw new Error("No se pudo completar la mutación persistente.");
+}
 
 function persistentCreationErrorMessage(error) {
     if (error?.code === "network_error") {
@@ -317,12 +377,18 @@ const planItemFormView = createPlanItemFormView({
                     result.generationConfig,
                 );
             } else {
-                prepared = plannerStore.prepareOccurrenceUpdate(
-                    context.planItemId,
-                    result.planItem,
+                const outcome = await occurrenceUpdateMutation.submit(
                     context.occurrenceId,
-                    result.occurrence,
+                    {
+                        date: result.occurrence.date,
+                        startTime: result.occurrence.startTime,
+                        endTime: result.occurrence.endTime,
+                    },
                 );
+                return settlePersistentOccurrenceMutation(outcome, {
+                    operation: "update",
+                    planItemId: context.planItemId,
+                });
             }
             selectedPlanItemId = context.planItemId;
         } else if (context.mode === "edit_schedule") {

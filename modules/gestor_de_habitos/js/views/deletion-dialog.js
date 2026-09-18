@@ -47,6 +47,9 @@ export function createDeletionDialogView({
     let stopPlanning = null;
     let completeOperation = null;
     let completedResult = null;
+    let running = false;
+    const deleteButtonLabel = deleteOccurrenceButton.textContent;
+    const stopButtonLabel = stopPlanningButton.textContent;
 
     function clearError() {
         errorRegion.hidden = true;
@@ -72,15 +75,39 @@ export function createDeletionDialogView({
             : getReasonMessage(options.stop);
     }
 
-    function run(action, returnValue) {
+    function setRunning(value, returnValue = null) {
+        running = value;
+        deleteOccurrenceButton.disabled = value || !currentOptions?.individual.allowed;
+        stopPlanningButton.disabled = value || !currentOptions?.stop.allowed;
+        backButton.disabled = value;
+        deleteOccurrenceButton.textContent = value && returnValue === "deleted_occurrence"
+            ? "Eliminando…"
+            : deleteButtonLabel;
+        stopPlanningButton.textContent = value && returnValue === "stopped_planning"
+            ? "Aplicando…"
+            : stopButtonLabel;
+    }
+
+    async function run(action, returnValue) {
+        if (running) return;
         clearError();
+        setRunning(true, returnValue);
         try {
-            completedResult = action();
+            completedResult = await action();
+            if (completedResult?.keepOpen) {
+                errorRegion.textContent = completedResult.message;
+                errorRegion.hidden = false;
+                return;
+            }
             dialog.close(returnValue);
         } catch (error) {
             errorRegion.textContent = error.message;
             errorRegion.hidden = false;
-            backButton.focus();
+        } finally {
+            if (dialog.open) {
+                setRunning(false);
+                backButton.focus();
+            }
         }
     }
 
@@ -122,6 +149,8 @@ export function createDeletionDialogView({
         stopPlanning = null;
         completeOperation = null;
         completedResult = null;
+        running = false;
+        setRunning(false);
         clearError();
 
         if (["deleted_occurrence", "stopped_planning"].includes(returnValue)) {
@@ -141,8 +170,10 @@ export function createDeletionDialogView({
             stopPlanning = onStopPlanning;
             completeOperation = onComplete;
             completedResult = null;
+            running = false;
             clearError();
             render(options);
+            setRunning(false);
             dialog.returnValue = "";
             dialog.showModal();
             backButton.focus();

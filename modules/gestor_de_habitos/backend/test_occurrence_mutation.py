@@ -1,6 +1,7 @@
 """Pruebas sin secretos para PATCH/DELETE de una sola occurrence."""
 
 from datetime import date, time
+import os
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 from uuid import UUID
@@ -442,6 +443,45 @@ class EndpointTests(unittest.TestCase):
             response = self.client.delete(f"/api/occurrences/{OCCURRENCE_ID}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), delete_result)
+
+    def test_cors_allows_only_occurrence_patch_delete_and_preflight(self):
+        origin = "http://127.0.0.1:8000"
+        patch_result = {"occurrence": {"id": str(OCCURRENCE_ID)}}
+        delete_result = {"deletedOccurrenceId": str(OCCURRENCE_ID)}
+        with patch.dict(os.environ, {"VCS_ALLOWED_ORIGINS": origin}), patch.object(
+            service, "patch_occurrence", return_value=patch_result
+        ), patch.object(service, "delete_occurrence", return_value=delete_result):
+            preflight = self.client.options(
+                f"/api/occurrences/{OCCURRENCE_ID}",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "PATCH",
+                    "Access-Control-Request-Headers": "Content-Type",
+                },
+            )
+            patch_response = self.client.patch(
+                f"/api/occurrences/{OCCURRENCE_ID}",
+                json={"date": "2026-09-20", "startTime": "08:00", "endTime": "09:00"},
+                headers={"Origin": origin},
+            )
+            delete_response = self.client.delete(
+                f"/api/occurrences/{OCCURRENCE_ID}", headers={"Origin": origin}
+            )
+            rejected = self.client.options(
+                f"/api/occurrences/{OCCURRENCE_ID}",
+                headers={"Origin": "http://example.invalid"},
+            )
+
+        for response in (preflight, patch_response, delete_response):
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), origin)
+            self.assertEqual(
+                response.headers.get("Access-Control-Allow-Methods"),
+                "PATCH, DELETE, OPTIONS",
+            )
+            self.assertEqual(
+                response.headers.get("Access-Control-Allow-Headers"), "Content-Type"
+            )
+        self.assertNotIn("Access-Control-Allow-Origin", rejected.headers)
 
     def test_errors_are_mapped_and_private_details_are_hidden(self):
         cases = (

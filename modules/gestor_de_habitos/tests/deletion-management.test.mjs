@@ -263,6 +263,9 @@ for (const [id, config] of modeCases) {
     const store = createPlannerStore([planItem("ambiguous")], [], REFERENCE_DATE);
     const first = occurrenceFor(store, "ambiguous", REFERENCE_DATE);
     const adHoc = store.addOccurrenceForPlanItem("ambiguous", { date: REFERENCE_DATE, startTime: "10:00", endTime: "11:00" });
+    const exactOptions = store.getDeletionOptions("ambiguous", REFERENCE_DATE, adHoc.id);
+    assert.equal(exactOptions.individual.allowed, true);
+    assert.equal(exactOptions.individual.occurrence.id, adHoc.id, "la UI resuelve la occurrence por ID, no por fecha");
     store.deleteOccurrenceForDate(first.id);
     assert.equal(store.getOccurrenceById(first.id), null);
     assert.ok(store.getOccurrenceById(adHoc.id));

@@ -215,7 +215,6 @@ function createPlanItemRow(rowData, position, context) {
         planItem,
         occurrence,
         selectedOccurrence,
-        selectedDateAmbiguous,
     } = rowData;
     const row = document.createElement("tr");
     const nameCell = document.createElement("th");
@@ -273,10 +272,8 @@ function createPlanItemRow(rowData, position, context) {
             "aria-label",
             selectedDateFrozen
                 ? `${planItem.name}: historial congelado, solo lectura`
-                : selectedDateAmbiguous
-                ? `Editar planificación completa de ${planItem.name}; la fecha seleccionada tiene varios horarios`
                 : selectedOccurrence
-                ? `Editar ${planItem.name} en la fecha seleccionada`
+                ? `Editar ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
                 : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
         editButton.disabled = selectedDateFrozen;
@@ -289,7 +286,7 @@ function createPlanItemRow(rowData, position, context) {
                     selectedOccurrence,
                     editButton,
                     formatDateKey(context.selectedDate),
-                    selectedDateAmbiguous,
+                    false,
                 );
             }
         });
@@ -300,12 +297,14 @@ function createPlanItemRow(rowData, position, context) {
             "aria-label",
             selectedDateFrozen
                 ? `Consultar eliminación de ${planItem.name}: historial congelado`
+                : selectedOccurrence
+                ? `Gestionar eliminación de ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
                 : `Gestionar eliminación de ${planItem.name} desde la fecha seleccionada`,
         );
         deleteButton.title = deleteButton.getAttribute("aria-label");
         deleteButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            context.onDelete(planItem, deleteButton, selectedDateKey);
+            context.onDelete(planItem, selectedOccurrence, deleteButton, selectedDateKey);
         });
         actions.append(editButton, deleteButton);
         nameContent.prepend(insertButton);

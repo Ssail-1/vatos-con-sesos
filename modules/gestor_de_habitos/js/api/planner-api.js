@@ -141,3 +141,74 @@ export async function createPlanItem(payload, {
     }
     return responsePayload;
 }
+
+async function mutateOccurrence(method, occurrenceId, payload, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+
+    let response;
+    try {
+        response = await fetchImpl(
+            buildApiUrl(`/api/occurrences/${encodeURIComponent(occurrenceId)}`, baseUrl),
+            {
+                method,
+                headers: {
+                    Accept: "application/json",
+                    ...(payload === undefined ? {} : { "Content-Type": "application/json" }),
+                },
+                ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+            },
+        );
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+
+    let responsePayload;
+    try {
+        responsePayload = await readJson(response);
+    } catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+
+    if (!response?.ok) {
+        const serverCode = isRecord(responsePayload) && typeof responsePayload.code === "string"
+            ? responsePayload.code
+            : "http_error";
+        throw new PlannerApiError(
+            serverCode,
+            isRecord(responsePayload) && typeof responsePayload.message === "string"
+                ? responsePayload.message
+                : "El backend no pudo modificar la occurrence.",
+            { status: Number.isInteger(response?.status) ? response.status : null },
+        );
+    }
+
+    const validPatch = method === "PATCH"
+        && isRecord(responsePayload)
+        && isRecord(responsePayload.occurrence)
+        && typeof responsePayload.occurrence.id === "string";
+    const validDelete = method === "DELETE"
+        && isRecord(responsePayload)
+        && typeof responsePayload.deletedOccurrenceId === "string";
+    if (!validPatch && !validDelete) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "La mutación fue aceptada, pero su respuesta no cumple el contrato esperado.",
+            { mutationConfirmed: true, status: response.status },
+        );
+    }
+    return responsePayload;
+}
+
+export function updateOccurrence(occurrenceId, payload, options = {}) {
+    return mutateOccurrence("PATCH", occurrenceId, payload, options);
+}
+
+export function deleteOccurrence(occurrenceId, options = {}) {
+    return mutateOccurrence("DELETE", occurrenceId, undefined, options);
+}

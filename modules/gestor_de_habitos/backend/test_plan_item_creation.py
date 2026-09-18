@@ -1009,11 +1009,7 @@ class EndpointTests(unittest.TestCase):
             post = self.client.post(
                 "/api/plan-items", json=activity_payload(), headers={"Origin": origin}
             )
-            unrelated = self.client.patch(
-                "/api/occurrences/not-a-uuid",
-                json={},
-                headers={"Origin": origin},
-            )
+            unrelated = self.client.get("/api/health", headers={"Origin": origin})
             rejected = self.client.options(
                 "/api/plan-items",
                 headers={"Origin": "http://example.invalid"},

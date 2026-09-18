@@ -1,548 +1,402 @@
 # CURRENT TASK
 
-## MVP 05.7.2.1 — Occurrence-aware monthly planner rendering
+## MVP 05.7.3 — Persistent Single Day occurrence mutations
 
 ### Propósito
 
-Corregir la representación visual del planner mensual para que el modelo
-multi-slot se represente de forma clara y escalable.
+Conectar las mutaciones de una occurrence concreta del planner real con los
+endpoints persistentes ya existentes.
 
-Esta fase NO modifica persistencia ni reglas de dominio.
+Después de esta fase, editar o eliminar una occurrence desde la UI debe
+recorrer:
+
+```text
+Occurrence seleccionada
+    ↓
+UI
+    ↓
+PATCH /api/occurrences/<id>
+o
+DELETE /api/occurrences/<id>
+    ↓
+PostgreSQL
+    ↓
+GET /api/planner-state
+    ↓
+hydratePlannerState()
+    ↓
+UI
+```
+
+y sobrevivir:
+
+```text
+reload / F5
+```
 
 Estado:
 
 ```text
 05.7.1    Bootstrap persistente                       ✅
-05.7.2    Crear PlanItem persistente desde UI         ✅
-05.7.2.1  Rendering occurrence-aware                  ← ACTUAL
-05.7.3    Single Day persistente                      → después
-```
-
-La nueva regla visual fundamental es:
-
-```text
-día seleccionado
-→ detalle por Occurrence
-
-días no seleccionados
-→ resumen por PlanItem
+05.7.2    Crear PlanItem persistente                  ✅
+05.7.2.1  Rendering occurrence-aware                  ✅
+05.7.3    Single Day persistente                      ← ACTUAL
+05.7.4    Apply Week / Apply Future persistentes      → después
+05.7.5    Mutation conflict resolution UX             → después
+05.7.6    Verificación local final                    → después
 ```
 
 ---
 
 # 1. Alcance
 
-Modificar exclusivamente la representación del planner/matriz.
-
-No cambiar:
+Implementar exclusivamente desde frontend:
 
 ```text
-PostgreSQL
-schema
-API contracts
-materialization
-generation rules
-priority rules
-temporal integrity
+editar UNA occurrence
+eliminar UNA occurrence
+```
+
+mediante los endpoints persistentes actuales.
+
+Reutilizar los contratos backend ya aprobados.
+
+NO implementar todavía el sistema completo de:
+
+```text
+multiple displacement sources
+user-authorized displacement general
+conflict editor embebido
+desplazar todas las compatibles
+cleanup de provenance
+```
+
+Eso permanece en ROADMAP / 05.7.5.
+
+---
+
+# 2. Endpoints
+
+Conectar:
+
+```http
+PATCH /api/occurrences/<occurrence_id>
+```
+
+y:
+
+```http
+DELETE /api/occurrences/<occurrence_id>
+```
+
+NO conectar todavía:
+
+```text
+Apply Week
+Apply Future
 ```
 
 ---
 
-# 2. Fuente de verdad visual
+# 3. Fuente de verdad
 
-La UI debe renderizar utilizando:
+Después de cualquier mutación exitosa:
 
 ```text
-PlanItems
-+
-Occurrences persistidas/hidratadas
+PATCH/DELETE
+    ↓
+GET /api/planner-state
+    ↓
+hydratePlannerState()
 ```
 
-NO inferir occurrences nuevas desde `generationConfig`.
+PostgreSQL/backend continúa siendo la fuente autoritativa.
 
-NO rematerializar.
+NO actualizar manualmente el store como verdad persistida final.
 
 ---
 
-# 3. Problema actual
+# 4. No optimistic persistence
 
-Actualmente un PlanItem con múltiples occurrences el mismo día puede
-renderizarse conceptualmente como:
+No asumir éxito antes de que el backend confirme.
+
+Flujo:
 
 ```text
-Uber     □
-         □
-         □
+usuario edita/elimina
+→ saving
+→ mutation HTTP
+→ GET planner-state
+→ hydrate
+→ render
 ```
 
-dentro de una única fila.
+Si la mutation falla:
 
-Esto no escala y además oculta el orden cronológico real del día.
-
-Con muchas occurrences produce una celda excesivamente alta.
-
-Ese comportamiento debe desaparecer.
+```text
+store persistido anterior permanece
+```
 
 ---
 
-# 4. Día seleccionado
+# 5. Occurrence identity
 
-Para la fecha actualmente seleccionada:
+La UI occurrence-aware creada en 05.7.2.1 debe permitir identificar
+inequívocamente:
 
 ```text
-1 fila = 1 Occurrence
+Occurrence.id
+```
+
+de la fila seleccionada.
+
+Editar:
+
+```text
+Uber 08:00
+```
+
+NO debe afectar:
+
+```text
+Uber 14:00
+Uber 20:00
+```
+
+aunque pertenezcan al mismo PlanItem.
+
+---
+
+# 6. API client
+
+Extender:
+
+```text
+js/api/planner-api.js
+```
+
+o la capa equivalente actual con operaciones conceptuales:
+
+```js
+updateOccurrence(occurrenceId, payload)
+deleteOccurrence(occurrenceId)
+```
+
+Responsabilidad:
+
+```text
+HTTP
+JSON
+status codes
+network errors
 ```
 
 NO:
 
 ```text
-1 fila = 1 PlanItem
-```
-
-Cada occurrence debe tener su propia:
-
-```text
-fila
-hora de inicio
-duración
-actividad
-control de status
+reglas de dominio
+render
+materialization
+store mutation directa
 ```
 
 ---
 
-# 5. Orden cronológico global
+# 7. No fetch disperso
 
-Las occurrences del día seleccionado deben ordenarse globalmente por:
-
-```text
-startTime
-```
-
-No agrupar primero por PlanItem.
-
-Ejemplo:
+NO colocar `fetch()` directamente en:
 
 ```text
-04:25 Despertar
-06:30 Prueba recurrente multi-slot
-08:00 Uber
-12:00 Prueba recurrente multi-slot
-14:00 Uber
-20:00 Uber
+views
+planner-store
+matrix rendering
 ```
 
-No:
-
-```text
-Despertar
-Prueba recurrente occurrence 1
-Prueba recurrente occurrence 2
-Uber occurrence 1
-Uber occurrence 2
-Uber occurrence 3
-```
-
-si eso rompe el orden temporal.
-
-Como desempate usar de forma determinista:
-
-```text
-endTime
-PlanItem name/id
-Occurrence.id
-```
-
-o equivalente estable.
+Mantener la separación creada en 05.7.1/05.7.2.
 
 ---
 
-# 6. Columnas Inicio y Duración
+# 8. PATCH contract
 
-En una fila de occurrence del día seleccionado:
+Antes de implementar, inspeccionar el contrato backend real de:
 
-```text
-Inicio
+```http
+PATCH /api/occurrences/<id>
 ```
 
-debe provenir de:
+Usar exactamente el payload aprobado.
 
-```text
-occurrence.startTime
+Esperado conceptualmente:
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "startTime": "HH:MM",
+  "endTime": "HH:MM"
+}
 ```
 
-y:
-
-```text
-Duración
-```
-
-de:
-
-```text
-occurrence.endTime - occurrence.startTime
-```
-
-Usar la occurrence concreta, NO el GenerationSlot actual.
-
-Esto es importante porque una occurrence puede haber sido editada.
+NO inventar campos adicionales sin respaldo del backend existente.
 
 ---
 
-# 7. Actividad
+# 9. Editar misma fecha
 
-Cada occurrence debe repetir el nombre del PlanItem.
-
-Ejemplo:
+Caso recurrente:
 
 ```text
-08:00 Uber
-14:00 Uber
-20:00 Uber
+S1 baseline
+08:00–09:00
+
+Occurrence concreta
+08:00–09:00
 ```
 
-No fusionar visualmente las tres filas únicamente porque pertenecen al
-mismo PlanItem.
-
----
-
-# 8. Ordinal de occurrence del mismo PlanItem
-
-Si el mismo PlanItem posee más de una occurrence en la fecha seleccionada,
-los controles de status deben mostrar ordinal:
+Usuario cambia solo esa aparición a:
 
 ```text
-□¹
-□²
-□³
-...
+08:30–09:30
 ```
 
-El ordinal corresponde únicamente a las occurrences de ESE PlanItem en
-la fecha seleccionada, ordenadas por hora.
-
-Ejemplo:
+Esperar:
 
 ```text
-06:30 Prueba recurrente multi-slot  □¹
-08:00 Uber                           □¹
-12:00 Prueba recurrente multi-slot  □²
-14:00 Uber                           □²
-20:00 Uber                           □³
-```
-
-Los ordinales de diferentes PlanItems son independientes.
-
----
-
-# 9. Una sola occurrence
-
-Si un PlanItem tiene exactamente una occurrence en la fecha seleccionada:
-
-```text
-□
-```
-
-No mostrar:
-
-```text
-□¹
-```
-
-El superíndice solo aporta información cuando existen múltiples
-occurrences del mismo PlanItem ese día.
-
----
-
-# 10. Superíndice
-
-Renderizar el ordinal semánticamente.
-
-Preferir HTML equivalente a:
-
-```html
-<sup>2</sup>
-```
-
-No depender de una lista limitada de caracteres Unicode como:
-
-```text
-¹²³⁴...
-```
-
-porque un día podría contener más occurrences.
-
-Debe soportar conceptualmente:
-
-```text
-1...N
+Occurrence.id preservado
+Occurrence cambia horario
+GenerationSlot NO cambia
+otras fechas NO cambian
 ```
 
 ---
 
-# 11. Fechas no seleccionadas
+# 10. Editar y mover de fecha
 
-Para cualquier fecha del mes que NO sea la fecha seleccionada:
-
-```text
-NO expandir occurrences en filas adicionales
-```
-
-Mantener una representación compacta por:
+Si el contrato/backend actual permite:
 
 ```text
-PlanItem + fecha
+22 Sep
+08:00–09:00
 ```
+
+→
+
+```text
+23 Sep
+10:00–11:00
+```
+
+debe conservarse la semántica existente:
+
+```text
+slot exclusion en fecha original
+Occurrence movida
+sourceGenerationSlotId preservado cuando corresponda
+```
+
+No reimplementar esta lógica en frontend.
 
 ---
 
-# 12. Fecha no seleccionada con cero occurrences
+# 11. Manual dates
 
-Renderizar:
+Editar una occurrence proveniente de:
 
 ```text
-—
+manual_dates
 ```
 
-o el marcador vacío actual equivalente.
+debe usar el endpoint existente y preservar la sincronización correcta entre:
+
+```text
+manual entry
+slot
+occurrence
+```
+
+según el backend ya aprobado.
+
+Frontend no debe conocer ni reproducir esa lógica interna.
 
 ---
 
-# 13. Fecha no seleccionada con una occurrence
+# 12. Ad-hoc
 
-Si existe exactamente una occurrence:
-
-```text
-mostrar el control/status individual actual
-```
-
-Ejemplo conceptual:
+Una occurrence con:
 
 ```text
-□
+sourceGenerationSlotId = null
 ```
 
-Debe continuar representando el estado de esa occurrence concreta.
+debe poder editarse mediante el mismo flujo.
+
+No exigir source slot para habilitar el editor.
 
 ---
 
-# 14. Fecha no seleccionada con múltiples occurrences
+# 13. DELETE recurrente
 
-Si existen N > 1 occurrences del mismo PlanItem:
+Eliminar una occurrence recurrente mediante:
 
-NO renderizar:
+```http
+DELETE /api/occurrences/<id>
+```
+
+debe conservar la semántica backend actual:
 
 ```text
-□
-□
-□
+crear slot exclusion
+eliminar occurrence concreta
+mantener GenerationSlot
 ```
 
-NO aumentar verticalmente la celda.
-
-Mostrar una representación compacta:
+Después de:
 
 ```text
-—²
-—³
-—⁴
-...
+GET + hydrate
 ```
 
-conceptualmente:
-
-```html
-<span>—<sup>N</sup></span>
-```
-
-Este marcador indica:
-
-```text
-ese PlanItem tiene N occurrences esa fecha
-```
-
-No representa un status agregado.
+la occurrence no debe reaparecer.
 
 ---
 
-# 15. Multi-occurrence compacta no es control colectivo
+# 14. DELETE manual
 
-Un marcador:
-
-```text
-—³
-```
-
-NO significa:
+Para una occurrence `manual_dates`:
 
 ```text
-cambiar las 3 occurrences juntas
+delete occurrence
+delete entry/slot correspondiente
 ```
 
-No debe mutar status de varias occurrences.
+según contrato actual.
 
-El detalle/status individual aparece al seleccionar esa fecha.
+Caso última entry:
 
-No inventar semántica colectiva.
+```text
+409 last_manual_entry
+```
+
+debe mostrarse de forma controlada.
+
+No borrar el PlanItem automáticamente.
 
 ---
 
-# 16. Seleccionar esa fecha
+# 15. DELETE ad-hoc
 
-Cuando el usuario seleccione una fecha que previamente mostraba:
-
-```text
-—³
-```
-
-el planner debe expandir esas tres occurrences en filas independientes.
-
-Ejemplo:
+Una occurrence ad-hoc:
 
 ```text
-08:00 Uber □¹
-14:00 Uber □²
-20:00 Uber □³
+sourceGenerationSlotId = null
 ```
+
+debe eliminar únicamente esa occurrence.
 
 ---
 
-# 17. PlanItems sin occurrence en el día seleccionado
+# 16. Status preservation
 
-Los PlanItems que existen en el mes pero NO poseen occurrence en la fecha
-seleccionada deben seguir visibles en la vista mensual.
-
-Deben renderizarse como UNA fila compacta.
-
-Ejemplo:
-
-```text
-#   Inicio   Duración   Actividad
-7     —        —       Plan item ejemplo
-8     —        —       Otro plan item
-```
-
-No crear una fila por GenerationSlot.
-
-No crear una fila por occurrence de otros días.
-
----
-
-# 18. Orden de filas
-
-Primero:
-
-```text
-todas las occurrences del día seleccionado
-```
-
-ordenadas cronológicamente.
-
-Después:
-
-```text
-PlanItems sin occurrence en la fecha seleccionada
-```
-
-como filas compactas.
-
-Para las filas compactas usar orden estable, preferentemente el orden
-actual aprobado del planner.
-
----
-
-# 19. Numeración #
-
-La columna:
-
-```text
-#
-```
-
-debe numerar las filas visuales actuales.
-
-Ejemplo:
-
-```text
-1 occurrence
-2 occurrence
-3 occurrence
-...
-7 summary PlanItem
-8 summary PlanItem
-```
-
-No representar PlanItem.id ni occurrence ordinal en esta columna.
-
----
-
-# 20. Celdas mensuales de una fila expandida
-
-Un PlanItem puede tener varias filas porque tiene varias occurrences el día
-seleccionado.
-
-Para evitar repetir la misma información mensual N veces:
-
-- la primera fila cronológica de ese PlanItem en el día seleccionado puede
-  actuar como fila portadora del resumen de fechas NO seleccionadas;
-- las filas adicionales del mismo PlanItem deben dejar vacías esas celdas
-  de resumen o usar una representación visual equivalente que no duplique
-  información.
-
-La columna de la fecha seleccionada sí debe contener el control individual
-de cada occurrence en su respectiva fila.
-
-NO duplicar:
-
-```text
-—² —² —²
-```
-
-en cada fila expandida del mismo PlanItem.
-
----
-
-# 21. Ejemplo normativo
-
-Fecha seleccionada:
-
-```text
-22 de septiembre
-```
-
-Estado conceptual:
-
-```text
-#  Inicio  Duración  Actividad
--------------------------------------------------------------
-1  04:25    5 min    Despertar                         □
-2  06:30    1 h      Prueba recurrente multi-slot     □¹
-3  08:00    3 h      Uber                              □¹
-4  12:00    1 h      Prueba recurrente multi-slot     □²
-5  14:00    3 h      Uber                              □²
-6  20:00    2 h      Uber                              □³
-7    —       —       Plan item ejemplo
-8    —       —       Otro plan item
-```
-
-Mientras otras fechas permanecen compactas:
-
-```text
-Actividad       22   23   24   25   26
-----------------------------------------
-Uber             *    —    —²    —    —²
-Despertar         *    □     □     □     □
-```
-
-`*` representa aquí únicamente las occurrences expandidas de la fecha
-seleccionada; la implementación real usa sus controles individuales en
-sus respectivas filas.
-
----
-
-# 22. Status independientes
-
-Cada occurrence expandida conserva su propio:
+Las mutaciones de scheduling de esta fase NO deben cambiar arbitrariamente:
 
 ```text
 pending
@@ -553,182 +407,679 @@ not_finished
 cancelled
 ```
 
-Cambiar visualmente una occurrence no debe afectar automáticamente otra
-occurrence del mismo PlanItem.
-
-En esta fase las mutations de status pueden continuar con la semántica
-local existente.
-
-Persistencia de Single Day pertenece a 05.7.3.
+Preservar el status existente salvo que el contrato backend aprobado
+especifique una transición obligatoria.
 
 ---
 
-# 23. sourceGenerationSlotId
+# 17. Status mutation NO se inventa
 
-El rendering NO debe depender de que:
+Antes de conectar persistencia de cambios de status, inspeccionar si existe
+un endpoint/contrato backend explícito para ello.
 
-```text
-sourceGenerationSlotId
-```
-
-esté presente.
-
-Una occurrence ad-hoc:
+Si NO existe:
 
 ```text
-sourceGenerationSlotId = null
+NO inventar endpoint
+NO ampliar PATCH silenciosamente
 ```
 
-debe renderizarse exactamente igual como occurrence concreta.
+Mantener temporalmente el comportamiento local existente y REPORTAR que la
+persistencia de status requiere una fase/contrato separado.
+
+Si SÍ existe un contrato ya aprobado y cubierto por backend actual:
+
+```text
+puede conectarse únicamente si forma claramente parte de Single Day
+```
+
+y debe reportarse.
 
 ---
 
-# 24. Overrides
+# 18. Cancelled / not_completed y ocupación temporal
 
-Occurrences editadas previamente deben mostrarse utilizando:
+Preservar las reglas backend ya existentes.
+
+Especialmente:
 
 ```text
-occurrence.date
-occurrence.startTime
-occurrence.endTime
+cancelled
+not_completed
 ```
 
-No reemplazar visualmente sus horarios con el GenerationSlot actual.
+no deben convertirse accidentalmente en blockers temporales si la política
+actual ya los considera no ocupantes.
+
+No rediseñar la política en esta fase.
+
+Las ampliaciones sobre provenance múltiple están en ROADMAP.
 
 ---
 
-# 25. Manual dates
+# 19. Conflict handling
 
-`manual_dates` debe seguir las mismas reglas visuales.
-
-Varias entries del mismo PlanItem en una fecha:
+Si PATCH provoca un conflicto:
 
 ```text
-→ varias occurrence rows cuando esa fecha está seleccionada
-→ contador compacto cuando no está seleccionada
+mostrar el error/control actual de forma comprensible
+```
+
+No ignorar el conflicto.
+
+No ejecutar desplazamientos silenciosos.
+
+---
+
+# 20. Priority override existente
+
+Inspeccionar el contrato backend real de PATCH.
+
+Si ya existe un mecanismo completo y explícito para confirmar un
+`priority_override_required`:
+
+```text
+conectarlo respetando exactamente ese contrato
+```
+
+Si el backend solo puede DETECTAR el conflicto pero NO existe una operación
+inequívoca para confirmarlo:
+
+```text
+NO inventar un mecanismo nuevo
+```
+
+En ese caso:
+
+```text
+mostrar el conflicto
+mantener formulario/editor
+reportar la limitación
+```
+
+y continuar el resto de 05.7.3 si es posible.
+
+La UX avanzada de resolución queda para 05.7.5.
+
+---
+
+# 21. User-authorized displacement futuro
+
+NO implementar todavía la regla futura que permitirá:
+
+```text
+una occurrence de igual o menor prioridad
+desplazar otra
+por decisión explícita del usuario
+```
+
+Eso está documentado en ROADMAP.
+
+No modificar ahora las reglas de prioridad para anticiparlo.
+
+---
+
+# 22. Conflict details
+
+Si el backend actual devuelve información estructurada sobre conflicts:
+
+```text
+nombre/PlanItem
+occurrenceId
+date
+startTime
+endTime
+status
+```
+
+puede mostrarse de manera mínima.
+
+No construir todavía el diálogo avanzado:
+
+```text
+Ajustar
+Desplazar
+Desplazar todas
+```
+
+Eso pertenece a 05.7.5.
+
+---
+
+# 23. Mutation coordinator
+
+Preferir una capa/coordinador equivalente a la creada para PlanItem create.
+
+Responsabilidades:
+
+```text
+una mutation activa por acción
+distinguir mutation vs refresh
+evitar doble submit
+resync seguro
+```
+
+No convertir `app.js` en un archivo monolítico.
+
+---
+
+# 24. Double submit
+
+Editar:
+
+```text
+Guardar
+Guardar
+```
+
+rápidamente debe producir:
+
+```text
+1 PATCH
+```
+
+Eliminar:
+
+```text
+Eliminar
+Eliminar
+```
+
+debe producir:
+
+```text
+1 DELETE
 ```
 
 ---
 
-# 26. Weekly / interval
+# 25. Mutation success + GET failure
 
-No debe existir diferencia de rendering basada en:
+Caso crítico igual que 05.7.2:
 
 ```text
-weekly
-interval_days
-manual_dates
+PATCH/DELETE → success
+GET planner-state → failure
 ```
 
-La matriz renderiza occurrences concretas.
+La mutación puede YA estar persistida.
+
+NO repetir automáticamente:
+
+```text
+PATCH
+DELETE
+```
+
+Recovery:
+
+```text
+GET /api/planner-state
+```
+
+únicamente.
 
 ---
 
-# 27. Habit / activity
+# 26. Invalid success response
 
-No crear reglas especiales que impidan múltiples occurrences para:
-
-```text
-habit
-activity
-```
-
-Ambos usan el mismo principio occurrence-aware.
-
----
-
-# 28. Responsive
-
-Mantener comportamiento:
+Si la mutation devuelve success HTTP pero el frontend no puede interpretar
+correctamente la respuesta:
 
 ```text
-desktop
-mobile
+asumir que pudo haberse persistido
 ```
 
-La expansión por occurrence no debe introducir:
-
-```text
-overflow horizontal global
-celdas gigantes
-controles superpuestos
-```
-
-La vista móvil debe continuar siendo usable.
-
----
-
-# 29. Accesibilidad
-
-El contador/superíndice debe disponer de significado accesible.
-
-Ejemplo conceptual:
-
-```text
-3 occurrences
-```
-
-No depender únicamente del tamaño pequeño del superíndice para transmitir
-información.
-
-Los controles de occurrence deben seguir siendo identificables de forma
-individual.
-
----
-
-# 30. Arquitectura
-
-Preferir construir un modelo derivado de rendering:
-
-```text
-planItems
-+
-occurrences
-+
-selectedDate
-↓
-display rows
-```
-
-en una función clara/testeable.
-
-NO mutar el store únicamente para acomodar la vista.
-
-El store conserva el modelo canónico.
-
----
-
-# 31. No persistir estado derivado
-
-NO guardar en PostgreSQL ni store como dominio:
-
-```text
-row number
-occurrence ordinal
-compact count
-expanded/collapsed representation
-```
-
-Todo eso es estado derivado de presentación.
-
----
-
-# 32. No backend
-
-Esta fase debe poder completarse solo en frontend.
-
-NO modificar backend salvo que se descubra un bug inequívoco del contrato.
-
-No cambiar:
+Priorizar:
 
 ```text
 GET planner-state
-POST plan-items
+```
+
+antes de permitir repetir la mutación.
+
+---
+
+# 27. Error de red antes de confirmación
+
+Si PATCH/DELETE no obtiene confirmación:
+
+```text
+mostrar error controlado
+mantener estado/formulario necesario
+no alterar store persistido
+```
+
+Puede permitirse un reintento manual.
+
+---
+
+# 28. Error 404
+
+Manejar:
+
+```text
+occurrence_not_found
+```
+
+de forma controlada.
+
+Puede ocurrir por:
+
+```text
+concurrencia
+estado desactualizado
+```
+
+La recuperación puede ofrecer:
+
+```text
+refrescar planner
+```
+
+No crash.
+
+---
+
+# 29. Error 409
+
+Distinguir al menos cuando corresponda:
+
+```text
+history_frozen
+last_manual_entry
+priority_override_required
+priority_conflict
+completed_conflict
+status_context_locked
+concurrent_modification
+planning_stopped
+```
+
+No mostrar todos como:
+
+```text
+"No se pudo guardar"
+```
+
+si el backend proporciona un código útil.
+
+---
+
+# 30. history_frozen
+
+Una occurrence fuera de ventana editable:
+
+```text
+NO debe modificarse/eliminarse
+```
+
+Si UI intenta hacerlo y backend responde:
+
+```text
+409 history_frozen
+```
+
+mostrar feedback claro.
+
+No modificar localmente para fingir éxito.
+
+---
+
+# 31. status_context_locked
+
+Si una occurrence necesaria como:
+
+```text
+sourceOccurrenceId
+```
+
+de otra occurrence no puede modificarse/eliminarse:
+
+```text
+409 status_context_locked
+```
+
+debe preservarse.
+
+No saltarse la protección desde frontend.
+
+---
+
+# 32. Concurrency
+
+Si backend responde:
+
+```text
+409 concurrent_modification
+```
+
+mostrar feedback y permitir:
+
+```text
+GET planner-state
+```
+
+para recuperar el estado actual.
+
+No reintentar mutation automáticamente.
+
+---
+
+# 33. CORS
+
+Extender la allow-list existente únicamente lo necesario para:
+
+```text
+PATCH /api/occurrences/*
+DELETE /api/occurrences/*
+OPTIONS correspondiente
+```
+
+Mantener:
+
+```text
+VCS_ALLOWED_ORIGINS
+```
+
+NO usar:
+
+```text
+Access-Control-Allow-Origin: *
+```
+
+No habilitar todavía Apply Week/Future si no es necesario.
+
+---
+
+# 34. UI edit flow
+
+Desde una fila occurrence-aware:
+
+```text
+seleccionar occurrence
+→ Editar
+→ editor muestra datos de ESA occurrence
+→ Guardar
+→ PATCH
+→ GET
+→ hydrate
+```
+
+El editor debe mostrar:
+
+```text
+date
+startTime
+endTime
+```
+
+de la occurrence concreta.
+
+No del GenerationSlot actual.
+
+---
+
+# 35. UI delete flow
+
+Desde una fila occurrence-aware:
+
+```text
+seleccionar occurrence
+→ Eliminar
+→ confirmación existente
+→ DELETE
+→ GET
+→ hydrate
+```
+
+No eliminar todo el PlanItem.
+
+---
+
+# 36. Occurrence ordinal
+
+Los ordinales visuales:
+
+```text
+□¹
+□²
+□³
+```
+
+son presentación.
+
+NO usarlos como identidad para PATCH/DELETE.
+
+Siempre usar:
+
+```text
+Occurrence.id
 ```
 
 ---
 
-# 33. No migrations
+# 37. Selected day after mutation
+
+Después de hydration:
+
+```text
+mantener selectedDate
+```
+
+si sigue siendo válida.
+
+No saltar arbitrariamente al día actual.
+
+Si la occurrence se movió de fecha:
+
+```text
+no cambiar selectedDate automáticamente
+```
+
+salvo que el comportamiento actual aprobado ya lo haga.
+
+Preferencia:
+
+```text
+mantener contexto del usuario
+```
+
+---
+
+# 38. Expanded rows after mutation
+
+Después de mover/eliminar una occurrence:
+
+```text
+recalcular displayRows
+```
+
+desde el nuevo store hidratado.
+
+No parchear manualmente filas.
+
+---
+
+# 39. Non-selected compact cells
+
+Una eliminación/movimiento persistente debe reflejar inmediatamente:
+
+```text
+—³ → —²
+—² → □
+□ → —
+```
+
+según el número real de occurrences después del GET.
+
+---
+
+# 40. Persistence acceptance — edit
+
+Caso obligatorio:
+
+```text
+Uber 14:00–17:00
+```
+
+editar solo esa occurrence:
+
+```text
+14:30–17:30
+```
+
+Esperar:
+
+```text
+Uber 08:00 intacta
+Uber 20:00 intacta
+Occurrence editada persiste
+F5 conserva 14:30–17:30
+```
+
+---
+
+# 41. Persistence acceptance — delete recurrent
+
+Eliminar una occurrence recurrente concreta.
+
+Esperar:
+
+```text
+desaparece
+F5 no reaparece
+slot general permanece
+otras fechas permanecen
+```
+
+---
+
+# 42. Persistence acceptance — manual
+
+Editar/eliminar una manual entry concreta.
+
+Verificar:
+
+```text
+round-trip exacto
+F5
+última entry protegida
+```
+
+---
+
+# 43. Persistence acceptance — ad-hoc
+
+Editar y eliminar una occurrence ad-hoc.
+
+Verificar:
+
+```text
+sourceGenerationSlotId continúa null cuando corresponde
+F5 refleja estado persistido
+```
+
+---
+
+# 44. Same PlanItem multi-occurrence
+
+Caso:
+
+```text
+08:00 Uber
+14:00 Uber
+20:00 Uber
+```
+
+Editar/eliminar la occurrence de las 14:00.
+
+Resultado:
+
+```text
+08:00 intacta
+14:00 modificada/eliminada
+20:00 intacta
+```
+
+Caso obligatorio.
+
+---
+
+# 45. Reload
+
+Después de cada mutation persistente:
+
+```text
+F5
+```
+
+debe conservar el resultado.
+
+---
+
+# 46. Existing creation regression
+
+05.7.2 debe seguir funcionando:
+
+```text
+crear PlanItem
+→ POST
+→ GET
+→ hydrate
+→ F5
+```
+
+No romper create al ampliar CORS/API client.
+
+---
+
+# 47. Existing rendering regression
+
+05.7.2.1 debe seguir funcionando:
+
+```text
+selected day
+→ occurrence rows
+
+non-selected
+→ compact summary
+```
+
+No volver a checkboxes apilados.
+
+---
+
+# 48. No rematerialization
+
+Después de PATCH/DELETE:
+
+```text
+GET planner-state
+→ hydrate
+```
+
+NO ejecutar materializer frontend sobre las occurrences retornadas.
+
+---
+
+# 49. PostgreSQL
+
+Automatización:
+
+```text
+PostgreSQL 16 aislado/efímero
+```
+
+NO usar:
+
+```text
+vcs_dev
+```
+
+---
+
+# 50. Migrations
 
 NO modificar:
 
@@ -738,226 +1089,187 @@ NO modificar:
 003
 ```
 
-NO crear migration 004.
+NO crear:
+
+```text
+004
+```
+
+No cambiar schema en esta fase.
+
+Si el schema actual hace imposible un contrato aprobado:
+
+```text
+DETENERSE Y REPORTAR
+```
 
 ---
 
-# 34. No nuevas mutations HTTP
+# 51. Backend
 
-NO conectar todavía:
+Los endpoints PATCH/DELETE ya fueron declarados READY durante 05.6.x.
+
+No rediseñar backend para acomodar una UI incorrecta.
+
+Si integración descubre un bug inequívoco:
 
 ```text
-PATCH occurrence
-DELETE occurrence
-Apply Week
-Apply Future
+corregir mínimo
+añadir regresión
+reportar
 ```
-
-Eso comienza en 05.7.3 y siguientes.
 
 ---
 
-# 35. Persisted creation regression
-
-05.7.2 debe continuar funcionando.
-
-Verificar:
-
-```text
-crear PlanItem
-→ POST
-→ GET
-→ hydrate
-→ F5
-→ permanece
-```
-
-El nuevo rendering no debe romper creación persistente.
-
----
-
-# 36. Caso Uber obligatorio
-
-Usar un escenario equivalente a:
-
-```text
-Uber
-
-08:00–11:00
-14:00–17:00
-20:00–22:00
-```
-
-En fecha seleccionada:
-
-```text
-08:00 Uber □¹
-14:00 Uber □²
-20:00 Uber □³
-```
-
-En fecha no seleccionada:
-
-```text
-—³
-```
-
-No tres controles apilados.
-
----
-
-# 37. Intercalación obligatoria
-
-Caso:
-
-```text
-04:25 Despertar
-06:30 A
-08:00 Uber
-10:00 Estudiar
-12:00 A
-14:00 Uber
-16:00 Inglés
-20:00 Uber
-```
-
-Debe renderizarse exactamente en orden temporal global.
-
-No agrupar A ni Uber.
-
----
-
-# 38. Caso PlanItem ausente del día seleccionado
-
-Si:
-
-```text
-PlanItem X
-```
-
-tiene occurrences durante el mes pero ninguna el día seleccionado:
-
-```text
-una sola fila compacta
-Inicio = —
-Duración = —
-```
-
-Sus otras fechas siguen mostrando:
-
-```text
-□
-—²
-—³
-```
-
-según corresponda.
-
----
-
-# 39. Tests
+# 52. Tests frontend
 
 Añadir pruebas útiles para:
 
 ```text
-selected day single occurrence
-selected day multi occurrence
-ordinal per PlanItem
-independent ordinals across PlanItems
-global chronological order
-non-selected zero occurrence
-non-selected single occurrence
-non-selected multi occurrence compact counter
-PlanItem absent selected day
-ad-hoc occurrence
-manual_dates multi-entry
-weekly multi-slot
-interval multi-slot
-status independence
-no duplicate summary cells
-responsive rendering if practical
+PATCH success + GET + hydrate
+DELETE success + GET + hydrate
+
+same PlanItem multiple occurrences
+edit exact occurrence
+delete exact occurrence
+
+manual
+recurrent
+ad-hoc
+
+double PATCH
+double DELETE
+
+network failure
+
+404
+409 history_frozen
+409 last_manual_entry
+409 status_context_locked
+409 concurrent_modification
+
+mutation success + GET failure
+retry GET only
+
+selectedDate preserved
+compact counter updates
+
+reload/bootstrap compatibility
 ```
 
-No perseguir cantidad de tests.
+No perseguir número de tests.
 
 ---
 
-# 40. Regression
+# 53. PostgreSQL integration
 
-Ejecutar:
+Verificar al menos:
 
 ```text
-frontend completo
-05.7.1 bootstrap tests
-05.7.2 creation tests
-JS/Python parity
-node --check
-git diff --check
+recurrent edit same date
+recurrent move date
+recurrent delete + exclusion
+manual edit/delete
+last manual entry
+ad-hoc edit/delete
+rollback
+concurrency
 ```
 
-Backend completo no es necesario si backend no cambia.
+Reutilizar tests existentes cuando ya cubran correctamente el backend.
+
+No duplicar pruebas innecesariamente.
 
 ---
 
-# 41. Browser verification
+# 54. Browser verification
 
-Verificar en navegador real:
+Con frontend estático + Flask + PostgreSQL 16 efímero, si es viable:
+
+```text
+crear fixture multi-occurrence
+editar una occurrence
+F5
+verificar persistencia
+
+eliminar otra occurrence
+F5
+verificar persistencia
+```
+
+Comprobar:
 
 ```text
 desktop
 mobile
 ```
 
-con:
-
-```text
-fecha con 0 occurrences
-fecha con 1 occurrence por PlanItem
-fecha con múltiples occurrences del mismo PlanItem
-varios PlanItems intercalados por horario
-PlanItems sin occurrence en fecha seleccionada
-```
-
 No inventar resultados.
 
 ---
 
-# 42. Definition of done
+# 55. Regression suite
 
-MVP 05.7.2.1 queda completo cuando:
-
-```text
-DÍA SELECCIONADO
-→ filas por occurrence
-→ orden cronológico
-→ status individual
-→ ordinal por PlanItem cuando N > 1
-```
-
-y:
+Ejecutar:
 
 ```text
-DÍAS NO SELECCIONADOS
-→ resumen compacto por PlanItem
-→ 0 = —
-→ 1 = control individual
-→ N > 1 = —ᴺ
+frontend completo
+backend relevante/completo según cambios
+PostgreSQL integration
+JS/Python parity
+node --check
+compileall si backend cambia
+git diff --check
 ```
-
-sin cambiar el modelo persistente.
 
 ---
 
-# 43. Fuera de alcance
+# 56. Definition of done
 
-NO implementar:
+MVP 05.7.3 queda completo cuando:
 
 ```text
-persistent Single Day
-persistent DELETE
-Apply Week HTTP
-Apply Future HTTP
-PlanItem delete
+Occurrence seleccionada
+→ edit/delete
+→ HTTP
+→ PostgreSQL
+→ GET
+→ hydrate
+→ UI
+→ F5
+→ resultado permanece
+```
+
+para:
+
+```text
+recurrent
+manual
+ad-hoc
+multi-occurrence same PlanItem
+```
+
+sin conectar todavía:
+
+```text
+Apply Week
+Apply Future
+```
+
+---
+
+# 57. Fuera de alcance
+
+NO implementar todavía:
+
+```text
+multiple displacement sources
+user-authorized displacement general
+conflict editor inline
+desplazar todas las compatibles
+provenance cleanup
+persistent Apply Week
+persistent Apply Future
 auth
 multiuser
 deployment
@@ -966,7 +1278,31 @@ analytics
 
 ---
 
-# 44. Git
+# 58. ROADMAP decisions
+
+Las decisiones recién añadidas al ROADMAP sobre:
+
+```text
+conflict resolution
+multiple displacement sources
+cancelled/not_completed non-blocking
+manual recovery
+inline Adjust/Displace actions
+```
+
+son contexto FUTURO.
+
+NO implementarlas por iniciativa propia en 05.7.3.
+
+Si una de ellas resulta necesaria para completar un contrato actual:
+
+```text
+DETENERSE Y REPORTAR
+```
+
+---
+
+# 59. Git
 
 Codex NO debe:
 
@@ -981,44 +1317,60 @@ El usuario controla Git.
 
 ---
 
-# 45. Reporte requerido
+# 60. Reporte requerido
 
 Al finalizar reportar:
 
-1. archivos modificados;
-2. modelo derivado usado para rendering;
-3. regla exacta de filas del día seleccionado;
-4. orden cronológico;
-5. cálculo de duración;
-6. ordinal por PlanItem;
-7. representación con una occurrence;
-8. representación compacta N > 1;
-9. PlanItems ausentes del selected day;
-10. tratamiento de otras fechas en filas expandidas;
-11. status individual;
-12. ad-hoc;
-13. manual_dates;
-14. weekly;
-15. interval_days;
-16. Uber acceptance;
-17. intercalación cronológica;
-18. mobile;
-19. desktop;
-20. pruebas frontend;
-21. regresión 05.7.1;
-22. regresión 05.7.2;
-23. node/diff checks;
-24. bugs encontrados;
-25. riesgos/limitaciones.
+1. archivos creados/modificados;
+2. arquitectura/coordinador de Single Day;
+3. cambios en planner-api;
+4. flujo PATCH → GET → hydrate;
+5. flujo DELETE → GET → hydrate;
+6. CORS PATCH/DELETE;
+7. double-submit protection;
+8. mutation success + GET failure;
+9. retry semantics;
+10. 404 handling;
+11. 409 handling por código;
+12. history_frozen;
+13. last_manual_entry;
+14. status_context_locked;
+15. concurrent_modification;
+16. recurrent same-date edit;
+17. recurrent moved-date edit;
+18. recurrent delete/exclusion;
+19. manual edit/delete;
+20. ad-hoc edit/delete;
+21. same PlanItem multi-occurrence;
+22. selectedDate preservation;
+23. compact counter updates;
+24. F5 persistence;
+25. browser verification;
+26. frontend tests;
+27. backend tests;
+28. PostgreSQL integration;
+29. parity/checks;
+30. bugs encontrados;
+31. riesgos/limitaciones;
+32. si status persistence tiene o no contrato backend actual;
+33. si priority override de PATCH tiene o no confirmación backend completa.
 
 Confirmar explícitamente:
 
 ```text
-backend no fue modificado salvo bug inequívoco
 vcs_dev no fue modificado
 001/002/003 no fueron modificadas
 no se creó migration 004
-no se conectaron nuevas mutations HTTP
-no se implementaron features fuera de alcance
+Apply Week no fue conectado
+Apply Future no fue conectado
+ROADMAP future conflict system no fue implementado anticipadamente
+no se añadieron secretos
 no se hizo commit/push/merge
 ```
+
+
+
+
+---
+
+Ya entendí a que te referias cuando me decias que en lugar de estos —³  para ti sería mejor □³  y si, porque ahorita me quede como confundido, y pues cuando estemos en vista mensual las occurrences que no existan en el dia seleccionado si deberia tener esta apariencia □³ como control de estado y es justo por lo que me decias que no podia tener un status porque no representaría la n occurrences, entonces estoy pensando que si todas los status de ese plan_item en el mismo dia son iguales, pues que si se ponga en ese estado porque representa globalmente los estados, pero si no que aparezca 

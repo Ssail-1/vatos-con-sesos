@@ -483,16 +483,26 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         };
     }
 
-    function getDeletionOptionsInternal(planItemId, selectedDate, referenceDate = getCurrentReferenceDate()) {
+    function getDeletionOptionsInternal(
+        planItemId,
+        selectedDate,
+        referenceDate = getCurrentReferenceDate(),
+        occurrenceId = null,
+    ) {
         if (!isValidDateKey(selectedDate)) {
             throw new PlannerStoreError("invalid_occurrence", "La fecha seleccionada no es válida.");
         }
         reconcileTemporalState(referenceDate);
         const planItem = getPlanItemReference(planItemId);
         if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
-        const selectedOccurrences = occurrences.filter((occurrence) =>
+        let selectedOccurrences = occurrences.filter((occurrence) =>
             occurrence.planItemId === planItemId && occurrence.date === selectedDate
         );
+        if (occurrenceId !== null) {
+            selectedOccurrences = selectedOccurrences.filter(
+                (occurrence) => occurrence.id === occurrenceId,
+            );
+        }
         const individual = getIndividualDeletionPolicy({
             occurrences: selectedOccurrences,
             referenceDate,
@@ -1015,8 +1025,13 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
 
         reconcileTemporalState,
 
-        getDeletionOptions(planItemId, selectedDate) {
-            return getDeletionOptionsInternal(planItemId, selectedDate);
+        getDeletionOptions(planItemId, selectedDate, occurrenceId = null) {
+            return getDeletionOptionsInternal(
+                planItemId,
+                selectedDate,
+                getCurrentReferenceDate(),
+                occurrenceId,
+            );
         },
 
         findTimeConflict(date, startTime, endTime, ignoredOccurrenceId = null, status = "pending") {

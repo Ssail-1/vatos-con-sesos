@@ -11,15 +11,35 @@ import { getIsoWeekday, isValidDateKey, isValidTimeRange } from "../utils/date-t
 const WEEKDAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const EXPLICIT_DATE_UI_MODE = "explicit_date";
 
-function configsEqual(first, second) {
+export function configsEqual(first, second) {
+    const editableSlot = (slot) => ({
+        id: slot.id,
+        ...(slot.isoWeekday === undefined ? {} : { isoWeekday: slot.isoWeekday }),
+        ...(slot.date === undefined ? {} : { date: slot.date }),
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+    });
     const editableConfig = (config) => {
         if (config === null) return null;
-        const { excludedDates, stoppedFromDate, ...editableFields } = cloneGenerationConfig(config);
-        if (editableFields.mode === "manual_dates") editableFields.entries.sort(compareGenerationSlots);
-        else editableFields.slots = editableFields.slots
-            ?.map(({ excludedDates: _slotExcludedDates, ...slot }) => slot)
-            .sort(compareGenerationSlots);
-        return editableFields;
+        const copy = cloneGenerationConfig(config);
+        if (copy.mode === "manual_dates") {
+            return {
+                mode: copy.mode,
+                entries: copy.entries.sort(compareGenerationSlots).map(editableSlot),
+            };
+        }
+        const base = {
+            mode: copy.mode,
+            startDate: copy.startDate,
+            endDate: copy.endDate,
+            indefinite: copy.indefinite,
+            slots: copy.slots
+                ?.sort(compareGenerationSlots)
+                .map(editableSlot),
+        };
+        return copy.mode === "interval_days"
+            ? { ...base, intervalDays: copy.intervalDays }
+            : base;
     };
     return JSON.stringify(editableConfig(first)) === JSON.stringify(editableConfig(second));
 }
@@ -163,8 +183,12 @@ export function validateFormValues(values) {
         errors.push({ field: "scheduleMode", message: "Selecciona una programación válida." });
     }
 
-    if (values.validateOccurrence && values.scheduleMode === "weekly" && !isValidTimeRange(values.startTime, values.endTime)) {
-        errors.push({ field: "endTime", message: "El horario del día seleccionado no es válido." });
+    if (values.validateOccurrence && !isValidDateKey(values.date) && !errors.some(({ field }) => field === "date")) {
+        errors.push({ field: "date", message: "La fecha de la aparición no es válida." });
+    }
+    if (values.validateOccurrence && !isValidTimeRange(values.startTime, values.endTime)
+        && !errors.some(({ field }) => field === "endTime")) {
+        errors.push({ field: "endTime", message: "El horario de la aparición no es válido." });
     }
     if (generationConfig !== null && errors.length === 0) {
         try {
@@ -479,8 +503,15 @@ export function createPlanItemFormView(options) {
     }
 
     function currentIntervalSlots() {
+        const originalPrimarySlot = formContext.mode === "edit"
+            ? originalGenerationConfig?.slots?.find((slot) => slot.id === intervalPrimarySlotId)
+            : null;
         return [
-            { id: intervalPrimarySlotId, startTime: startTimeInput.value, endTime: endTimeInput.value },
+            {
+                id: intervalPrimarySlotId,
+                startTime: originalPrimarySlot?.startTime ?? startTimeInput.value,
+                endTime: originalPrimarySlot?.endTime ?? endTimeInput.value,
+            },
             ...intervalAdditionalSlotDraft.map((slot) => ({ ...slot })),
         ].sort(compareGenerationSlots);
     }
@@ -774,11 +805,14 @@ export function createPlanItemFormView(options) {
             dateInput.value = context.occurrence.date;
             startTimeInput.value = context.occurrence.startTime;
             endTimeInput.value = context.occurrence.endTime;
-            dateInput.readOnly = true;
-            occurrenceDateLabel.textContent = "Fecha del día seleccionado";
+            dateInput.readOnly = false;
+            occurrenceDateLabel.textContent = "Fecha de esta aparición";
+            explicitDateField.hidden = false;
+            occurrenceTimeFields.hidden = false;
+            occurrenceTimeAnchor.after(occurrenceTimeFields);
             referenceMessage.textContent = context.planItem.generationConfig?.mode === "manual_dates"
-                ? "Se muestran todas las fechas específicas. Los cambios de la lista se aplican desde el día seleccionado en adelante."
-                : "La fecha está fijada por el día seleccionado. El horario puede cambiarse solo para esta occurrence; los cambios recurrentes requieren alcance.";
+                ? "Fecha y horario modifican únicamente esta aparición y su entry manual correspondiente."
+                : "Fecha y horario modifican únicamente esta occurrence; la programación general permanece intacta.";
             referenceMessage.hidden = false;
         }
         if (context.mode === "edit_without_occurrence") {
