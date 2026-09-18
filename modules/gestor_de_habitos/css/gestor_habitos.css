@@ -546,8 +546,34 @@ thead .selected-day-column {
     gap: 2px;
 }
 
-.multiple-occurrence-controls {
-    flex-direction: column;
+.occurrence-ordinal,
+.compact-occurrence-count sup {
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.occurrence-ordinal {
+    align-self: flex-start;
+    margin-top: 1px;
+}
+
+.compact-occurrence-cell {
+    color: #747b84;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.compact-occurrence-count {
+    display: inline-flex;
+    align-items: flex-start;
+    justify-content: center;
+    font-weight: 700;
+}
+
+.duplicate-summary-cell {
+    background: rgba(255, 255, 255, 0.01);
 }
 
 .not-scheduled-cell {

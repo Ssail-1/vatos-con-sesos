@@ -83,8 +83,9 @@ const expectError = (action, code) => assert.throws(action, (error) => error ins
     assert.equal(rows.length, 1, "Vista mensual conserva PlanItem sin occurrence en selectedDate");
     assert.equal(rows[0].selectedOccurrence, null);
     const ambiguous = buildPlannerRows(planItems, [...occurrences, { ...occurrences[0], id: "two" }], "2026-08-24", true);
+    assert.equal(ambiguous.length, 2, "cada occurrence seleccionada produce su propia fila");
     assert.equal(ambiguous[0].selectedDateAmbiguous, true);
-    assert.equal(ambiguous[0].selectedOccurrence, null);
+    assert.equal(ambiguous[0].selectedOccurrence.id, "one");
     assert.equal(ambiguous[0].selectedOccurrences.length, 2, "la matriz conserva ambos horarios visibles");
 }
 

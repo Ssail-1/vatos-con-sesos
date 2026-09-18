@@ -20,7 +20,7 @@ function createTextCell(tagName, className, text) {
     return cell;
 }
 
-function updateStatusButton(button, occurrence, planItemName, date, currentDate) {
+function updateStatusButton(button, occurrence, planItemName, date, currentDate, ordinal = null) {
     const referenceDate = formatDateKey(currentDate);
     const policy = getOccurrenceTemporalPolicy(occurrence, referenceDate);
     const readOnlyMessage = policy.zone === TEMPORAL_ZONES.FROZEN
@@ -35,21 +35,27 @@ function updateStatusButton(button, occurrence, planItemName, date, currentDate)
     button.dataset.status = presentation.status;
     button.textContent = presentation.symbol;
     button.disabled = !policy.canChangeStatus;
-    button.setAttribute("aria-label", presentation.accessibleLabel);
-    button.title = presentation.accessibleLabel;
+    const occurrencePosition = ordinal
+        ? ` Horario ${ordinal.position} de ${ordinal.total}.`
+        : "";
+    const accessibleLabel = `${presentation.accessibleLabel}${occurrencePosition}`;
+    button.setAttribute("aria-label", accessibleLabel);
+    button.title = accessibleLabel;
 }
 
-function createStatusButton(planItem, occurrence, date, currentDate, onStatusChange) {
+function createStatusButton(planItem, occurrence, date, currentDate, onStatusChange, ordinal = null) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "status-button";
     button.dataset.occurrenceId = occurrence.id;
     button.dataset.date = occurrence.date;
-    updateStatusButton(button, occurrence, planItem.name, date, currentDate);
+    updateStatusButton(button, occurrence, planItem.name, date, currentDate, ordinal);
     button.addEventListener("click", (event) => {
         event.stopPropagation();
         const updatedOccurrence = onStatusChange(occurrence.id);
-        if (updatedOccurrence) updateStatusButton(button, updatedOccurrence, planItem.name, date, currentDate);
+        if (updatedOccurrence) {
+            updateStatusButton(button, updatedOccurrence, planItem.name, date, currentDate, ordinal);
+        }
     });
     return button;
 }
@@ -90,39 +96,127 @@ function renderHeader(matrixHead, monthDates, selectedDate, onDateSelect) {
     matrixHead.replaceChildren(row);
 }
 
-export function buildPlannerRows(planItems, occurrences, selectedDateKey, showAllMonthRecords) {
+function compareOccurrences(first, second, planItemsById) {
+    const firstPlanItem = planItemsById.get(first.planItemId);
+    const secondPlanItem = planItemsById.get(second.planItemId);
+    return first.startTime.localeCompare(second.startTime)
+        || first.endTime.localeCompare(second.endTime)
+        || (firstPlanItem?.name ?? "").localeCompare(secondPlanItem?.name ?? "")
+        || first.planItemId.localeCompare(second.planItemId)
+        || first.id.localeCompare(second.id);
+}
+
+function groupOccurrencesByDate(occurrences) {
+    const byDate = new Map();
+    occurrences.forEach((occurrence) => {
+        if (!byDate.has(occurrence.date)) byDate.set(occurrence.date, []);
+        byDate.get(occurrence.date).push(occurrence);
+    });
+    byDate.forEach((dailyOccurrences) => dailyOccurrences.sort(
+        (first, second) => first.startTime.localeCompare(second.startTime)
+            || first.endTime.localeCompare(second.endTime)
+            || first.id.localeCompare(second.id),
+    ));
+    return byDate;
+}
+
+export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
+    const planItemsById = new Map(planItems.map((planItem) => [planItem.id, planItem]));
     const occurrencesByPlanItem = new Map();
     occurrences.forEach((occurrence) => {
+        if (!planItemsById.has(occurrence.planItemId)) return;
         if (!occurrencesByPlanItem.has(occurrence.planItemId)) {
             occurrencesByPlanItem.set(occurrence.planItemId, []);
         }
         occurrencesByPlanItem.get(occurrence.planItemId).push(occurrence);
     });
-    return planItems
-        .map((planItem) => {
-            const itemOccurrences = occurrencesByPlanItem.get(planItem.id) ?? [];
-            const selectedOccurrences = itemOccurrences.filter(
-                (occurrence) => occurrence.date === selectedDateKey,
-            ).sort((first, second) => first.startTime.localeCompare(second.startTime));
-            const selectedOccurrence = selectedOccurrences.length === 1 ? selectedOccurrences[0] : null;
-            return {
-                planItem,
-                occurrences: itemOccurrences,
-                selectedOccurrences,
-                selectedOccurrence,
-                selectedDateAmbiguous: selectedOccurrences.length > 1,
-            };
-        })
-        .filter((row) => row.occurrences.length > 0 && (showAllMonthRecords || row.selectedOccurrences.length > 0))
-        .sort((first, second) => {
-            const firstTime = first.selectedOccurrences[0]?.startTime ?? first.occurrences[0].startTime;
-            const secondTime = second.selectedOccurrences[0]?.startTime ?? second.occurrences[0].startTime;
-            return firstTime.localeCompare(secondTime) || first.planItem.name.localeCompare(second.planItem.name);
+    const itemModels = planItems.map((planItem) => {
+        const itemOccurrences = occurrencesByPlanItem.get(planItem.id) ?? [];
+        const occurrencesByDate = groupOccurrencesByDate(itemOccurrences);
+        return {
+            planItem,
+            occurrences: itemOccurrences,
+            occurrencesByDate,
+            selectedOccurrences: occurrencesByDate.get(selectedDateKey) ?? [],
+        };
+    }).filter(({ occurrences: itemOccurrences }) => itemOccurrences.length > 0);
+
+    const modelsByPlanItem = new Map(itemModels.map((model) => [model.planItem.id, model]));
+    const ordinalByOccurrenceId = new Map();
+    itemModels.forEach(({ selectedOccurrences }) => {
+        selectedOccurrences.forEach((occurrence, index) => {
+            ordinalByOccurrenceId.set(occurrence.id, index + 1);
         });
+    });
+
+    const carrierPlanItemIds = new Set();
+    const occurrenceRows = occurrences
+        .filter((occurrence) => occurrence.date === selectedDateKey && modelsByPlanItem.has(occurrence.planItemId))
+        .sort((first, second) => compareOccurrences(first, second, planItemsById))
+        .map((occurrence) => {
+            const model = modelsByPlanItem.get(occurrence.planItemId);
+            const carriesMonthlySummary = !carrierPlanItemIds.has(occurrence.planItemId);
+            carrierPlanItemIds.add(occurrence.planItemId);
+            return {
+                rowType: "occurrence",
+                ...model,
+                occurrence,
+                startTime: occurrence.startTime,
+                duration: calculateDuration(occurrence.startTime, occurrence.endTime),
+                selectedOccurrence: occurrence,
+                selectedDateAmbiguous: model.selectedOccurrences.length > 1,
+                occurrenceOrdinal: ordinalByOccurrenceId.get(occurrence.id),
+                occurrenceCount: model.selectedOccurrences.length,
+                carriesMonthlySummary,
+            };
+        });
+
+    const summaryRows = itemModels
+        .filter(({ selectedOccurrences }) => selectedOccurrences.length === 0)
+        .map((model) => ({
+            rowType: "summary",
+            ...model,
+            occurrence: null,
+            startTime: null,
+            duration: null,
+            selectedOccurrence: null,
+            selectedDateAmbiguous: false,
+            occurrenceOrdinal: null,
+            occurrenceCount: 0,
+            carriesMonthlySummary: true,
+        }));
+
+    return [...occurrenceRows, ...summaryRows];
+}
+
+export function getPlannerCellModel(rowData, dateKey, selectedDateKey) {
+    if (dateKey === selectedDateKey) {
+        if (rowData.rowType === "occurrence") {
+            return {
+                type: "occurrence",
+                occurrence: rowData.occurrence,
+                ordinal: rowData.occurrenceCount > 1 ? rowData.occurrenceOrdinal : null,
+                total: rowData.occurrenceCount,
+            };
+        }
+        return { type: "empty" };
+    }
+    if (!rowData.carriesMonthlySummary) return { type: "duplicate-summary" };
+    const dailyOccurrences = rowData.occurrencesByDate.get(dateKey) ?? [];
+    if (dailyOccurrences.length === 0) return { type: "empty" };
+    if (dailyOccurrences.length === 1) {
+        return { type: "occurrence", occurrence: dailyOccurrences[0], ordinal: null, total: 1 };
+    }
+    return { type: "compact-count", count: dailyOccurrences.length };
 }
 
 function createPlanItemRow(rowData, position, context) {
-    const { planItem, occurrences, selectedOccurrences, selectedOccurrence, selectedDateAmbiguous } = rowData;
+    const {
+        planItem,
+        occurrence,
+        selectedOccurrence,
+        selectedDateAmbiguous,
+    } = rowData;
     const row = document.createElement("tr");
     const nameCell = document.createElement("th");
     const nameContent = document.createElement("span");
@@ -136,6 +230,8 @@ function createPlanItemRow(rowData, position, context) {
     nameContent.append(nameText);
     nameCell.append(nameContent);
     row.dataset.planItemId = planItem.id;
+    row.dataset.rowType = rowData.rowType;
+    if (occurrence) row.dataset.occurrenceId = occurrence.id;
     row.tabIndex = 0;
     row.setAttribute("aria-selected", String(planItem.id === context.selectedPlanItemId));
 
@@ -231,34 +327,29 @@ function createPlanItemRow(rowData, position, context) {
         createTextCell(
             "td",
             "time-column activity-time",
-            selectedOccurrences.length ? selectedOccurrences.map(({ startTime }) => startTime).join(" · ") : "—",
+            rowData.startTime ?? "—",
         ),
         createTextCell(
             "td",
             "duration-column activity-duration",
-            selectedOccurrences.length
-                ? selectedOccurrences.map((occurrence) => (
-                    calculateDuration(occurrence.startTime, occurrence.endTime)
-                )).join(" · ")
-                : "—",
+            rowData.duration ?? "—",
         ),
         nameCell,
     );
 
-    const occurrencesByDate = new Map();
-    occurrences.forEach((occurrence) => {
-        if (!occurrencesByDate.has(occurrence.date)) occurrencesByDate.set(occurrence.date, []);
-        occurrencesByDate.get(occurrence.date).push(occurrence);
-    });
+    const selectedDateKey = formatDateKey(context.selectedDate);
     context.monthDates.forEach((date) => {
         const dateKey = formatDateKey(date);
         const cell = document.createElement("td");
-        const dailyOccurrences = occurrencesByDate.get(dateKey) ?? [];
+        const cellModel = getPlannerCellModel(rowData, dateKey, selectedDateKey);
         cell.className = "day-column";
         cell.dataset.date = dateKey;
         if (isSameLocalDate(date, context.selectedDate)) cell.classList.add("selected-day-column");
         if (date.getDay() === 1 && date.getDate() !== 1) cell.classList.add("week-boundary-column");
-        if (dailyOccurrences.length === 0) {
+        if (cellModel.type === "duplicate-summary") {
+            cell.classList.add("duplicate-summary-cell");
+            cell.setAttribute("aria-hidden", "true");
+        } else if (cellModel.type === "empty") {
             const marker = document.createElement("span");
             cell.classList.add("not-scheduled-cell");
             marker.textContent = "—";
@@ -266,20 +357,39 @@ function createPlanItemRow(rowData, position, context) {
             marker.setAttribute("aria-label", `${planItem.name} no está programado para ${formatSelectedDate(date)}.`);
             marker.title = marker.getAttribute("aria-label");
             cell.append(marker);
+        } else if (cellModel.type === "compact-count") {
+            const marker = document.createElement("span");
+            const count = document.createElement("sup");
+            const accessibleLabel = `${cellModel.count} occurrences de ${planItem.name} para ${formatSelectedDate(date)}.`;
+            cell.classList.add("compact-occurrence-cell");
+            marker.className = "compact-occurrence-count";
+            marker.setAttribute("role", "img");
+            marker.setAttribute("aria-label", accessibleLabel);
+            marker.title = accessibleLabel;
+            marker.append(document.createTextNode("—"));
+            count.textContent = String(cellModel.count);
+            count.setAttribute("aria-hidden", "true");
+            marker.append(count);
+            cell.append(marker);
         } else {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";
-            dailyOccurrences
-                .sort((first, second) => first.startTime.localeCompare(second.startTime))
-                .forEach((occurrence) =>
-                    controls.append(createStatusButton(planItem, occurrence, date, context.currentDate, context.onStatusChange)),
-                );
-            if (dailyOccurrences.length > 1) {
-                controls.classList.add("multiple-occurrence-controls");
-                controls.setAttribute(
-                    "aria-label",
-                    `${dailyOccurrences.length} horarios de ${planItem.name} para ${formatSelectedDate(date)}`,
-                );
+            controls.append(
+                createStatusButton(
+                    planItem,
+                    cellModel.occurrence,
+                    date,
+                    context.currentDate,
+                    context.onStatusChange,
+                    cellModel.ordinal ? { position: cellModel.ordinal, total: cellModel.total } : null,
+                ),
+            );
+            if (cellModel.ordinal) {
+                const ordinal = document.createElement("sup");
+                ordinal.className = "occurrence-ordinal";
+                ordinal.textContent = String(cellModel.ordinal);
+                ordinal.setAttribute("aria-hidden", "true");
+                controls.append(ordinal);
             }
             cell.append(controls);
         }
@@ -313,7 +423,10 @@ export function createPlannerMatrixView(context) {
         render({ planItems, occurrences, monthDates, currentDate, selectedDate, selectedPlanItemId, showAllMonthRecords }) {
             renderHeader(context.matrixHead, monthDates, selectedDate, context.onDateSelect);
             const selectedDateKey = formatDateKey(selectedDate);
-            const rows = buildPlannerRows(planItems, occurrences, selectedDateKey, showAllMonthRecords);
+            const displayRows = buildPlannerRows(planItems, occurrences, selectedDateKey);
+            const rows = showAllMonthRecords
+                ? displayRows
+                : displayRows.filter(({ rowType }) => rowType === "occurrence");
             const fragment = document.createDocumentFragment();
             rows.forEach((rowData, index) =>
                 fragment.append(

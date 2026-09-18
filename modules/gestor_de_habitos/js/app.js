@@ -44,7 +44,7 @@ const plannerStore = createPlannerStore(
 );
 let selectedDate = new Date(initialCurrentDate);
 let visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-let showAllMonthRecords = false;
+let showAllMonthRecords = true;
 let selectedPlanItemId = null;
 
 const PRESERVED_HISTORY_NOTICE = "La planificación futura fue actualizada. La aparición del día seleccionado se conservó porque ya contiene historial.";
