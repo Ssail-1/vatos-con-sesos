@@ -42,7 +42,18 @@ def add_frontend_cors(response):
         and request.path.startswith("/api/occurrences/")
         and request.path.count("/") == 3
     )
-    if not planner_read and not plan_item_creation and not occurrence_mutation:
+    recurring_schedule_mutation = (
+        request.method in {"POST", "OPTIONS"}
+        and request.path.startswith("/api/plan-items/")
+        and request.path.count("/") == 4
+        and request.path.rsplit("/", 1)[-1] in {"apply-week", "apply-future"}
+    )
+    if (
+        not planner_read
+        and not plan_item_creation
+        and not occurrence_mutation
+        and not recurring_schedule_mutation
+    ):
         return response
     response.headers["Access-Control-Allow-Origin"] = origin
     response.vary.add("Origin")
@@ -51,6 +62,9 @@ def add_frontend_cors(response):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if occurrence_mutation:
         response.headers["Access-Control-Allow-Methods"] = "PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if recurring_schedule_mutation:
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 

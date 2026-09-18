@@ -1307,6 +1307,24 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             return this.applyWeekOperations(planItemId, anchorDate, operations).occurrences;
         },
 
+        prepareApplyWeekPayload(planItemId, anchorDate, generationConfig) {
+            const planItem = getPlanItemReference(planItemId);
+            if (!planItem || !isValidDateKey(anchorDate)) {
+                throw new PlannerStoreError(
+                    "not_found",
+                    "El registro o la fecha seleccionada no existe.",
+                );
+            }
+            return {
+                anchorDate,
+                operations: deriveRecurringWeekOperations(
+                    planItem,
+                    anchorDate,
+                    generationConfig,
+                ),
+            };
+        },
+
         applyWeekOperations(planItemId, anchorDate, operations) {
             const planItem = getPlanItemReference(planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");

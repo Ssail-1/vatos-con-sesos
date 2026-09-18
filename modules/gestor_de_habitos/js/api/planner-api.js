@@ -212,3 +212,80 @@ export function updateOccurrence(occurrenceId, payload, options = {}) {
 export function deleteOccurrence(occurrenceId, options = {}) {
     return mutateOccurrence("DELETE", occurrenceId, undefined, options);
 }
+
+async function mutateRecurringSchedule(operation, planItemId, payload, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+
+    const endpoint = operation === "week" ? "apply-week" : "apply-future";
+    let response;
+    try {
+        response = await fetchImpl(
+            buildApiUrl(`/api/plan-items/${encodeURIComponent(planItemId)}/${endpoint}`, baseUrl),
+            {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            },
+        );
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+
+    let responsePayload;
+    try {
+        responsePayload = await readJson(response);
+    } catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+
+    if (!response?.ok) {
+        const serverCode = isRecord(responsePayload) && typeof responsePayload.code === "string"
+            ? responsePayload.code
+            : "http_error";
+        throw new PlannerApiError(
+            serverCode,
+            isRecord(responsePayload) && typeof responsePayload.message === "string"
+                ? responsePayload.message
+                : "El backend no pudo aplicar la planificación.",
+            { status: Number.isInteger(response?.status) ? response.status : null },
+        );
+    }
+
+    const validWeek = operation === "week"
+        && isRecord(responsePayload)
+        && typeof responsePayload.weekStart === "string"
+        && typeof responsePayload.weekEnd === "string"
+        && Array.isArray(responsePayload.occurrences)
+        && responsePayload.occurrences.every(isRecord);
+    const validFuture = operation === "future"
+        && isRecord(responsePayload)
+        && isRecord(responsePayload.planItem)
+        && typeof responsePayload.planItem.id === "string"
+        && Array.isArray(responsePayload.occurrences)
+        && responsePayload.occurrences.every(isRecord);
+    if (!validWeek && !validFuture) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "La planificación fue aceptada, pero su respuesta no cumple el contrato esperado.",
+            { mutationConfirmed: true, status: response.status },
+        );
+    }
+    return responsePayload;
+}
+
+export function applyWeek(planItemId, payload, options = {}) {
+    return mutateRecurringSchedule("week", planItemId, payload, options);
+}
+
+export function applyFuture(planItemId, payload, options = {}) {
+    return mutateRecurringSchedule("future", planItemId, payload, options);
+}

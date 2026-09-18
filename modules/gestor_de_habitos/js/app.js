@@ -1,4 +1,6 @@
 import {
+    applyFuture,
+    applyWeek,
     createPlanItem,
     deleteOccurrence,
     fetchPlannerState,
@@ -10,6 +12,11 @@ import {
     getOccurrenceMutationErrorMessage,
 } from "./mutations/occurrence-mutation.js";
 import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
+import {
+    buildApplyFuturePayload,
+    createRecurringScheduleMutationCoordinator,
+    getRecurringScheduleMutationErrorMessage,
+} from "./mutations/recurring-schedule-mutation.js";
 import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
@@ -55,8 +62,6 @@ let selectedDate = new Date(initialCurrentDate);
 let visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 let showAllMonthRecords = true;
 let selectedPlanItemId = null;
-
-const PRESERVED_HISTORY_NOTICE = "La planificación futura fue actualizada. La aparición del día seleccionado se conservó porque ya contiene historial.";
 
 function clearFeedback() {
     elements.matrixFeedback.hidden = true;
@@ -210,14 +215,6 @@ function commitPreparedChange(prepared, context) {
     return result;
 }
 
-function applyFuturePlanning(planItemId, effectiveDate, generationConfig) {
-    const result = plannerStore.applyGenerationConfigFromDate(planItemId, {
-        ...generationConfig,
-        startDate: effectiveDate,
-    });
-    return result.preservedEffectiveDateOccurrences.length ? PRESERVED_HISTORY_NOTICE : null;
-}
-
 const planItemCreationMutation = createPlanItemMutationCoordinator({
     postPlanItem: createPlanItem,
     loadPlannerState: fetchPlannerState,
@@ -232,6 +229,13 @@ const occurrenceUpdateMutation = createOccurrenceMutationCoordinator({
 
 const occurrenceDeleteMutation = createOccurrenceMutationCoordinator({
     mutateOccurrence: deleteOccurrence,
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+const recurringScheduleMutation = createRecurringScheduleMutationCoordinator({
+    applyWeek,
+    applyFuture,
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
@@ -263,6 +267,60 @@ function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) 
         throw outcome.error;
     }
     throw new Error("No se pudo completar la mutación persistente.");
+}
+
+function settlePersistentRecurringMutation(outcome, { scope, planItemId }) {
+    if (outcome.status === "synced") {
+        selectedPlanItemId = planItemId;
+        render();
+        showFeedback(
+            scope === "week"
+                ? "La planificación de la semana se guardó y sincronizó correctamente."
+                : "La planificación futura se guardó y sincronizó correctamente.",
+            "notice",
+        );
+        return { status: "synced" };
+    }
+    if (outcome.status === "saved_refresh_error") {
+        return {
+            status: "saved_refresh_error",
+            keepOpen: true,
+            retryRefresh: true,
+            message: scope === "week"
+                ? "La semana se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a aplicar."
+                : "La planificación futura se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a aplicar.",
+        };
+    }
+    if (outcome.status === "mutation_error") {
+        outcome.error.message = getRecurringScheduleMutationErrorMessage(
+            outcome.error,
+            scope,
+        );
+        throw outcome.error;
+    }
+    throw new Error("No se pudo completar la planificación persistente.");
+}
+
+async function persistRecurringSchedule(scope, planItemId, effectiveDate, generationConfig) {
+    const payload = scope === "week"
+        ? plannerStore.prepareApplyWeekPayload(
+            planItemId,
+            effectiveDate,
+            generationConfig,
+        )
+        : buildApplyFuturePayload(generationConfig, effectiveDate);
+    if (scope === "week" && payload.operations.length === 0) {
+        selectedPlanItemId = planItemId;
+        render();
+        showFeedback("La semana ya coincide con la planificación indicada.", "notice");
+        return { status: "synced" };
+    }
+    const outcome = await recurringScheduleMutation.submit(
+        scope,
+        planItemId,
+        payload,
+    );
+    return settlePersistentRecurringMutation(outcome, { scope, planItemId });
 }
 
 function persistentCreationErrorMessage(error) {
@@ -366,54 +424,38 @@ const planItemFormView = createPlanItemFormView({
     fallbackFocusElement: elements.addActivityButton, onValidate: () => [],
     onSubmit: async (result, context) => {
         let prepared;
-        let futureFeedback;
+        if (
+            ["edit", "edit_schedule", "edit_without_occurrence"].includes(context.mode) &&
+            result.recurrenceChanged &&
+            ["week", "future"].includes(result.scope)
+        ) {
+            const effectiveDate = context.mode === "edit"
+                ? result.occurrence.date
+                : context.selectedDate;
+            return persistRecurringSchedule(
+                result.scope,
+                context.planItemId,
+                effectiveDate,
+                result.generationConfig,
+            );
+        }
         if (context.mode === "edit") {
-            if (result.recurrenceChanged && result.scope === "week") {
-                plannerStore.applyWeeklyToWeek(context.planItemId, result.occurrence.date, result.generationConfig);
-            } else if (result.recurrenceChanged && result.scope === "future") {
-                futureFeedback = applyFuturePlanning(
-                    context.planItemId,
-                    result.occurrence.date,
-                    result.generationConfig,
-                );
-            } else {
-                const outcome = await occurrenceUpdateMutation.submit(
-                    context.occurrenceId,
-                    {
-                        date: result.occurrence.date,
-                        startTime: result.occurrence.startTime,
-                        endTime: result.occurrence.endTime,
-                    },
-                );
-                return settlePersistentOccurrenceMutation(outcome, {
-                    operation: "update",
-                    planItemId: context.planItemId,
-                });
-            }
-            selectedPlanItemId = context.planItemId;
+            const outcome = await occurrenceUpdateMutation.submit(
+                context.occurrenceId,
+                {
+                    date: result.occurrence.date,
+                    startTime: result.occurrence.startTime,
+                    endTime: result.occurrence.endTime,
+                },
+            );
+            return settlePersistentOccurrenceMutation(outcome, {
+                operation: "update",
+                planItemId: context.planItemId,
+            });
         } else if (context.mode === "edit_schedule") {
-            if (result.recurrenceChanged && result.scope === "week") {
-                plannerStore.applyWeeklyToWeek(context.planItemId, context.selectedDate, result.generationConfig);
-            } else if (result.recurrenceChanged && result.scope === "future") {
-                futureFeedback = applyFuturePlanning(
-                    context.planItemId,
-                    context.selectedDate,
-                    result.generationConfig,
-                );
-            }
             selectedPlanItemId = context.planItemId;
         } else if (context.mode === "edit_without_occurrence") {
-            if (result.recurrenceChanged && result.scope === "week") {
-                plannerStore.applyWeeklyToWeek(context.planItemId, context.selectedDate, result.generationConfig);
-            } else if (result.recurrenceChanged && result.scope === "future") {
-                futureFeedback = applyFuturePlanning(
-                    context.planItemId,
-                    context.selectedDate,
-                    result.generationConfig,
-                );
-            } else {
-                prepared = plannerStore.prepareOccurrenceAddition(context.planItemId, result.occurrence);
-            }
+            prepared = plannerStore.prepareOccurrenceAddition(context.planItemId, result.occurrence);
             selectedPlanItemId = context.planItemId;
         } else {
             const payload = {
@@ -441,8 +483,6 @@ const planItemFormView = createPlanItemFormView({
         }
 
         render();
-        if (futureFeedback) showFeedback(futureFeedback, "notice");
-        else if (futureFeedback === null) clearFeedback();
     },
     onFallbackFocus: (id) => { if (!matrixView.focusPlanItemRow(id)) elements.addActivityButton.focus(); },
 });

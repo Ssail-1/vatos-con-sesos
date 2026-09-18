@@ -1,6 +1,7 @@
 """Pruebas sin secretos para Apply Week persistente."""
 
 from datetime import date, time
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -375,6 +376,49 @@ class EndpointTests(unittest.TestCase):
             self.assertEqual(response.get_json()["code"], code)
             if status != 409:
                 self.assertNotIn("PRIVATE", response.get_data(as_text=True))
+
+    def test_cors_allows_only_approved_recurring_posts(self):
+        origin = "http://127.0.0.1:8000"
+        with patch.dict(os.environ, {"VCS_ALLOWED_ORIGINS": origin}):
+            responses = [
+                self.client.options(
+                    f"/api/plan-items/{PLAN_ITEM_ID}/apply-week",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "Content-Type",
+                    },
+                ),
+                self.client.options(
+                    f"/api/plan-items/{PLAN_ITEM_ID}/apply-future",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "Content-Type",
+                    },
+                ),
+            ]
+            rejected = self.client.options(
+                f"/api/plan-items/{PLAN_ITEM_ID}/apply-week",
+                headers={"Origin": "http://example.invalid"},
+            )
+            unrelated = self.client.options(
+                f"/api/plan-items/{PLAN_ITEM_ID}/other",
+                headers={"Origin": origin},
+            )
+
+        for response in responses:
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), origin)
+            self.assertEqual(
+                response.headers.get("Access-Control-Allow-Methods"),
+                "POST, OPTIONS",
+            )
+            self.assertEqual(
+                response.headers.get("Access-Control-Allow-Headers"),
+                "Content-Type",
+            )
+        self.assertNotIn("Access-Control-Allow-Origin", rejected.headers)
+        self.assertNotIn("Access-Control-Allow-Origin", unrelated.headers)
 
 
 if __name__ == "__main__":

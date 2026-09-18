@@ -1,36 +1,30 @@
 # CURRENT TASK
 
-## MVP 05.7.3.1 — Monthly aggregate occurrence status
+## MVP 05.7.4 — Persistent Apply Week / Apply Future
 
 ### Propósito
 
-Mejorar el resumen visual de múltiples occurrences del mismo PlanItem en una
-fecha NO seleccionada de la vista mensual.
-
-Actualmente:
+Conectar las mutaciones de alcance recurrente que ya existen en backend:
 
 ```text
-N > 1 occurrences
-→ —ᴺ
+Apply Week
+Apply Future
 ```
 
-Esto informa cuántas occurrences existen, pero pierde información útil sobre
-sus estados.
+con la UI real.
 
-La nueva representación debe derivar un badge agregado exclusivamente para
-presentación.
-
-Ejemplo:
+Después de esta fase:
 
 ```text
-pending + pending + pending
-→ □³
-
-completed + completed + completed
-→ ✓³
-
-completed + cancelled + not_completed
-→ resumen mixto según contexto temporal
+usuario edita planificación
+→ elige Apply Week o Apply Future
+→ POST backend correspondiente
+→ PostgreSQL
+→ GET /api/planner-state
+→ hydratePlannerState()
+→ render
+→ F5
+→ cambio permanece
 ```
 
 Estado:
@@ -40,1327 +34,342 @@ Estado:
 05.7.2    Crear PlanItem persistente                  ✅
 05.7.2.1  Rendering occurrence-aware                  ✅
 05.7.3    Single Day persistente                      ✅
-05.7.3.1  Monthly aggregate occurrence status         ← ACTUAL
-05.7.4    Apply Week / Apply Future persistentes      → después
+05.7.3.1  Monthly aggregate occurrence status         ✅
+05.7.4    Apply Week / Apply Future persistentes      ← ACTUAL
 05.7.5    Mutation conflict resolution UX             → después
+05.7.6    Verificación local final                    → después
 ```
 
 ---
 
-# 1. Principio fundamental
+# 1. Alcance
 
-Este feature es exclusivamente PRESENTACIÓN DERIVADA.
+Conectar exclusivamente:
 
-NO crear nuevos estados de dominio.
-
-NO persistir aggregate status.
-
-NO modificar las occurrences para producir el badge.
-
-La entrada es:
-
-```text
-PlanItem
-+
-Occurrences de una fecha
-+
-selectedDate
-+
-contexto temporal
-```
-
-y la salida es únicamente:
-
-```text
-representación visual mensual
-```
-
----
-
-# 2. Alcance
-
-Modificar exclusivamente el rendering del planner mensual y sus tests/UI
-relacionados.
-
-Preferentemente esta fase debe completarse únicamente en frontend.
-
-NO modificar:
-
-```text
-PostgreSQL
-schema
-backend contracts
-materialization
-generation rules
-priority rules
-status rules de dominio
-```
-
----
-
-# 3. Día seleccionado
-
-Cuando la fecha está seleccionada:
-
-```text
-NO cambiar el comportamiento de 05.7.2.1
-```
-
-Continuar mostrando:
-
-```text
-1 fila = 1 occurrence
-```
-
-Ejemplo:
-
-```text
-08:00 Uber □¹
-14:00 Uber ✓²
-20:00 Uber ⚠³
-```
-
-Cada occurrence conserva:
-
-```text
-status individual
-Occurrence.id individual
-ordinal individual
-```
-
-NO agregar un status colectivo en el selected day.
-
----
-
-# 4. Fecha NO seleccionada con cero occurrences
-
-Mantener:
-
-```text
-—
-```
-
----
-
-# 5. Fecha NO seleccionada con una occurrence
-
-Mantener el control/status individual actual.
-
-Ejemplos:
-
-```text
-□
-◷
-✓
-✕
-◷!
-⚠
-```
-
-No agregar superíndice `1`.
-
----
-
-# 6. Fecha NO seleccionada con N > 1 occurrences
-
-Sustituir el actual:
-
-```text
-—ᴺ
-```
-
-por un resumen derivado del grupo.
-
-El superíndice:
-
-```text
-N
-```
-
-representa únicamente el número de occurrences del mismo PlanItem en esa
-fecha.
-
-Debe utilizar:
-
-```html
-<sup>N</sup>
-```
-
-o equivalente semántico.
-
-NO limitarse a Unicode `¹²³`.
-
----
-
-# 7. Status reales existentes
-
-Los statuses de dominio continúan siendo únicamente:
-
-```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
-
-Este feature NO añade:
-
-```text
-mixed
-today
-warning
-frozen_mixed
-```
-
-como statuses reales.
-
-Esos conceptos son únicamente presentación derivada.
-
----
-
-# 8. Grupo uniforme
-
-Si TODAS las occurrences del grupo poseen exactamente el mismo status,
-representar ese status de forma agregada.
-
-Regla base:
-
-```text
-pending
-→ □ᴺ
-
-in_progress
-→ ◷ᴺ
-
-completed
-→ ✓ᴺ
-
-not_completed
-→ ✕ᴺ
-
-not_finished
-→ ◷!ᴺ
-
-cancelled
-→ ⚠ᴺ
-```
-
-Ejemplo:
-
-```text
-completed
-completed
-completed
-
-→ ✓³
-```
-
-La cantidad NO altera el significado del status.
-
----
-
-# 9. Prioridad del estado uniforme
-
-Un status uniforme significativo debe conservarse aunque la fecha sea pasada,
-actual o futura.
-
-Ejemplos:
-
-```text
-hoy:
-completed + completed + completed
-→ ✓³
-```
-
-```text
-ayer:
-cancelled + cancelled + cancelled
-→ ⚠³
-```
-
-```text
-fecha congelada:
-not_completed + not_completed + not_completed
-→ ✕³
-```
-
-No reemplazar estos resultados únicamente por el contexto temporal.
-
----
-
-# 10. Pending uniforme futuro
-
-Para fecha futura no seleccionada:
-
-```text
-pending + pending + ... + pending
-→ □ᴺ
-```
-
-Ejemplo:
-
-```text
-□³
-```
-
----
-
-# 11. Pending uniforme en currentDay
-
-Si:
-
-```text
-date == currentDay
-selectedDate != currentDay
-N > 1
-todos siguen pending
-```
-
-mostrar un indicador temporal equivalente a:
-
-```text
-◷ᴺ
-```
-
-PERO el reloj debe tener estilo temporal/muted/gris para distinguirlo de:
-
-```text
-in_progress uniforme
-```
-
-que representa status real.
-
-Conceptualmente:
-
-```text
-◷³ gris
-→ 3 occurrences programadas para hoy
-```
-
-NO cambiar sus statuses reales de:
-
-```text
-pending
-```
-
-a:
-
-```text
-in_progress
-```
-
----
-
-# 12. Distinción visual de currentDay vs in_progress
-
-Debe existir diferencia visual y accesible entre:
-
-```text
-◷³
-```
-
-por:
-
-```text
-todas in_progress
+```http
+POST /api/plan-items/<plan_item_id>/apply-week
 ```
 
 y:
 
-```text
-◷³
+```http
+POST /api/plan-items/<plan_item_id>/apply-future
 ```
 
-por:
+Reutilizar los contratos backend ya implementados y probados en MVP 05.6.4.2
+y 05.6.4.3.
 
-```text
-currentDay temporal
-```
-
-Ejemplo conceptual:
-
-```text
-in_progress real
-→ icono/status normal
-
-today pending
-→ icono muted/gris
-```
-
-El `aria-label` debe dejar clara la diferencia.
+NO rediseñar su semántica.
 
 ---
 
-# 13. Grupo mixto
+# 2. Regla arquitectónica principal
 
-Un grupo es mixto cuando:
-
-```text
-existen al menos dos statuses diferentes
-```
-
-Ejemplo:
+Después de cualquier mutación exitosa:
 
 ```text
-completed
-pending
-cancelled
+POST Apply Week / Apply Future
+        ↓
+GET /api/planner-state
+        ↓
+hydratePlannerState()
+        ↓
+render
 ```
 
-No seleccionar arbitrariamente uno de los statuses como representante.
+PostgreSQL/backend continúa siendo la fuente autoritativa.
 
-No calcular "mayoría".
-
-No marcar el grupo completed solo porque 2 de 3 lo estén.
+NO mantener manualmente dos versiones persistentes del planner.
 
 ---
 
-# 14. Grupo mixto futuro
+# 3. No optimistic persistence
 
-Para una fecha futura:
+No aplicar al store persistido el resultado definitivo antes de que backend
+confirme.
+
+Flujo:
 
 ```text
-statuses diferentes
-→ ◐ᴺ
+usuario confirma
+→ saving
+→ POST
+→ GET
+→ hydrate
+→ render
 ```
 
-o el símbolo equivalente ya aprobado visualmente para:
+Si POST falla:
 
 ```text
-estados mixtos
-```
-
-Ejemplo:
-
-```text
-completed
-cancelled
-pending
-
-→ ◐³
-```
-
-Significado:
-
-```text
-3 occurrences con estados distintos
-```
-
-No representa un nuevo status.
-
----
-
-# 15. Grupo mixto currentDay
-
-Para:
-
-```text
-date == currentDay
-selectedDate != currentDay
-statuses diferentes
-```
-
-usar el contexto temporal de hoy sin fingir que el grupo posee un status
-individual único.
-
-Puede utilizarse visualmente el reloj muted/gris:
-
-```text
-◷ᴺ
-```
-
-siempre que:
-
-```text
-aria-label
-tooltip
-clase visual
-```
-
-indiquen que representa:
-
-```text
-N occurrences hoy con estados mixtos
-```
-
-y NO:
-
-```text
-todas in_progress
-```
-
-No modificar los statuses reales.
-
----
-
-# 16. Día editable anterior / alerta temporal
-
-Dentro de la ventana temporal todavía editable, cuando una fecha pasada
-contiene N > 1 occurrences y el resultado del grupo requiere revisión,
-mostrar un indicador equivalente a:
-
-```text
-⚠!ᴺ
-```
-
-Estilo conceptual:
-
-```text
-⚠ = muted/gris
-! = rojo/attention
-N = contador neutro
-```
-
-Significado:
-
-```text
-hay occurrences de este grupo que requieren revisión
-y la fecha todavía es editable
-```
-
-No usarlo si todas las occurrences tienen un status uniforme significativo,
-porque la regla de grupo uniforme tiene prioridad.
-
-Ejemplos:
-
-```text
-completed + completed + completed
-→ ✓³
-```
-
-```text
-cancelled + cancelled + cancelled
-→ ⚠³
-```
-
-```text
-completed + cancelled + not_finished
-→ ⚠!³
+store anterior permanece
 ```
 
 ---
 
-# 17. Historia congelada con status uniforme
+# 4. Inspeccionar contratos reales
 
-Cuando la fecha ya está fuera de la ventana de edición:
-
-si todas las occurrences tienen el mismo status, continuar mostrando el status
-agregado real.
-
-Ejemplos:
+Antes de modificar frontend, inspeccionar los contratos backend actuales de:
 
 ```text
-completed x3
-→ ✓³
-
-not_completed x3
-→ ✕³
-
-not_finished x3
-→ ◷!³
-
-cancelled x3
-→ ⚠³
+/apply-week
+/apply-future
 ```
+
+Usar exactamente:
+
+```text
+payload
+response shape
+error codes
+restricciones
+```
+
+existentes.
+
+NO inventar campos.
+
+NO reimplementar reglas backend en frontend.
 
 ---
 
-# 18. Historia congelada con estados diferentes
+# 5. Planner API
 
-Si:
-
-```text
-fecha congelada
-+
-N > 1
-+
-statuses diferentes
-```
-
-mostrar:
+Extender:
 
 ```text
-!ᴺ
+js/api/planner-api.js
 ```
 
-Ejemplo:
-
-```text
-08:00 completed
-14:00 not_completed
-20:00 cancelled
-
-→ !³
-```
-
-Este badge significa:
-
-```text
-N occurrences
-resultado histórico mixto
-fecha no editable
-```
-
-NO significa un status nuevo.
-
----
-
-# 19. Frozen mixed NO debe parecer control
-
-En una fecha congelada:
-
-```text
-!ᴺ
-```
-
-debe sentirse visualmente como INFORMACIÓN HISTÓRICA.
-
-No como checkbox.
-
-No como control editable.
-
-Principio visual:
-
-```text
-editable
-→ puede parecer control/contexto activo
-
-frozen
-→ debe parecer información
-```
-
----
-
-# 20. Estilo de !ᴺ
-
-Preferencia visual:
-
-```text
-! = rojo / atención
-N = neutro
-```
-
-Ejemplo conceptual:
-
-```text
-!³
-↑ ↑
-│ └ cantidad
-└ resultado histórico mixto
-```
-
-No colorear innecesariamente todo el badge de rojo si basta con resaltar `!`.
-
----
-
-# 21. Estados inesperados en historia congelada
-
-Según las reglas de reconciliación existentes, un frozen day no debería
-conservar normalmente:
-
-```text
-pending
-in_progress
-```
-
-sin reconciliar.
-
-NO implementar reconciliación nueva en esta fase.
-
-Si el frontend recibe una combinación imposible/inconsistente en fecha
-congelada:
-
-```text
-usar un fallback seguro/informativo
-```
-
-preferentemente:
-
-```text
-!ᴺ
-```
-
-y añadir cobertura de regresión.
-
-NO mutar el store para "corregirlo".
-
----
-
-# 22. Tabla conceptual normativa
-
-Para fecha NO seleccionada y N > 1:
-
-```text
-TODAS pending + futuro
-→ □ᴺ
-
-TODAS pending + currentDay
-→ ◷ᴺ muted/gris
-
-TODAS in_progress
-→ ◷ᴺ status normal
-
-TODAS completed
-→ ✓ᴺ
-
-TODAS not_completed
-→ ✕ᴺ
-
-TODAS not_finished
-→ ◷!ᴺ
-
-TODAS cancelled
-→ ⚠ᴺ
-
-MIXED + futuro
-→ ◐ᴺ
-
-MIXED + currentDay
-→ indicador temporal de hoy, visualmente distinto de in_progress real
-
-MIXED + fecha pasada todavía editable
-→ ⚠!ᴺ
-
-MIXED + fecha congelada
-→ !ᴺ
-```
-
----
-
-# 23. No majority status
-
-Está expresamente prohibido derivar:
-
-```text
-2 completed
-1 pending
-→ completed
-```
-
-o:
-
-```text
-3 cancelled
-2 completed
-→ cancelled
-```
-
-No existe "status ganador".
-
-Si no son iguales:
-
-```text
-grupo mixto
-```
-
----
-
-# 24. No status mutation
-
-Renderizar:
-
-```text
-◷³
-⚠!³
-!³
-◐³
-```
-
-NO debe ejecutar ni implicar:
-
-```text
-setStatus()
-updateOccurrence()
-PATCH
-POST
-DELETE
-```
-
-Son badges derivados.
-
----
-
-# 25. No collective status control
-
-Cuando N > 1:
-
-el badge agregado NO cambia los statuses de todas las occurrences juntas.
-
-Ejemplo:
-
-```text
-✓³
-```
-
-NO debe convertirse en un botón que cambie las tres.
-
-Para editar status individual:
-
-```text
-seleccionar la fecha
-→ ver occurrence rows
-→ operar occurrence individual
-```
-
-La UX colectiva futura no pertenece a esta fase.
-
----
-
-# 26. Interacción con selección de fecha
-
-Si la celda/fecha ya permite seleccionar el día:
-
-```text
-preservar esa navegación
-```
-
-Puede permitirse que el badge ayude a abrir/seleccionar la fecha si el
-comportamiento existente lo soporta.
-
-Pero:
-
-```text
-click badge
-```
-
-NO debe significar:
-
-```text
-cambiar status de todas
-```
-
----
-
-# 27. Accesibilidad
-
-Cada aggregate badge debe exponer descripción comprensible.
-
-Ejemplos conceptuales:
-
-```text
-□³
-aria-label:
-"3 occurrences pendientes"
-```
-
-```text
-✓³
-aria-label:
-"3 occurrences completadas"
-```
-
-```text
-◷³ muted currentDay
-aria-label:
-"3 occurrences programadas para hoy"
-```
-
-```text
-◐³
-aria-label:
-"3 occurrences con estados diferentes"
-```
-
-```text
-⚠!³
-aria-label:
-"3 occurrences con estados diferentes; fecha todavía editable"
-```
-
-```text
-!³
-aria-label:
-"3 occurrences con estados diferentes; historial congelado"
-```
-
-No depender solo de color.
-
----
-
-# 28. Tooltip
-
-Si la UI ya utiliza `title`, tooltip o equivalente accesible:
-
-puede añadirse una explicación breve.
-
-No introducir una librería de tooltips.
-
-No saturar visualmente la matriz.
-
----
-
-# 29. Colores
-
-Reutilizar tokens/clases actuales cuando sea posible.
-
-No hardcodear colores aislados si ya existen variables CSS.
-
-Necesidades mínimas:
-
-```text
-status normal
-today muted/gris
-warning attention
-frozen mixed
-```
-
-El signo `!` de alertas puede utilizar la semántica visual de error/attention
-existente.
-
----
-
-# 30. Derivación clara y testeable
-
-Preferir una función pura/equivalente como:
-
-```text
-deriveAggregateOccurrenceDisplay(
-  occurrences,
-  date,
-  selectedDate,
-  currentDate,
-  editWindow
-)
-```
-
-o una extensión limpia del modelo de rendering actual.
-
-La función debería devolver información conceptual equivalente a:
+o capa equivalente con operaciones conceptuales:
 
 ```js
-{
-  count,
-  type,
-  status,
-  temporalContext,
-  icon,
-  interactive,
-  ariaLabel
-}
+applyWeek(planItemId, payload)
+applyFuture(planItemId, payload)
 ```
 
-No es obligatorio usar exactamente esta shape.
-
-Lo importante es:
+Responsabilidad:
 
 ```text
-regla derivada centralizada
+HTTP
+JSON
+network errors
+status codes
 ```
 
-y NO múltiples `if` dispersos por DOM/CSS/app.js.
+NO:
+
+```text
+materialization
+domain mutation
+render
+direct store mutation
+```
 
 ---
 
-# 31. Fuente de currentDay
+# 6. Mutation coordinator
 
-Reutilizar las utilidades temporales existentes.
+Preferir reutilizar/generalizar la arquitectura ya usada por:
 
-NO crear lógica temporal duplicada.
+```text
+PlanItem creation
+Single Day mutation
+```
 
-NO asumir UTC para decidir el día local del usuario.
+Debe manejar:
 
-NO introducir `new Date().toISOString().slice(0, 10)` si eso puede romper
-la fecha local.
+```text
+una mutación activa
+double-submit
+mutation confirmed vs refresh pending
+safe GET retry
+```
 
-Seguir la política temporal frontend ya aprobada.
+No convertir `app.js` en un monolito.
 
 ---
 
-# 32. Ventana editable
+# 7. Apply Week — semántica
 
-Reutilizar:
+Apply Week modifica únicamente el alcance semanal aprobado por backend.
 
-```text
-HISTORY_EDIT_WINDOW_DAYS
-```
-
-o la política/helper equivalente existente.
-
-NO hardcodear:
+Debe preservar la semántica existente:
 
 ```text
-ayer
+week-scoped scheduling overrides
 ```
 
-si ya existe una función normativa para determinar:
+No convertir Apply Week en:
 
 ```text
-editable
-frozen
+Apply Future
 ```
 
-La UI debe derivar del mismo concepto temporal que el dominio actual.
+ni modificar GenerationSlots globales cuando el contrato no lo indica.
 
 ---
 
-# 33. Reconciliación
+# 8. Apply Week — identidad
 
-NO implementar reconciliación dentro del renderer.
+Las occurrences existentes deben conservar identidad según las reglas backend.
 
-El renderer:
-
-```text
-observa estados
-+
-observa contexto temporal
-+
-representa
-```
-
-No transforma:
+Frontend NO debe:
 
 ```text
-pending → not_completed
-in_progress → not_finished
+generar Occurrence IDs
+rematerializar
+recrear semana manualmente
 ```
 
-Eso pertenece a reglas de dominio/reconciliation existentes.
+Backend decide la mutación persistente.
 
 ---
 
-# 34. Status persistence sigue fuera de alcance
-
-Aunque esta fase visualiza mejor los statuses:
-
-```text
-NO conectar persistencia de status
-```
-
-si 05.7.3 confirmó que aún no existe contrato backend aprobado.
-
-Los status changes pueden continuar siendo temporales según el comportamiento
-actual.
-
-No inventar endpoint.
-
----
-
-# 35. Crear/editar/eliminar persistence regression
-
-05.7.2 y 05.7.3 deben seguir intactos.
-
-Verificar:
-
-```text
-POST PlanItem
-PATCH occurrence schedule
-DELETE occurrence
-GET
-hydrate
-reload
-```
-
-La nueva representación agregada no debe interferir.
-
----
-
-# 36. Cambio de count después de DELETE
+# 9. Apply Week — multi-slot
 
 Caso obligatorio:
 
 ```text
-3 occurrences
-→ aggregate badge con superíndice 3
+PlanItem Uber
+
+08:00–11:00
+14:00–17:00
+20:00–22:00
 ```
 
-Eliminar una occurrence persistentemente:
+Modificar una semana concreta.
+
+Verificar:
 
 ```text
-GET + hydrate
-```
-
-Resultado:
-
-```text
-2 occurrences
-→ aggregate badge con superíndice 2
-```
-
-Eliminar otra:
-
-```text
-1 occurrence
-→ volver al control/status individual normal
-```
-
-No mostrar:
-
-```text
-status¹
+esa semana cambia
+otras semanas permanecen
+GenerationSlots base permanecen según contrato
+F5 conserva el cambio
 ```
 
 ---
 
-# 37. Cambio de status local
+# 10. Apply Week — swaps / horarios
 
-Mientras los cambios de status sigan siendo locales:
+Preservar la capacidad backend existente para validar el estado FINAL de la
+semana.
 
-si el usuario modifica individualmente statuses y después observa la fecha
-como no seleccionada, el aggregate badge debe recalcularse desde el store
+No rechazar en frontend una operación únicamente porque durante un paso
+intermedio dos intervals se cruzarían si el estado final aprobado es válido.
+
+Backend continúa siendo autoridad.
+
+---
+
+# 11. Apply Future — modos soportados
+
+Apply Future soporta únicamente los modos aprobados por backend.
+
+Según contrato actual:
+
+```text
+weekly
+interval_days
+```
+
+NO inventar soporte para:
+
+```text
+manual_dates
+```
+
+Si manual_dates intenta usar Apply Future:
+
+```text
+UI debe impedirlo o mostrar error backend controlado
+```
+
+según el diseño existente.
+
+---
+
+# 12. Apply Future — no mode change
+
+Preservar la restricción backend existente:
+
+```text
+no cambiar mode
+```
+
+Apply Future NO convierte:
+
+```text
+weekly → interval_days
+interval_days → weekly
+```
+
+salvo que un contrato backend futuro lo permita.
+
+No ampliar esta fase.
+
+---
+
+# 13. Effective boundary
+
+Apply Future usa una frontera efectiva:
+
+```text
+futureConfig.startDate
+```
+
+Frontend debe enviar exactamente la fecha efectiva aprobada por el flujo
 actual.
 
-Ejemplo:
-
-```text
-pending
-pending
-pending
-→ □³
-```
-
-después:
-
-```text
-completed
-pending
-pending
-→ mixed
-```
-
-El renderer debe reaccionar sin persistir nada nuevo.
+Todo lo anterior a esa frontera debe permanecer histórico/inmutable según las
+reglas backend.
 
 ---
 
-# 38. Cambio de selectedDate
+# 14. Historical preservation
 
-Al seleccionar una fecha:
-
-```text
-aggregate badge
-→ occurrence rows individuales
-```
-
-Al seleccionar otra fecha:
-
-la fecha anterior vuelve a:
+Caso obligatorio:
 
 ```text
-aggregate badge
+occurrences anteriores a future start
 ```
 
-derivado del estado actual.
+deben permanecer sin cambios.
 
-No persistir expanded/collapsed state.
+Frontend NO debe sustituir horarios históricos con los GenerationSlots nuevos.
 
 ---
 
-# 39. Caso obligatorio — uniform completed
+# 15. Future generation
+
+Después de Apply Future:
 
 ```text
-Uber:
-08:00 completed
-14:00 completed
-20:00 completed
+nuevo motor recurrente
+→ nuevas occurrences futuras
 ```
 
-Fecha no seleccionada:
+según backend.
 
-```text
-✓³
-```
-
-Fecha seleccionada:
-
-```text
-08:00 Uber ✓¹
-14:00 Uber ✓²
-20:00 Uber ✓³
-```
+Frontend NO ejecuta materialization local después del GET.
 
 ---
 
-# 40. Caso obligatorio — uniform pending future
+# 16. Explicit overrides
+
+Preservar semántica backend existente para:
 
 ```text
-Uber:
-08:00 pending
-14:00 pending
-20:00 pending
+explicit occurrence overrides
 ```
 
-Fecha futura no seleccionada:
-
-```text
-□³
-```
+Apply Future NO debe destruir por accidente una occurrence previamente
+modificada cuando backend ya la protege.
 
 ---
 
-# 41. Caso obligatorio — currentDay pending
-
-Current day no seleccionado:
-
-```text
-08:00 pending
-14:00 pending
-20:00 pending
-```
-
-Mostrar:
-
-```text
-◷³
-```
-
-con estilo muted/gris y semántica:
-
-```text
-programadas para hoy
-```
-
-NO `in_progress`.
-
----
-
-# 42. Caso obligatorio — uniform in_progress
-
-```text
-08:00 in_progress
-14:00 in_progress
-20:00 in_progress
-```
-
-Mostrar:
-
-```text
-◷³
-```
-
-pero con estilo normal de status `in_progress`.
-
-Debe poder distinguirse visual y accesiblemente del caso currentDay pending.
-
----
-
-# 43. Caso obligatorio — mixed future
-
-```text
-completed
-pending
-cancelled
-```
-
-fecha futura:
-
-```text
-◐³
-```
-
----
-
-# 44. Caso obligatorio — mixed editable past
-
-Dentro de ventana editable:
-
-```text
-completed
-cancelled
-not_finished
-```
-
-Mostrar:
-
-```text
-⚠!³
-```
-
-con:
-
-```text
-warning muted
-! attention/red
-count neutral
-```
-
----
-
-# 45. Caso obligatorio — mixed frozen
-
-Fuera de ventana editable:
-
-```text
-completed
-not_completed
-cancelled
-```
-
-Mostrar:
-
-```text
-!³
-```
-
-NO:
-
-```text
-□!³
-```
-
-NO:
-
-```text
-◐³
-```
-
-porque la información principal ahora es:
-
-```text
-resultado histórico mixto
-+
-no editable
-```
-
----
-
-# 46. Caso obligatorio — frozen uniform
-
-Fuera de ventana:
-
-```text
-not_completed
-not_completed
-not_completed
-```
-
-Mostrar:
-
-```text
-✕³
-```
-
-NO:
-
-```text
-!³
-```
-
-porque el grupo NO es mixto.
-
----
-
-# 47. Multi-PlanItem independence
-
-Dos PlanItems en la misma fecha se agregan independientemente.
-
-Ejemplo:
-
-```text
-Uber:
-completed completed completed
-→ ✓³
-
-Medicamento:
-pending pending
-→ □²
-```
-
-No mezclar occurrences de distintos PlanItems.
-
----
-
-# 48. Ad-hoc
+# 17. Ad-hoc occurrences
 
 Occurrences con:
 
@@ -1368,224 +377,597 @@ Occurrences con:
 sourceGenerationSlotId = null
 ```
 
-participan normalmente en el aggregate si pertenecen al mismo:
+deben preservarse según la política backend existente.
 
-```text
-PlanItem + date
-```
-
-No tratarlas diferente visualmente.
+Frontend no debe filtrarlas ni reconstruirlas.
 
 ---
 
-# 49. Manual / weekly / interval
+# 18. Exclusions
 
-El aggregate renderer NO depende de:
+Preservar:
 
 ```text
-manual_dates
-weekly
-interval_days
+global exclusions
+slot exclusions
 ```
 
-Trabaja únicamente con occurrences concretas.
+según backend.
+
+No reconstruir exclusions en frontend.
 
 ---
 
-# 50. Responsive
+# 19. UUID de GenerationSlots
+
+Frontend continúa siendo responsable de UUID v4 para slots nuevos cuando el
+flujo existente así lo requiera.
+
+Backend debe preservar esos UUID exactamente.
+
+No remapear IDs.
+
+Un slot lógico editado debe conservar UUID cuando corresponda.
+
+Delete + recreate implica UUID nuevo según política existente.
+
+---
+
+# 20. Apply Future multi-slot
+
+Caso obligatorio:
+
+```text
+S1 08:00–11:00
+S2 14:00–17:00
+S3 20:00–22:00
+```
+
+Cambiar futuro a:
+
+```text
+S1 09:00–12:00
+S3 20:00–21:00
+```
+
+y eliminar S2.
 
 Verificar:
 
 ```text
-desktop
-mobile
+historia anterior intacta
+futuro refleja motor nuevo
+S1 conserva UUID si fue editado
+S2 desaparece del motor futuro
+S3 conserva UUID
+F5 mantiene resultado
 ```
 
-Los nuevos badges:
-
-```text
-✓³
-⚠!³
-!³
-◐³
-```
-
-no deben:
-
-```text
-aumentar excesivamente ancho/alto
-crear overflow global
-romper alineación
-superponerse
-```
+siempre conforme al contrato real actual.
 
 ---
 
-# 51. Legend / help
+# 21. Selected date
 
-Si existe una leyenda actual de statuses y resulta necesario aclarar los
-aggregate badges, hacer únicamente una ampliación mínima.
-
-No añadir un panel grande ni nueva navegación.
-
-Preferir:
+Después de:
 
 ```text
-aria-label
-title
-tooltip nativo
+POST
+→ GET
+→ hydrate
 ```
 
-si es suficiente.
+mantener:
+
+```text
+selectedDate
+```
+
+cuando siga siendo válida.
+
+No saltar automáticamente al currentDay.
 
 ---
 
-# 52. Tests
+# 22. Rendering
 
-Añadir cobertura útil para:
+Después de hydration, dejar que:
 
 ```text
-N=0
-N=1
-N>1
-
-uniform pending future
-uniform pending currentDay
-uniform in_progress
-uniform completed
-uniform not_completed
-uniform not_finished
-uniform cancelled
-
-mixed future
-mixed currentDay
-mixed editable past
-mixed frozen
-
-frozen uniform
-frozen impossible pending fallback
-
-count 2
-count 3
-count >9
-
-independent PlanItems
-ad-hoc included
-selectedDate expansion
-return to aggregate after changing selectedDate
-delete 3→2→1
-local status change recalculates aggregate
-accessibility labels
+buildPlannerRows
+aggregate occurrence display
 ```
 
-No perseguir cantidad de tests.
+se recalculen naturalmente.
+
+No parchear DOM manualmente.
+
+05.7.2.1 y 05.7.3.1 siguen siendo responsables de visualización derivada.
 
 ---
 
-# 53. Existing regression
+# 23. Monthly aggregate regression
 
-Ejecutar:
-
-```text
-frontend completo
-05.7.1 bootstrap
-05.7.2 create
-05.7.2.1 occurrence-aware rendering
-05.7.3 occurrence mutations
-JS/Python parity
-node --check
-git diff --check
-```
-
-Backend completo NO es necesario si backend no cambia.
-
----
-
-# 54. Browser verification
-
-Verificar en UI real:
+Después de Apply Week/Future:
 
 ```text
-desktop 1440×900
-mobile 390×844
-```
-
-Casos mínimos:
-
-```text
-✓³
 □³
-today muted ◷³
-mixed ◐³
-editable warning ⚠!³
-frozen !³
+✓³
+◐³
+!³
 ```
 
-Comprobar cambio:
+deben representar el nuevo estado hidratado sin lógica especial.
+
+No almacenar aggregate badges.
+
+---
+
+# 24. Double-submit
+
+Dos clicks rápidos en:
 
 ```text
-selected day
-↔
-non-selected day
+Apply Week
 ```
 
-sin hard reload especial más allá del necesario por cache durante desarrollo.
+→ un solo POST.
 
-No usar un harness como única aceptación.
-
-Verificar también la aplicación real:
+Dos clicks rápidos en:
 
 ```text
-index.html
-→ app.js
-→ planner matrix real
+Apply Future
+```
+
+→ un solo POST.
+
+Añadir pruebas.
+
+---
+
+# 25. POST success + GET failure
+
+Caso crítico:
+
+```text
+POST Apply Week/Future → success
+GET planner-state → failure
+```
+
+La mutación YA pudo haberse persistido.
+
+NO repetir automáticamente POST.
+
+Recovery:
+
+```text
+GET /api/planner-state
+```
+
+únicamente.
+
+---
+
+# 26. Retry
+
+Distinguir:
+
+```text
+POST no confirmado
+```
+
+de:
+
+```text
+POST confirmado + refresh falló
+```
+
+En el segundo caso:
+
+```text
+retry = GET solamente
+```
+
+Nunca duplicar Apply Week/Future.
+
+---
+
+# 27. Invalid success response
+
+Si backend responde HTTP success pero el cliente no puede interpretar la
+respuesta:
+
+tratar la mutación como potencialmente confirmada.
+
+Priorizar:
+
+```text
+GET planner-state
+```
+
+antes de permitir reenviar el POST.
+
+---
+
+# 28. 400
+
+Manejar:
+
+```text
+invalid_payload
+```
+
+y demás validaciones existentes de forma controlada.
+
+No borrar el formulario.
+
+No mostrar internals.
+
+---
+
+# 29. 404
+
+Manejar:
+
+```text
+plan_item_not_found
+```
+
+o código real equivalente.
+
+Puede ser estado desactualizado/concurrencia.
+
+Permitir refresh seguro.
+
+---
+
+# 30. 409
+
+Inspeccionar códigos reales de ambos endpoints.
+
+Manejar diferenciadamente cuando existan:
+
+```text
+history_frozen
+planning_stopped
+priority_override_required
+priority_conflict
+completed_conflict
+slot_date_conflict
+status_context_locked
+concurrent_conflict
+concurrent_modification
+unsupported_mode
+```
+
+No inventar nombres si backend usa otros.
+
+---
+
+# 31. Conflict confirmation
+
+NO implementar el sistema futuro general del ROADMAP.
+
+Si Apply Week/Future ya poseen un contrato backend inequívoco para confirmar
+priority override:
+
+```text
+puede conectarse exactamente
+```
+
+Si únicamente detectan conflictos pero no existe handshake completo:
+
+```text
+mostrar conflicto
+mantener editor
+NO inventar autorización
+```
+
+Reportar la limitación.
+
+---
+
+# 32. User-authorized displacement
+
+NO implementar todavía:
+
+```text
+igual/menor prioridad desplazando otra occurrence
+por decisión explícita del usuario
+```
+
+Eso pertenece a 05.7.5.
+
+---
+
+# 33. Multiple displacement sources
+
+NO modificar schema/statusContext para soportar múltiples sources en esta
+fase.
+
+Eso permanece en ROADMAP.
+
+---
+
+# 34. Status persistence
+
+NO conectar persistencia de status.
+
+05.7.3 confirmó que no existe todavía contrato aprobado.
+
+Los cambios de status siguen con la semántica temporal actual.
+
+No ampliar PATCH.
+
+---
+
+# 35. Apply Week UX
+
+Reutilizar el flujo existente de edición.
+
+Cuando usuario seleccione:
+
+```text
+Aplicar semana
+```
+
+mostrar saving state equivalente a:
+
+```text
+Guardando…
+```
+
+Deshabilitar controles necesarios durante la mutación.
+
+Cerrar/limpiar únicamente después de:
+
+```text
+POST
++
+GET
++
+hydrate
+```
+
+exitosos.
+
+---
+
+# 36. Apply Future UX
+
+Misma política:
+
+```text
+Guardar
+→ POST
+→ GET
+→ hydrate
+→ cerrar
+```
+
+No cerrar inmediatamente tras POST si todavía no se pudo resincronizar.
+
+---
+
+# 37. Refresh pending UX
+
+Si POST fue confirmado pero GET falló:
+
+mostrar mensaje equivalente a:
+
+```text
+El cambio se guardó, pero no se pudo actualizar la vista.
+```
+
+Botón retry:
+
+```text
+GET only
 ```
 
 ---
 
-# 55. Backend
+# 38. CORS
 
-Preferencia:
+Extender allow-list únicamente para:
 
 ```text
-NO backend changes
+POST /api/plan-items/<id>/apply-week
+POST /api/plan-items/<id>/apply-future
+OPTIONS correspondientes
 ```
 
-Si aparece un bug inequívoco del contrato:
+Mantener:
+
+```text
+VCS_ALLOWED_ORIGINS
+```
+
+NO usar:
+
+```text
+Access-Control-Allow-Origin: *
+```
+
+---
+
+# 39. No nuevas rutas
+
+NO crear nuevos endpoints.
+
+Los endpoints ya existen.
+
+Si un contrato resulta insuficiente:
 
 ```text
 DETENERSE Y REPORTAR
 ```
 
-antes de ampliar alcance.
+antes de inventar una ruta nueva.
 
 ---
 
-# 56. CORS
+# 40. Apply Week acceptance
 
-No modificar CORS.
-
-Esta fase no añade HTTP methods.
-
----
-
-# 57. PostgreSQL
-
-No se necesita PostgreSQL nuevo para la lógica agregada.
-
-Puede reutilizarse estado fixture/frontend para pruebas.
-
-Si se realiza verificación persistente complementaria:
+Caso mínimo obligatorio con PostgreSQL real efímero:
 
 ```text
-usar PostgreSQL efímero
+weekly/multi-slot PlanItem
 ```
 
-NO `vcs_dev`.
+1. observar semana A;
+2. Apply Week sobre semana A;
+3. GET + hydrate;
+4. verificar semana A modificada;
+5. verificar semana B no modificada;
+6. F5;
+7. resultado permanece.
 
 ---
 
-# 58. Migrations
+# 41. Apply Future weekly acceptance
+
+Caso:
+
+```text
+weekly
+```
+
+con:
+
+```text
+historia previa
+future boundary
+multi-slot
+```
+
+Verificar:
+
+```text
+antes de boundary intacto
+después de boundary nuevo schedule
+F5 persiste
+```
+
+---
+
+# 42. Apply Future interval acceptance
+
+Caso:
+
+```text
+interval_days
+intervalDays > 1
+```
+
+Verificar:
+
+```text
+fase correcta
+boundary correcta
+slots correctos
+historia previa intacta
+F5
+```
+
+---
+
+# 43. Apply Future manual rejection
+
+Caso:
+
+```text
+manual_dates
+```
+
+No debe ejecutar exitosamente Apply Future.
+
+Verificar UX/error controlado.
+
+---
+
+# 44. Overrides/ad-hoc acceptance
+
+Cuando sea viable:
+
+crear fixture con:
+
+```text
+explicit occurrence override
+ad-hoc occurrence
+```
+
+antes del boundary.
+
+Apply Future.
+
+Verificar que sobreviven conforme a contrato backend existente.
+
+---
+
+# 45. No rematerialization
+
+Después de:
+
+```text
+POST
+GET
+hydrate
+```
+
+NO ejecutar materializer frontend.
+
+Los IDs retornados por backend son autoritativos.
+
+---
+
+# 46. Browser acceptance
+
+Usar aplicación real:
+
+```text
+index.html
+→ app.js
+→ Flask
+→ PostgreSQL 16 efímero
+```
+
+NO depender únicamente de harness.
+
+Verificar:
+
+```text
+Apply Week
+F5
+
+Apply Future weekly
+F5
+
+Apply Future interval
+F5
+```
+
+Desktop y mobile cuando el flujo sea accesible.
+
+---
+
+# 47. PostgreSQL
+
+Automatización:
+
+```text
+PostgreSQL 16 aislado/efímero
+```
+
+NO usar:
+
+```text
+vcs_dev
+```
+
+---
+
+# 48. Migrations
 
 NO modificar:
 
@@ -1601,68 +983,193 @@ NO crear:
 004
 ```
 
+No cambiar schema.
+
 ---
 
-# 59. ROADMAP
+# 49. Backend
 
-NO implementar anticipadamente:
+Los servicios de Apply Week/Future ya fueron verificados en 05.6.x.
+
+No rediseñar backend.
+
+Si frontend integration descubre un bug inequívoco:
 
 ```text
-multiple displacement sources
-user-authorized displacement
-conflict resolution dialog
-status persistence
-automatic recovery
-Apply Week
-Apply Future
+corregir mínimo
+añadir regresión
+reportar
 ```
 
-La representación agregada debe permanecer desacoplada de esas features.
+No ampliar semántica.
 
 ---
 
-# 60. Definition of done
+# 50. Regression — create
 
-MVP 05.7.3.1 queda completo cuando:
+05.7.2 debe seguir funcionando:
 
 ```text
-fecha seleccionada
-→ occurrences individuales, sin cambio
+POST PlanItem
+GET
+hydrate
+F5
+```
+
+---
+
+# 51. Regression — Single Day
+
+05.7.3 debe seguir funcionando:
+
+```text
+PATCH occurrence
+DELETE occurrence
+GET
+hydrate
+F5
+```
+
+---
+
+# 52. Regression — rendering
+
+Mantener:
+
+```text
+selected day
+→ occurrence rows
+
+non-selected multi-occurrence
+→ aggregate status badge
+```
+
+---
+
+# 53. Tests frontend
+
+Añadir pruebas útiles para:
+
+```text
+Apply Week POST → GET → hydrate
+Apply Future POST → GET → hydrate
+
+double Apply Week
+double Apply Future
+
+POST success + GET failure
+retry GET only
+
+network failure
+400
+404
+409
+
+selectedDate preserved
+
+manual Apply Future rejected
+
+weekly future
+interval future
+
+multi-slot
+```
+
+No perseguir cantidad.
+
+---
+
+# 54. Backend/PostgreSQL tests
+
+Reutilizar cobertura existente cuando ya pruebe correctamente:
+
+```text
+Apply Week
+Apply Future
+SERIALIZABLE
+rollback
+concurrency
+historical preservation
+overrides
+ad-hoc
+exclusions
+```
+
+Añadir solo regresiones necesarias por bugs reales encontrados durante
+integración.
+
+---
+
+# 55. Full regression
+
+Ejecutar:
+
+```text
+frontend completo
+backend relevante/completo según cambios
+PostgreSQL integration
+05.7.1 bootstrap
+05.7.2 create
+05.7.2.1 rendering
+05.7.3 Single Day
+05.7.3.1 aggregate status
+JS/Python parity
+node --check
+compileall si backend cambia
+git diff --check
+```
+
+---
+
+# 56. Definition of done
+
+MVP 05.7.4 queda completo cuando:
+
+```text
+Apply Week
+→ POST
+→ PostgreSQL
+→ GET
+→ hydrate
+→ F5
 ```
 
 y:
 
 ```text
-fecha NO seleccionada
-+
-N > 1 occurrences
-→ aggregate badge derivado
+Apply Future
+→ POST
+→ PostgreSQL
+→ GET
+→ hydrate
+→ F5
 ```
 
-siguiendo:
-
-```text
-uniforme
-→ status agregado
-
-mixto futuro
-→ ◐ᴺ
-
-currentDay temporal
-→ indicador today muted
-
-mixto pasado editable
-→ ⚠!ᴺ
-
-mixto congelado
-→ !ᴺ
-```
-
-sin crear nuevos statuses ni persistir información derivada.
+funcionan desde la UI real para los modos soportados sin rematerialización
+frontend ni cambios fuera de alcance.
 
 ---
 
-# 61. Git
+# 57. Fuera de alcance
+
+NO implementar:
+
+```text
+status persistence
+multiple displacement sources
+user-authorized displacement general
+inline conflict editor
+desplazar todas las compatibles
+provenance cleanup
+auth
+multiuser
+deployment
+analytics
+```
+
+---
+
+# 58. Git
 
 Codex NO debe:
 
@@ -1677,56 +1184,57 @@ El usuario controla Git.
 
 ---
 
-# 62. Reporte requerido
+# 59. Reporte requerido
 
 Al finalizar reportar:
 
-1. archivos modificados/creados;
-2. función/modelo derivado usado;
-3. tratamiento N=0;
-4. tratamiento N=1;
-5. tratamiento N>1;
-6. uniform pending future;
-7. currentDay pending;
-8. diferencia currentDay vs real in_progress;
-9. completed;
-10. not_completed;
-11. not_finished;
-12. cancelled;
-13. mixed future;
-14. mixed currentDay;
-15. mixed editable past;
-16. mixed frozen;
-17. frozen uniform;
-18. fallback frozen inconsistente;
-19. cálculo de count;
-20. accesibilidad;
-21. CSS/colores;
-22. comportamiento al seleccionar el día;
-23. recalculado al cambiar status local;
-24. recalculado 3→2→1;
-25. multi-PlanItem independence;
-26. ad-hoc;
-27. weekly/manual/interval;
-28. desktop;
-29. mobile;
-30. frontend tests;
-31. regresiones 05.7.1/05.7.2/05.7.2.1/05.7.3;
-32. parity/static checks;
-33. bugs encontrados;
-34. riesgos/limitaciones.
+1. archivos creados/modificados;
+2. arquitectura/coordinador;
+3. planner-api Apply Week;
+4. planner-api Apply Future;
+5. payload real de Apply Week;
+6. payload real de Apply Future;
+7. POST → GET → hydrate;
+8. double-submit;
+9. POST success + GET failure;
+10. retry GET only;
+11. CORS;
+12. errores 400;
+13. errores 404;
+14. errores 409;
+15. conflict confirmation disponible/no disponible;
+16. Apply Week multi-slot;
+17. Apply Week scope isolation;
+18. Apply Future weekly;
+19. Apply Future interval;
+20. manual rejection;
+21. effective boundary;
+22. historical preservation;
+23. explicit overrides;
+24. ad-hoc;
+25. exclusions;
+26. GenerationSlot UUID preservation;
+27. selectedDate;
+28. rendering/aggregate regression;
+29. F5 persistence;
+30. browser desktop;
+31. browser mobile;
+32. frontend tests;
+33. backend tests;
+34. PostgreSQL integration;
+35. parity/static checks;
+36. bugs encontrados;
+37. riesgos/limitaciones.
 
 Confirmar explícitamente:
 
 ```text
-backend no fue modificado
 vcs_dev no fue modificado
-001/002/003 intactas
-no migration 004
-no nuevos endpoints
+001/002/003 no fueron modificadas
+no se creó migration 004
+no se añadieron nuevos endpoints
 status persistence no fue implementada
-Apply Week no fue conectado
-Apply Future no fue conectado
-ROADMAP future conflict system no fue implementado
-no commit/push/merge
+ROADMAP future conflict system no fue implementado anticipadamente
+no se añadieron secretos
+no se hizo commit/push/merge
 ```
