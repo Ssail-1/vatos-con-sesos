@@ -12,6 +12,7 @@ import {
     getWeekdayLabels,
     isSameLocalDate,
 } from "../utils/date-time.js";
+import { deriveAggregateOccurrenceDisplay } from "./aggregate-occurrence-display.js";
 
 function createTextCell(tagName, className, text) {
     const cell = document.createElement(tagName);
@@ -189,7 +190,7 @@ export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
     return [...occurrenceRows, ...summaryRows];
 }
 
-export function getPlannerCellModel(rowData, dateKey, selectedDateKey) {
+export function getPlannerCellModel(rowData, dateKey, selectedDateKey, currentDateKey = null) {
     if (dateKey === selectedDateKey) {
         if (rowData.rowType === "occurrence") {
             return {
@@ -207,7 +208,42 @@ export function getPlannerCellModel(rowData, dateKey, selectedDateKey) {
     if (dailyOccurrences.length === 1) {
         return { type: "occurrence", occurrence: dailyOccurrences[0], ordinal: null, total: 1 };
     }
-    return { type: "compact-count", count: dailyOccurrences.length };
+    return {
+        type: "aggregate",
+        display: deriveAggregateOccurrenceDisplay(
+            dailyOccurrences,
+            dateKey,
+            currentDateKey ?? selectedDateKey,
+        ),
+    };
+}
+
+function createAggregateBadge(planItem, date, display) {
+    const marker = document.createElement("span");
+    const symbol = document.createElement("span");
+    const count = document.createElement("sup");
+    const accessibleLabel = `${planItem.name}, ${formatSelectedDate(date)}: ${display.ariaLabel}.`;
+    marker.className = "aggregate-occurrence-badge";
+    marker.dataset.aggregateType = display.type;
+    if (display.status) marker.dataset.status = display.status;
+    marker.setAttribute("role", "img");
+    marker.setAttribute("aria-label", accessibleLabel);
+    marker.title = accessibleLabel;
+    symbol.className = "aggregate-occurrence-symbol";
+    symbol.textContent = display.symbol;
+    symbol.setAttribute("aria-hidden", "true");
+    marker.append(symbol);
+    if (display.modifier) {
+        const modifier = document.createElement("span");
+        modifier.className = "aggregate-occurrence-modifier";
+        modifier.textContent = display.modifier;
+        modifier.setAttribute("aria-hidden", "true");
+        marker.append(modifier);
+    }
+    count.textContent = String(display.count);
+    count.setAttribute("aria-hidden", "true");
+    marker.append(count);
+    return marker;
 }
 
 function createPlanItemRow(rowData, position, context) {
@@ -337,10 +373,11 @@ function createPlanItemRow(rowData, position, context) {
     );
 
     const selectedDateKey = formatDateKey(context.selectedDate);
+    const currentDateKey = formatDateKey(context.currentDate);
     context.monthDates.forEach((date) => {
         const dateKey = formatDateKey(date);
         const cell = document.createElement("td");
-        const cellModel = getPlannerCellModel(rowData, dateKey, selectedDateKey);
+        const cellModel = getPlannerCellModel(rowData, dateKey, selectedDateKey, currentDateKey);
         cell.className = "day-column";
         cell.dataset.date = dateKey;
         if (isSameLocalDate(date, context.selectedDate)) cell.classList.add("selected-day-column");
@@ -356,20 +393,9 @@ function createPlanItemRow(rowData, position, context) {
             marker.setAttribute("aria-label", `${planItem.name} no está programado para ${formatSelectedDate(date)}.`);
             marker.title = marker.getAttribute("aria-label");
             cell.append(marker);
-        } else if (cellModel.type === "compact-count") {
-            const marker = document.createElement("span");
-            const count = document.createElement("sup");
-            const accessibleLabel = `${cellModel.count} occurrences de ${planItem.name} para ${formatSelectedDate(date)}.`;
-            cell.classList.add("compact-occurrence-cell");
-            marker.className = "compact-occurrence-count";
-            marker.setAttribute("role", "img");
-            marker.setAttribute("aria-label", accessibleLabel);
-            marker.title = accessibleLabel;
-            marker.append(document.createTextNode("—"));
-            count.textContent = String(cellModel.count);
-            count.setAttribute("aria-hidden", "true");
-            marker.append(count);
-            cell.append(marker);
+        } else if (cellModel.type === "aggregate") {
+            cell.classList.add("aggregate-occurrence-cell");
+            cell.append(createAggregateBadge(planItem, date, cellModel.display));
         } else {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";

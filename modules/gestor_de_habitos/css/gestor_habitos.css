@@ -547,7 +547,7 @@ thead .selected-day-column {
 }
 
 .occurrence-ordinal,
-.compact-occurrence-count sup {
+.aggregate-occurrence-badge sup {
     color: var(--text-muted);
     font-size: 0.62rem;
     font-variant-numeric: tabular-nums;
@@ -560,16 +560,59 @@ thead .selected-day-column {
     margin-top: 1px;
 }
 
-.compact-occurrence-cell {
+.aggregate-occurrence-cell {
     color: #747b84;
     background: rgba(255, 255, 255, 0.025);
 }
 
-.compact-occurrence-count {
+.aggregate-occurrence-badge {
     display: inline-flex;
     align-items: flex-start;
     justify-content: center;
+    gap: 1px;
+    color: var(--pending);
     font-weight: 700;
+    line-height: 1;
+}
+
+.aggregate-occurrence-badge[data-status="in_progress"],
+.aggregate-occurrence-badge[data-status="not_finished"] {
+    color: var(--in-progress);
+}
+
+.aggregate-occurrence-badge[data-status="completed"] {
+    color: var(--completed);
+}
+
+.aggregate-occurrence-badge[data-status="not_completed"] {
+    color: color-mix(in srgb, var(--not-completed) 76%, var(--text-muted));
+}
+
+.aggregate-occurrence-badge[data-status="cancelled"],
+.aggregate-occurrence-badge[data-aggregate-type="today-pending"],
+.aggregate-occurrence-badge[data-aggregate-type="today-mixed"] {
+    color: var(--cancelled);
+}
+
+.aggregate-occurrence-badge[data-aggregate-type="frozen-mixed"],
+.aggregate-occurrence-badge[data-aggregate-type="frozen-inconsistent"] {
+    color: var(--not-completed);
+    opacity: 0.78;
+}
+
+.aggregate-occurrence-badge[data-aggregate-type="future-mixed"] {
+    color: var(--pending);
+}
+
+.aggregate-occurrence-badge[data-aggregate-type="editable-past-mixed"]
+    .aggregate-occurrence-symbol {
+    color: var(--cancelled);
+}
+
+.aggregate-occurrence-modifier {
+    color: var(--not-completed);
+    font-size: 0.68rem;
+    font-weight: 950;
 }
 
 .duplicate-summary-cell {

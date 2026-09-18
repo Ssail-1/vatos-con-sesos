@@ -81,9 +81,21 @@ const occurrence = (
     assert.equal(rows[0].occurrenceCount, 1, "una occurrence única no requiere ordinal visible");
 
     assert.deepEqual(
-        getPlannerCellModel(uberRows[0], "2026-09-23", selectedDate),
-        { type: "compact-count", count: 3 },
-        "N occurrences no seleccionadas producen un contador compacto",
+        getPlannerCellModel(uberRows[0], "2026-09-23", selectedDate, "2026-09-22"),
+        {
+            type: "aggregate",
+            display: {
+                count: 3,
+                type: "uniform",
+                status: "pending",
+                temporalContext: null,
+                symbol: "□",
+                modifier: null,
+                ariaLabel: "3 occurrences pendientes",
+                interactive: false,
+            },
+        },
+        "N occurrences no seleccionadas producen un badge derivado",
     );
     assert.equal(getPlannerCellModel(uberRows[1], "2026-09-23", selectedDate).type, "duplicate-summary");
     assert.equal(getPlannerCellModel(uberRows[2], "2026-09-23", selectedDate).type, "duplicate-summary");
@@ -106,6 +118,23 @@ const occurrence = (
     assert.equal(absentRow.rowType, "summary");
     assert.equal(getPlannerCellModel(absentRow, selectedDate, selectedDate).type, "empty");
     assert.equal(getPlannerCellModel(absentRow, "2026-09-24", selectedDate).occurrence.id, "absent-other");
+
+    const twoOccurrences = occurrences.filter(({ id }) => id !== "uber-other-3");
+    const oneOccurrence = occurrences.filter(({ id }) => !["uber-other-2", "uber-other-3"].includes(id));
+    const twoRows = buildPlannerRows(planItems, twoOccurrences, selectedDate);
+    const oneRows = buildPlannerRows(planItems, oneOccurrence, selectedDate);
+    const twoUber = twoRows.find(({ planItem }) => planItem.id === "uber");
+    const oneUber = oneRows.find(({ planItem }) => planItem.id === "uber");
+    assert.equal(
+        getPlannerCellModel(twoUber, "2026-09-23", selectedDate, "2026-09-22").display.count,
+        2,
+        "el aggregate recalcula 3 → 2 tras eliminar una occurrence",
+    );
+    assert.equal(
+        getPlannerCellModel(oneUber, "2026-09-23", selectedDate, "2026-09-22").type,
+        "occurrence",
+        "con una occurrence vuelve al control individual sin superíndice",
+    );
 }
 
 {
@@ -132,6 +161,43 @@ const occurrence = (
         "manual, weekly, interval y ad-hoc usan el mismo rendering occurrence-aware",
     );
     assert.equal(rows.at(-1).occurrence.sourceGenerationSlotId, null);
+}
+
+{
+    const planItems = [item("uber", "Uber"), item("medicine", "Medicamento")];
+    const occurrences = [
+        occurrence("uber-a-1", "uber", "2026-09-20", "08:00", "09:00", "completed"),
+        occurrence("uber-a-2", "uber", "2026-09-20", "10:00", "11:00", "completed"),
+        occurrence("uber-a-3", "uber", "2026-09-20", "12:00", "13:00", "completed"),
+        occurrence("uber-b-1", "uber", "2026-09-21", "08:00", "09:00"),
+        occurrence("uber-b-2", "uber", "2026-09-21", "10:00", "11:00"),
+        occurrence("uber-b-3", "uber", "2026-09-21", "12:00", "13:00"),
+        occurrence("medicine-1", "medicine", "2026-09-21", "07:00", "07:05"),
+        occurrence("medicine-2", "medicine", "2026-09-21", "19:00", "19:05"),
+    ];
+    const selectedA = buildPlannerRows(planItems, occurrences, "2026-09-20");
+    const selectedB = buildPlannerRows(planItems, occurrences, "2026-09-21");
+    const uberOnA = selectedA.filter(({ planItem }) => planItem.id === "uber");
+    const uberOnB = selectedB.filter(({ planItem }) => planItem.id === "uber");
+    const medicineOnA = selectedA.find(({ planItem }) => planItem.id === "medicine");
+
+    assert.equal(uberOnA.length, 3, "el día seleccionado conserva una fila por occurrence");
+    assert.equal(
+        getPlannerCellModel(uberOnA[0], "2026-09-21", "2026-09-20", "2026-09-18").display.count,
+        3,
+        "la fecha no seleccionada se agrega",
+    );
+    assert.equal(uberOnB.length, 3, "cambiar selectedDate expande el grupo antes agregado");
+    assert.equal(
+        getPlannerCellModel(uberOnB[0], "2026-09-20", "2026-09-21", "2026-09-18").display.symbol,
+        "✓",
+        "la fecha anterior vuelve a aggregate derivado",
+    );
+    assert.equal(
+        getPlannerCellModel(medicineOnA, "2026-09-21", "2026-09-20", "2026-09-18").display.count,
+        2,
+        "cada PlanItem calcula su grupo independientemente",
+    );
 }
 
 console.log("occurrence-aware-rendering.test.mjs: todas las pruebas pasaron");
