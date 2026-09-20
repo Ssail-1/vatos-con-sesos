@@ -84,11 +84,21 @@ _QUERIES = (
             start_time,
             end_time,
             status,
-            status_reason,
+            conflict_reason,
             source_occurrence_id,
-            source_generation_slot_id
+            source_generation_slot_id,
+            origin_reason,
+            last_conflict_action
         FROM public.occurrences
         ORDER BY occurrence_date, start_time, end_time, id
+        """,
+    ),
+    (
+        "occurrence_segments",
+        """
+        SELECT id, occurrence_id, start_time, end_time, status
+        FROM public.occurrence_segments
+        ORDER BY occurrence_id, start_time, end_time, id
         """,
     ),
 )

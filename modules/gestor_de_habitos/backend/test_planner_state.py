@@ -24,6 +24,7 @@ COLLECTIONS = (
     "generation_excluded_dates",
     "generation_slot_excluded_dates",
     "occurrences",
+    "occurrence_segments",
 )
 
 
@@ -91,6 +92,8 @@ def occurrence_row(
     reason=None,
     source_id=None,
     source_slot=None,
+    origin_reason=None,
+    last_conflict_action=None,
 ):
     return {
         "id": uuid(occurrence_id),
@@ -99,11 +102,23 @@ def occurrence_row(
         "start_time": start,
         "end_time": end,
         "status": status,
-        "status_reason": reason,
+        "conflict_reason": reason,
         "source_occurrence_id": uuid(source_id) if source_id else None,
         "source_generation_slot_id": slot_uuid(source_slot)
         if source_slot
         else None,
+        "origin_reason": origin_reason,
+        "last_conflict_action": last_conflict_action,
+    }
+
+
+def segment_row(segment_id, occurrence_id, start, end, status="pending"):
+    return {
+        "id": uuid(segment_id),
+        "occurrence_id": uuid(occurrence_id),
+        "start_time": start,
+        "end_time": end,
+        "status": status,
     }
 
 
@@ -128,6 +143,8 @@ class PlannerStateRepositoryTests(unittest.TestCase):
         executed_sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
         for table in COLLECTIONS:
             self.assertIn(f"public.{table}", executed_sql)
+        self.assertIn("conflict_reason", executed_sql)
+        self.assertNotIn("status_reason", executed_sql)
         cursor_context.__exit__.assert_called_once()
         transaction.__exit__.assert_called_once()
         connection.__exit__.assert_called_once()
@@ -355,6 +372,10 @@ class PlannerStateMappingTests(unittest.TestCase):
                 source_slot=51,
             ),
         ]
+        rows["occurrence_segments"] = [
+            segment_row(4021, 402, time(8, 0), time(10, 0), "cancelled"),
+            segment_row(5011, 501, time(9, 0), time(9, 30)),
+        ]
 
         result = planner_state_service.build_planner_state(rows)
 
@@ -372,6 +393,18 @@ class PlannerStateMappingTests(unittest.TestCase):
                     "endTime": "10:00",
                     "status": "cancelled",
                     "sourceGenerationSlotId": str(slot_uuid(41)),
+                    "segments": [
+                        {
+                            "id": str(uuid(4021)),
+                            "startTime": "08:00",
+                            "endTime": "10:00",
+                            "status": "cancelled",
+                        }
+                    ],
+                    "conflictContext": {
+                        "reason": "priority_override",
+                        "sourceOccurrenceId": str(uuid(501)),
+                    },
                     "statusContext": {
                         "reason": "priority_override",
                         "sourceOccurrenceId": str(uuid(501)),
@@ -385,9 +418,136 @@ class PlannerStateMappingTests(unittest.TestCase):
                     "endTime": "09:30",
                     "status": "pending",
                     "sourceGenerationSlotId": str(slot_uuid(51)),
+                    "segments": [
+                        {
+                            "id": str(uuid(5011)),
+                            "startTime": "09:00",
+                            "endTime": "09:30",
+                            "status": "pending",
+                        }
+                    ],
                 },
             ],
         )
+
+    def test_multiple_segments_and_schema_004_metadata(self):
+        rows = empty_rows()
+        rows["plan_items"] = [plan_item_row(20)]
+        rows["generation_configs"] = [generation_config_row(20, "manual_dates")]
+        rows["generation_slots"] = [
+            slot_row(201, 20, time(13, 0), time(17, 0))
+        ]
+        rows["generation_slot_dates"] = [
+            {"slot_id": slot_uuid(201), "entry_date": date(2026, 9, 20)}
+        ]
+        rows["occurrences"] = [
+            occurrence_row(
+                2001,
+                20,
+                date(2026, 9, 20),
+                time(13, 0),
+                time(17, 0),
+                status="completed",
+                reason="user_forced_override",
+                source_id=2002,
+                source_slot=201,
+                origin_reason="conflict_insertion",
+                last_conflict_action="conflict_move",
+            ),
+            occurrence_row(
+                2002,
+                20,
+                date(2026, 9, 20),
+                time(14, 0),
+                time(14, 30),
+            ),
+        ]
+        rows["occurrence_segments"] = [
+            segment_row(20013, 2001, time(14, 30), time(17, 0)),
+            segment_row(20012, 2001, time(13, 0), time(14, 0), "completed"),
+            segment_row(20021, 2002, time(14, 0), time(14, 30)),
+        ]
+
+        result = planner_state_service.build_planner_state(rows)
+        occurrence = result["occurrences"][0]
+
+        self.assertEqual(occurrence["status"], "completed")
+        self.assertEqual(
+            occurrence["conflictContext"],
+            {
+                "reason": "user_forced_override",
+                "sourceOccurrenceId": str(uuid(2002)),
+            },
+        )
+        self.assertNotIn("statusContext", occurrence)
+        self.assertEqual(occurrence["originReason"], "conflict_insertion")
+        self.assertEqual(occurrence["lastConflictAction"], "conflict_move")
+        self.assertEqual(
+            [segment["id"] for segment in occurrence["segments"]],
+            [str(uuid(20012)), str(uuid(20013))],
+        )
+
+    def test_rejects_invalid_segment_graphs(self):
+        def valid_rows():
+            rows = empty_rows()
+            rows["plan_items"] = [plan_item_row(21)]
+            rows["generation_configs"] = [
+                generation_config_row(21, "manual_dates")
+            ]
+            rows["generation_slots"] = [
+                slot_row(211, 21, time(8, 0), time(10, 0))
+            ]
+            rows["generation_slot_dates"] = [
+                {"slot_id": slot_uuid(211), "entry_date": date(2026, 9, 20)}
+            ]
+            rows["occurrences"] = [
+                occurrence_row(
+                    2101,
+                    21,
+                    date(2026, 9, 20),
+                    time(8, 0),
+                    time(10, 0),
+                    source_slot=211,
+                )
+            ]
+            rows["occurrence_segments"] = [
+                segment_row(21011, 2101, time(8, 0), time(10, 0))
+            ]
+            return rows
+
+        cases = []
+
+        missing = valid_rows()
+        missing["occurrence_segments"] = []
+        cases.append(missing)
+
+        unknown_parent = valid_rows()
+        unknown_parent["occurrence_segments"][0]["occurrence_id"] = uuid(9999)
+        cases.append(unknown_parent)
+
+        duplicate = valid_rows()
+        duplicate["occurrence_segments"].append(
+            segment_row(21011, 2101, time(8, 30), time(9, 0))
+        )
+        cases.append(duplicate)
+
+        invalid_status = valid_rows()
+        invalid_status["occurrence_segments"][0]["status"] = "unknown"
+        cases.append(invalid_status)
+
+        subminute = valid_rows()
+        subminute["occurrence_segments"][0]["start_time"] = time(8, 0, 1)
+        cases.append(subminute)
+
+        outside_bounds = valid_rows()
+        outside_bounds["occurrence_segments"][0]["end_time"] = time(10, 30)
+        cases.append(outside_bounds)
+
+        for rows in cases:
+            with self.subTest(rows=rows), self.assertRaises(
+                planner_state_service.PlannerStateConsistencyError
+            ):
+                planner_state_service.build_planner_state(rows)
 
     def test_plan_item_without_generation_config_is_inconsistent(self):
         rows = empty_rows()
@@ -579,6 +739,9 @@ class PlannerStateMappingTests(unittest.TestCase):
             occurrence_row(
                 1501, 15, date(2026, 9, 15), time(8, 0), time(9, 0)
             )
+        ]
+        rows["occurrence_segments"] = [
+            segment_row(15011, 1501, time(8, 0), time(9, 0))
         ]
 
         result = planner_state_service.build_planner_state(rows)

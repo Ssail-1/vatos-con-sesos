@@ -18,6 +18,9 @@ OCCURRENCE_STATUSES = frozenset(
         "cancelled",
     }
 )
+CONFLICT_REASONS = frozenset({"priority_override", "user_forced_override"})
+ORIGIN_REASONS = frozenset({"conflict_insertion"})
+LAST_CONFLICT_ACTIONS = frozenset({"conflict_insertion", "conflict_move"})
 PRIORITY_OVERRIDE_REASON = "priority_override"
 
 
@@ -349,7 +352,79 @@ def _build_plan_item(row, generation_config):
     return plan_item
 
 
-def _build_occurrences(rows, plan_item_ids, slot_owners):
+def _build_segments(rows, occurrences_by_id):
+    segments_by_occurrence = {
+        occurrence_id: [] for occurrence_id in occurrences_by_id
+    }
+    segment_ids = set()
+
+    for row in rows:
+        segment_id = _uuid_string(row["id"], "occurrence_segments.id")
+        if segment_id in segment_ids:
+            _inconsistent("Existen IDs de OccurrenceSegment duplicados.")
+        segment_ids.add(segment_id)
+
+        occurrence_id = _uuid_string(
+            row["occurrence_id"], "occurrence_segments.occurrence_id"
+        )
+        parent = occurrences_by_id.get(occurrence_id)
+        if parent is None:
+            _inconsistent(
+                "Un OccurrenceSegment referencia una Occurrence inexistente."
+            )
+
+        status = row["status"]
+        if status not in OCCURRENCE_STATUSES:
+            _inconsistent("Un OccurrenceSegment contiene un status no válido.")
+        start_time, end_time = _time_range(
+            row["start_time"],
+            row["end_time"],
+            "occurrence_segments.start_time",
+            "occurrence_segments.end_time",
+        )
+        if start_time < parent["startTime"] or end_time > parent["endTime"]:
+            _inconsistent(
+                "Un OccurrenceSegment queda fuera del rango de su Occurrence."
+            )
+        segments_by_occurrence[occurrence_id].append(
+            {
+                "id": segment_id,
+                "startTime": start_time,
+                "endTime": end_time,
+                "status": status,
+            }
+        )
+
+    for occurrence_id, segments in segments_by_occurrence.items():
+        if not segments:
+            _inconsistent("Una Occurrence no tiene OccurrenceSegments persistidos.")
+        segments.sort(
+            key=lambda segment: (
+                segment["startTime"],
+                segment["endTime"],
+                segment["id"],
+            )
+        )
+        occurrences_by_id[occurrence_id]["segments"] = segments
+
+
+def _optional_metadata(occurrence, row):
+    origin_reason = row["origin_reason"]
+    if origin_reason is not None:
+        if origin_reason not in ORIGIN_REASONS:
+            _inconsistent("Una Occurrence contiene un originReason no válido.")
+        occurrence["originReason"] = origin_reason
+
+    last_conflict_action = row["last_conflict_action"]
+    if last_conflict_action is not None:
+        if last_conflict_action not in LAST_CONFLICT_ACTIONS:
+            _inconsistent(
+                "Una Occurrence contiene un lastConflictAction no válido."
+            )
+        occurrence["lastConflictAction"] = last_conflict_action
+
+
+def _build_occurrences(rows, segment_rows, plan_item_ids, slot_owners):
     occurrence_ids = []
     for row in rows:
         occurrence_id = _uuid_string(row["id"], "occurrences.id")
@@ -359,6 +434,7 @@ def _build_occurrences(rows, plan_item_ids, slot_owners):
     known_occurrence_ids = set(occurrence_ids)
 
     occurrences = []
+    occurrences_by_id = {}
     for row, occurrence_id in zip(rows, occurrence_ids):
         plan_item_id = _uuid_string(
             row["plan_item_id"], "occurrences.plan_item_id"
@@ -391,25 +467,33 @@ def _build_occurrences(rows, plan_item_ids, slot_owners):
                     "Una Occurrence referencia un GenerationSlot de otro PlanItem."
                 )
             occurrence["sourceGenerationSlotId"] = generation_slot_id
-        reason = row["status_reason"]
+        reason = row["conflict_reason"]
         source_value = row["source_occurrence_id"]
         if reason is None and source_value is None:
             pass
-        elif reason == PRIORITY_OVERRIDE_REASON and source_value is not None:
-            if status not in {"cancelled", "not_finished"}:
-                _inconsistent("Un statusContext requiere un status desplazado.")
+        elif reason in CONFLICT_REASONS and source_value is not None:
             source_id = _uuid_string(
                 source_value, "occurrences.source_occurrence_id"
             )
             if source_id == occurrence_id or source_id not in known_occurrence_ids:
-                _inconsistent("Una Occurrence tiene un statusContext inválido.")
-            occurrence["statusContext"] = {
-                "reason": PRIORITY_OVERRIDE_REASON,
+                _inconsistent("Una Occurrence tiene un conflictContext inválido.")
+            conflict_context = {
+                "reason": reason,
                 "sourceOccurrenceId": source_id,
             }
+            occurrence["conflictContext"] = conflict_context
+            if reason == PRIORITY_OVERRIDE_REASON:
+                # Alias transitorio para el frontend pre-OccurrenceSegment. La
+                # única fuente canónica es conflictContext y el alias desaparece
+                # cuando ese consumidor migre al contrato nuevo.
+                occurrence["statusContext"] = dict(conflict_context)
         else:
-            _inconsistent("Una Occurrence tiene un statusContext incompleto.")
+            _inconsistent("Una Occurrence tiene un conflictContext incompleto.")
+        _optional_metadata(occurrence, row)
         occurrences.append(occurrence)
+        occurrences_by_id[occurrence_id] = occurrence
+
+    _build_segments(segment_rows, occurrences_by_id)
 
     occurrences.sort(
         key=lambda occurrence: (
@@ -491,7 +575,10 @@ def build_planner_state(rows):
     return {
         "planItems": plan_items,
         "occurrences": _build_occurrences(
-            rows["occurrences"], plan_item_ids, slot_owners
+            rows["occurrences"],
+            rows["occurrence_segments"],
+            plan_item_ids,
+            slot_owners,
         ),
     }
 

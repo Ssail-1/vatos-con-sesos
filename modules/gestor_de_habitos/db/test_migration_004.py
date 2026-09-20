@@ -6,8 +6,10 @@ non-superuser database owner, and never reads DATABASE_URL or backend/.env.
 
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 import psycopg
@@ -15,6 +17,14 @@ from psycopg import sql
 
 
 MIGRATION_DIRECTORY = Path(__file__).resolve().parent / "migrations"
+BACKEND_DIRECTORY = Path(__file__).resolve().parents[1] / "backend"
+if str(BACKEND_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIRECTORY))
+
+import database as backend_database
+from app import app as backend_app
+
+
 MIGRATIONS_001_TO_003 = (
     "001_initial_schema.sql",
     "002_fix_occurrence_status_context.sql",
@@ -809,6 +819,218 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
                 ).fetchone()[0],
                 2,
             )
+
+    def test_backend_planner_state_reads_schema_004_graph(self):
+        database_url = self._create_database()
+        plan_item_id = UUID(int=400)
+        generation_slot_id = UUID("00000000-0000-4000-8000-000000000401")
+        segmented_generation_slot_id = UUID(
+            "00000000-0000-4000-8000-000000000405"
+        )
+        source_occurrence_id = UUID(int=402)
+        priority_occurrence_id = UUID(int=403)
+        segmented_occurrence_id = UUID(int=404)
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, plan_item_id)
+            connection.execute(
+                """
+                INSERT INTO public.generation_configs (
+                    plan_item_id,
+                    mode,
+                    start_date,
+                    end_date,
+                    indefinite,
+                    interval_days,
+                    stopped_from_date
+                )
+                VALUES (%s, 'manual_dates', NULL, NULL, FALSE, NULL, NULL)
+                """,
+                (plan_item_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.generation_slots (
+                    id, plan_item_id, start_time, end_time
+                )
+                VALUES
+                    (%s, %s, '08:00', '10:00'),
+                    (%s, %s, '13:00', '17:00')
+                """,
+                (
+                    generation_slot_id,
+                    plan_item_id,
+                    segmented_generation_slot_id,
+                    plan_item_id,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO public.generation_slot_dates (slot_id, entry_date)
+                VALUES
+                    (%s, '2026-09-20'),
+                    (%s, '2026-09-20')
+                """,
+                (generation_slot_id, segmented_generation_slot_id),
+            )
+            self._insert_occurrence(
+                connection,
+                source_occurrence_id,
+                plan_item_id,
+                start_time="08:00",
+                end_time="10:00",
+            )
+            connection.execute(
+                """
+                UPDATE public.occurrences
+                SET source_generation_slot_id = %s
+                WHERE id = %s
+                """,
+                (generation_slot_id, source_occurrence_id),
+            )
+            self._insert_occurrence(
+                connection,
+                priority_occurrence_id,
+                plan_item_id,
+                start_time="10:30",
+                end_time="11:30",
+                status="completed",
+                conflict_reason="priority_override",
+                source_occurrence_id=source_occurrence_id,
+                origin_reason="conflict_insertion",
+                last_conflict_action="conflict_insertion",
+            )
+            self._insert_occurrence(
+                connection,
+                segmented_occurrence_id,
+                plan_item_id,
+                start_time="13:00",
+                end_time="17:00",
+                status="in_progress",
+                conflict_reason="user_forced_override",
+                source_occurrence_id=source_occurrence_id,
+                origin_reason="conflict_insertion",
+                last_conflict_action="conflict_move",
+            )
+            connection.execute(
+                """
+                UPDATE public.occurrences
+                SET source_generation_slot_id = %s
+                WHERE id = %s
+                """,
+                (segmented_generation_slot_id, segmented_occurrence_id),
+            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO public.occurrence_segments (
+                        id, occurrence_id, start_time, end_time, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        (
+                            UUID(int=410),
+                            source_occurrence_id,
+                            "08:00",
+                            "10:00",
+                            "pending",
+                        ),
+                        (
+                            UUID(int=411),
+                            priority_occurrence_id,
+                            "10:30",
+                            "11:30",
+                            "completed",
+                        ),
+                        (
+                            UUID(int=413),
+                            segmented_occurrence_id,
+                            "14:30",
+                            "17:00",
+                            "pending",
+                        ),
+                        (
+                            UUID(int=412),
+                            segmented_occurrence_id,
+                            "13:00",
+                            "14:00",
+                            "completed",
+                        ),
+                    ),
+                )
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ):
+            response = backend_app.test_client().get("/api/planner-state")
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        state = response.get_json()
+
+        occurrences = {item["id"]: item for item in state["occurrences"]}
+        source = occurrences[str(source_occurrence_id)]
+        self.assertEqual(source["sourceGenerationSlotId"], str(generation_slot_id))
+        self.assertNotIn("originReason", source)
+        self.assertNotIn("lastConflictAction", source)
+        self.assertEqual(
+            source["segments"],
+            [
+                {
+                    "id": str(UUID(int=410)),
+                    "startTime": "08:00",
+                    "endTime": "10:00",
+                    "status": "pending",
+                }
+            ],
+        )
+
+        priority = occurrences[str(priority_occurrence_id)]
+        self.assertEqual(priority["status"], "completed")
+        self.assertEqual(
+            priority["conflictContext"],
+            {
+                "reason": "priority_override",
+                "sourceOccurrenceId": str(source_occurrence_id),
+            },
+        )
+        self.assertEqual(priority["statusContext"], priority["conflictContext"])
+        self.assertEqual(priority["originReason"], "conflict_insertion")
+        self.assertEqual(priority["lastConflictAction"], "conflict_insertion")
+
+        segmented = occurrences[str(segmented_occurrence_id)]
+        self.assertEqual(
+            segmented["sourceGenerationSlotId"],
+            str(segmented_generation_slot_id),
+        )
+        self.assertEqual(
+            segmented["conflictContext"],
+            {
+                "reason": "user_forced_override",
+                "sourceOccurrenceId": str(source_occurrence_id),
+            },
+        )
+        self.assertNotIn("statusContext", segmented)
+        self.assertEqual(segmented["originReason"], "conflict_insertion")
+        self.assertEqual(segmented["lastConflictAction"], "conflict_move")
+        self.assertEqual(
+            segmented["segments"],
+            [
+                {
+                    "id": str(UUID(int=412)),
+                    "startTime": "13:00",
+                    "endTime": "14:00",
+                    "status": "completed",
+                },
+                {
+                    "id": str(UUID(int=413)),
+                    "startTime": "14:30",
+                    "endTime": "17:00",
+                    "status": "pending",
+                },
+            ],
+        )
 
     def test_migration_is_atomic_when_a_late_step_fails(self):
         database_url = self._create_database()

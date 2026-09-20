@@ -1,36 +1,51 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — PostgreSQL Foundation / Migration 004
+## OccurrenceSegment v1 — Backend Read Compatibility
 
 ### Objective
 
-Implement and verify the PostgreSQL foundation for:
+Adapt the backend read path so it can correctly read and serialize the
+PostgreSQL schema produced by:
 
 ```text
-OccurrenceSegment v1
+001
+→ 002
+→ 003
+→ 004
 ```
 
-This phase must create and test:
+The primary target of this phase is:
 
 ```text
-004_occurrence_segments.sql
+GET planner-state
 ```
 
-using an isolated/ephemeral PostgreSQL 16 database.
+and the backend structures directly required to support that read path.
 
-This task establishes the database structure required by the approved
-OccurrenceSegment architecture.
+This phase must make the backend understand:
 
-It does NOT activate OccurrenceSegment behavior in the real application yet.
+```text
+Occurrence
++
+1..N OccurrenceSegments
++
+materialized occurrence aggregate
++
+conflict metadata
+```
+
+without yet implementing segment mutations or the new conflict engine.
 
 ---
 
-## Required reading
+# Required reading
 
 Before making any change, read completely:
 
 ```text
 AGENTS.md
+
+docs/codex/CURRENT_TASK.md
 
 docs/architecture/STATUS_CONFLICT_RULES.md
 
@@ -43,32 +58,41 @@ docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
 modules/gestor_de_habitos/docs/valores.md
 ```
 
-Also inspect:
+Also inspect the database migrations:
 
 ```text
-docs/codex/planeacion/
-docs/codex/PRODUCTION_CONCERNS.md
+modules/gestor_de_habitos/db/migrations/001_initial_schema.sql
+
+modules/gestor_de_habitos/db/migrations/002_fix_occurrence_status_context.sql
+
+modules/gestor_de_habitos/db/migrations/003_multi_slot_scheduling.sql
+
+modules/gestor_de_habitos/db/migrations/004_occurrence_segments.sql
 ```
 
-when they contain relevant current architectural context.
+Read relevant existing backend tests before modifying implementation.
 
-The priority of interpretation is:
+---
+
+# Authority hierarchy
+
+Use:
 
 ```text
 CURRENT_TASK.md
 → current implementation scope
 
 OCCURRENCE_SEGMENT_DECISIONS.md
-→ approved technical choices
+→ approved technical decisions
 
 OCCURRENCE_SEGMENT_V1.md
-→ approved technical model
+→ approved model
 
 STATUS_CONFLICT_RULES.md
-→ approved product/domain behavior
+→ approved domain/product behavior
 
 TECHNICAL_AUDIT
-→ evidence and alternatives, not authority over later decisions
+→ evidence about current implementation and alternatives
 ```
 
 Do not silently reinterpret approved rules.
@@ -80,17 +104,19 @@ Do not silently reinterpret approved rules.
 This task is limited to:
 
 ```text
-PostgreSQL prototype
-migration 004
-migration/backfill tests
-database-level verification
+backend read compatibility
+planner-state repository
+planner-state service / serialization
+read-side validation
+backend tests
+PostgreSQL integration tests for reading schema 004
 ```
 
-Do NOT implement application behavior yet.
+Do NOT implement write-side OccurrenceSegment behavior yet.
 
 ---
 
-# 1. Inspect current state first
+# 1. Inspect working tree first
 
 Before editing:
 
@@ -101,41 +127,11 @@ git diff --stat
 
 Preserve all existing user modifications.
 
-Read the current migrations completely:
-
-```text
-modules/gestor_de_habitos/db/migrations/001_initial_schema.sql
-
-modules/gestor_de_habitos/db/migrations/002_fix_occurrence_status_context.sql
-
-modules/gestor_de_habitos/db/migrations/003_multi_slot_scheduling.sql
-```
-
-Do not modify migrations 001, 002 or 003.
+Do not revert architecture documents, migration 004 or existing work.
 
 ---
 
-# 2. PostgreSQL version
-
-Target:
-
-```text
-PostgreSQL 16
-```
-
-All migration behavior must be verified against PostgreSQL 16.
-
-Do not rely on SQLite or another database as proof of correctness.
-
----
-
-# 3. Ephemeral PostgreSQL only
-
-All migration development and verification in this task must use:
-
-```text
-isolated / ephemeral PostgreSQL
-```
+# 2. Database safety
 
 Do NOT apply migration 004 to:
 
@@ -143,615 +139,21 @@ Do NOT apply migration 004 to:
 vcs_dev
 ```
 
-Do NOT modify real development data.
+Do NOT query or mutate real development data for this task.
 
-Do NOT read or modify private `.env` files unless existing project tooling
-already uses environment configuration without exposing secrets.
+Use:
 
-Never print credentials.
+```text
+isolated / ephemeral PostgreSQL 16
+```
+
+for schema-004 integration verification.
+
+Do not expose credentials or private `.env` contents.
 
 ---
 
-# 4. Migration file
-
-Create:
-
-```text
-modules/gestor_de_habitos/db/migrations/004_occurrence_segments.sql
-```
-
-Migration 004 must be written as a forward migration from the exact schema
-produced by:
-
-```text
-001
-→ 002
-→ 003
-```
-
-Do not rewrite historical migrations.
-
----
-
-# 5. Create `occurrence_segments`
-
-Create:
-
-```text
-public.occurrence_segments
-```
-
-with at least:
-
-```text
-id UUID PRIMARY KEY
-
-occurrence_id UUID NOT NULL
-    REFERENCES public.occurrences(id)
-    ON DELETE CASCADE
-
-start_time TIME NOT NULL
-
-end_time TIME NOT NULL
-
-status VARCHAR(...) NOT NULL
-```
-
-Status values:
-
-```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
-
----
-
-# 6. Local segment constraints
-
-PostgreSQL must directly protect:
-
-```text
-id primary key
-
-occurrence parent FK
-
-ON DELETE CASCADE
-
-start_time < end_time
-
-status valid
-```
-
-Use explicit, descriptive constraint names consistent with the existing
-migration style.
-
----
-
-# 7. Structural index
-
-Create an index equivalent in purpose to:
-
-```text
-(
-    occurrence_id,
-    start_time,
-    end_time,
-    id
-)
-```
-
-for deterministic child lookup/order and mutation support.
-
-The exact name should follow repository conventions.
-
----
-
-# 8. Sibling overlap prototype
-
-Prototype the approved preferred architecture:
-
-```text
-service validation
-+
-PostgreSQL exclusion constraint
-```
-
-for sibling segment overlap.
-
-Two segments belonging to the same occurrence must not overlap.
-
-Adjacency must remain valid:
-
-```text
-13:00–14:00
-14:00–15:00
-```
-
-Semantics:
-
-```text
-[start, end)
-```
-
----
-
-# 9. `btree_gist` investigation
-
-In ephemeral PostgreSQL 16:
-
-1. verify whether `btree_gist` is available;
-2. verify whether the test/deployment role can create/use it;
-3. prototype a clean exclusion constraint;
-4. verify adjacency is accepted;
-5. verify true sibling overlap is rejected;
-6. verify different occurrences may contain overlapping segment ranges.
-
-Do not assume success.
-
-Record the result in tests/report.
-
----
-
-# 10. Fallback if `btree_gist` is not viable
-
-If `btree_gist` cannot be used safely:
-
-```text
-do not block migration 004
-```
-
-Use the approved fallback:
-
-```text
-no DB exclusion constraint in v1 foundation
-```
-
-and rely later on:
-
-```text
-domain final-state validation
-parent locking
-SERIALIZABLE
-```
-
-Document clearly why the constraint was omitted.
-
-Do NOT invent a complex trigger as replacement.
-
----
-
-# 11. At least one segment
-
-Do NOT add a constraint trigger requiring:
-
-```text
-every occurrence has at least one segment
-```
-
-in migration 004.
-
-This invariant is approved for:
-
-```text
-domain/service final-state validation
-```
-
-during the later backend phase.
-
-Migration/backfill must nevertheless leave all current occurrences with at
-least one segment.
-
----
-
-# 12. Segment bounds
-
-Do NOT implement complex DB triggers for:
-
-```text
-occurrence.start_time <= segment.start_time
-
-segment.end_time <= occurrence.end_time
-```
-
-in this phase.
-
-These bounds are approved as:
-
-```text
-domain/service final-state validation
-```
-
-for v1.
-
-The backfill itself must satisfy the invariant exactly.
-
----
-
-# 13. Backfill existing occurrences
-
-Every occurrence existing after migrations 001–003 must receive:
-
-```text
-exactly one initial segment
-```
-
-with:
-
-```text
-segment.occurrence_id = occurrence.id
-
-segment.start_time = occurrence.start_time
-
-segment.end_time = occurrence.end_time
-
-segment.status = occurrence.status
-```
-
-Use a new UUID for each segment.
-
-Do NOT attempt to infer:
-
-```text
-historical pauses
-historical splits
-effective time
-interruptions
-segment history
-```
-
-The old database does not contain evidence for those facts.
-
----
-
-# 14. UUID generation
-
-Use a PostgreSQL-16-compatible UUID generation strategy that is verified in
-the ephemeral test environment.
-
-Do not derive segment IDs from:
-
-```text
-occurrence ID
-PlanItem
-date
-time
-ordinal
-```
-
-Segment IDs must be independent UUID identities.
-
-If UUID generation requires an extension, verify and document the dependency
-before committing to it.
-
-Prefer existing project/database capabilities when possible.
-
----
-
-# 15. Backfill verification
-
-After backfill verify:
-
-```text
-number of occurrences
-==
-number of occurrence_segments
-```
-
-for the migrated legacy dataset.
-
-Also verify:
-
-```text
-zero occurrence_segments without parent
-
-zero legacy occurrences without segment
-
-segment start/end/status exactly match parent legacy values
-```
-
-Immediately after migration 004, every legacy occurrence should still behave
-as a single-segment occurrence.
-
----
-
-# 16. Rename `status_reason` → `conflict_reason`
-
-The approved strategy is:
-
-```text
-direct coordinated rename
-```
-
-Migration 004 should evolve:
-
-```text
-occurrences.status_reason
-```
-
-to:
-
-```text
-occurrences.conflict_reason
-```
-
-Do not keep two long-lived reason columns.
-
----
-
-# 17. Conflict reason constraints
-
-Replace the old status-context constraints that assume:
-
-```text
-reason only exists for cancelled/not_finished
-```
-
-because that assumption is no longer valid.
-
-`conflict_reason` must initially allow:
-
-```text
-priority_override
-user_forced_override
-```
-
-or:
-
-```text
-NULL
-```
-
-according to the approved model.
-
----
-
-# 18. `source_occurrence_id`
-
-Preserve:
-
-```text
-source_occurrence_id
-```
-
-as the source of the most recent stored conflict.
-
-Keep:
-
-```text
-source_occurrence_id <> id
-```
-
-protection.
-
-Keep the existing FK deletion behavior conservatively as:
-
-```text
-ON DELETE NO ACTION
-```
-
-in v1.
-
-Do NOT change it to:
-
-```text
-SET NULL
-CASCADE
-```
-
-during this task.
-
-Application-level movement/deletion behavior is out of scope for this phase.
-
----
-
-# 19. Add `origin_reason`
-
-Add nullable:
-
-```text
-origin_reason
-```
-
-Initial allowed non-null value:
-
-```text
-conflict_insertion
-```
-
-Legacy/backfilled rows:
-
-```text
-origin_reason = NULL
-```
-
-Do not invent historical origin metadata.
-
----
-
-# 20. Add `last_conflict_action`
-
-Add nullable:
-
-```text
-last_conflict_action
-```
-
-Initial allowed values:
-
-```text
-conflict_insertion
-conflict_move
-```
-
-Legacy/backfilled rows:
-
-```text
-last_conflict_action = NULL
-```
-
----
-
-# 21. Do not add speculative metadata
-
-Do NOT add:
-
-```text
-conflictSources[]
-occurrence_conflict_sources
-event log
-movement history
-segment templates
-pause/resume columns
-analytics columns
-advice columns
-is_segmented boolean
-segment ordinal column
-```
-
-unless required by an already-approved invariant.
-
----
-
-# 22. Do not persist segment ordinal
-
-Do NOT create:
-
-```text
-segment_number
-position
-ordinal
-```
-
-just to display:
-
-```text
-Seg 1
-Seg 2
-Seg 3
-```
-
-UI ordinal is derived later from deterministic chronological ordering.
-
----
-
-# 23. Time precision
-
-Preserve PostgreSQL:
-
-```text
-TIME
-```
-
-for start/end.
-
-Do not introduce seconds-oriented behavior.
-
-Canonical application precision remains:
-
-```text
-HH:MM
-```
-
-Do not normalize/truncate legacy data silently in migration 004 unless a
-verified existing-data defect requires it.
-
-If unexpected subminute legacy data is discovered in an isolated fixture,
-report it rather than silently changing policy.
-
----
-
-# 24. Migration atomicity
-
-Migration 004 should execute atomically where PostgreSQL permits.
-
-If any required migration step fails:
-
-```text
-the schema/backfill must not remain partially applied
-```
-
----
-
-# 25. Migration preconditions
-
-Before destructive/renaming steps, migration/tests should verify assumptions
-that matter for correctness.
-
-Examples:
-
-```text
-existing occurrence statuses are valid
-
-existing start_time < end_time
-
-existing status reason/context data conforms to the pre-004 model
-```
-
-Do not overengineer runtime migration logic if the previous constraints
-already prove an invariant.
-
----
-
-# 26. Migration path tests
-
-Test at minimum:
-
-```text
-empty DB:
-001 → 002 → 003 → 004
-
-representative populated DB:
-001 → 002 → 003
-insert legacy fixtures
-apply 004
-verify exact backfill
-
-legacy priority_override occurrence
-→ conflict metadata preserved
-
-all six legacy statuses
-→ equivalent segment status
-
-source_occurrence_id null/non-null cases
-
-source_generation_slot_id null/non-null cases
-```
-
----
-
-# 27. Constraint tests
-
-Verify at minimum:
-
-```text
-segment start == end rejected
-
-segment start > end rejected
-
-invalid segment status rejected
-
-orphan segment rejected
-
-deleting occurrence cascades its segments
-
-valid adjacent sibling segments accepted
-```
-
-If exclusion constraint is enabled also verify:
-
-```text
-overlapping sibling segments rejected
-
-overlapping segments from different occurrences allowed
-```
-
----
-
-# 28. Existing migrations remain immutable
+# 3. Migration files remain immutable
 
 Do NOT modify:
 
@@ -759,188 +161,951 @@ Do NOT modify:
 001_initial_schema.sql
 002_fix_occurrence_status_context.sql
 003_multi_slot_scheduling.sql
+004_occurrence_segments.sql
 ```
 
-If a problem in an old migration is discovered:
+Migration 004 is input to this task, not the implementation target.
+
+If a genuine defect is discovered in 004:
 
 ```text
-document it
+STOP before changing it
 ```
 
-and solve forward in:
+and report:
 
 ```text
-004
+finding
+impact
+possible fixes
+recommendation
 ```
 
-when appropriate.
+because migration architecture has already been approved and verified.
 
 ---
 
-# 29. No production/backend implementation
+# 4. Primary backend target
 
-Do NOT modify production backend behavior in this task.
-
-Specifically do NOT yet adapt:
+Adapt the backend read path used by:
 
 ```text
-planner_state_service.py
-plan_item_creation_service.py
-plan_item_materializer.py
-occurrence_mutation_service.py
-week_mutation_service.py
-future_schedule_service.py
-scheduling_policy.py
-app.py
-repositories used by runtime
+GET planner-state
 ```
 
-unless a test-only import/helper change is strictly required to verify the
-migration and does not activate new behavior.
+so it can read occurrences from schema 004.
 
-Prefer dedicated migration/integration test infrastructure.
+Inspect at minimum:
+
+```text
+modules/gestor_de_habitos/backend/repositories/planner_state_repository.py
+
+modules/gestor_de_habitos/backend/planner_state_service.py
+
+modules/gestor_de_habitos/backend/app.py
+```
+
+and any directly related model/helper/test files.
+
+Do not assume these are the only relevant files.
+
+Follow actual call paths.
 
 ---
 
-# 30. No frontend implementation
+# 5. Read `occurrence_segments`
 
-Do NOT modify application frontend behavior.
+Planner-state must read:
 
-Do not implement:
+```text
+public.occurrence_segments
+```
+
+for every occurrence.
+
+Each occurrence must expose:
 
 ```text
 segments[]
-rendering
-expand/collapse
-selectedSegmentId
-segment status controls
-duration sum
-conflict UX
 ```
 
-in this phase.
+with at least:
+
+```text
+id
+startTime
+endTime
+status
+```
 
 ---
 
-# 31. No persistent reconciliation implementation
+# 6. Deterministic segment ordering
 
-Do NOT implement:
+Segments must be serialized deterministically using:
 
 ```text
-TODAY → PREVIOUS_EDITABLE_DAY reconciliation
-
-PREVIOUS_EDITABLE_DAY → FROZEN reconciliation
+start_time
+end_time
+id
 ```
 
-yet.
+equivalent ordering.
 
-That belongs to a later backend phase.
+Do not persist or invent:
+
+```text
+segment ordinal
+segment number
+position
+```
+
+UI labels such as:
+
+```text
+Seg 1
+Seg 2
+```
+
+will be derived later.
 
 ---
 
-# 32. Do not apply migration 004 to `vcs_dev`
+# 7. Parent fields remain available
 
-Even if all tests pass:
+The planner-state occurrence contract must continue to include the existing
+general occurrence fields:
 
 ```text
-DO NOT run migration 004 against the real vcs_dev database
+id
+planItemId
+date
+startTime
+endTime
+status
+sourceGenerationSlotId
 ```
 
-during this task.
+`startTime` and `endTime` remain:
 
-The approved rollout requires backend read compatibility before real
-application.
+```text
+general occurrence envelope
+```
+
+They are NOT replaced by segment boundaries.
 
 ---
 
-# 33. Testing environment
+# 8. `status` remains materialized parent aggregate
 
-Use isolated PostgreSQL 16.
-
-The test environment may be:
+In this phase:
 
 ```text
-temporary database
-temporary cluster
-existing opt-in PostgreSQL integration harness
+occurrence.status
 ```
 
-provided that:
+must be read from the persisted parent.
+
+Do NOT yet implement:
 
 ```text
-vcs_dev is never mutated
+deriveOccurrenceStatus(...)
 ```
 
-Reuse existing project testing conventions where practical.
+as write authority.
+
+That belongs to a later phase.
+
+Do not recalculate or overwrite aggregate status during GET.
 
 ---
 
-# 34. Tests may be added
+# 9. Read-side integrity
 
-Add focused migration/PostgreSQL tests as needed.
+Planner-state must not silently fabricate or repair structural data.
 
-Do not rewrite unrelated existing tests to pretend the runtime already
-supports OccurrenceSegment.
-
-Tests in this phase should prove:
+At minimum detect invalid read states such as:
 
 ```text
-schema
-migration
-backfill
-constraints
-rollback/integrity
+occurrence with zero segments
+
+segment with unknown status
+
+segment outside parent occurrence identity/association
+
+duplicate segment identity in assembled state
+
+invalid time serialization
 ```
 
-not future application behavior.
+Where practical on the read side also validate:
+
+```text
+segment.start_time < segment.end_time
+
+segments are ordered deterministically
+```
+
+Do not silently:
+
+```text
+create a missing segment
+truncate times
+repair parent status
+rewrite metadata
+```
 
 ---
 
-# 35. `btree_gist` result must be explicit
+# 10. Segment bounds
 
-At completion clearly state one of:
+The approved rule is:
 
 ```text
-A. exclusion constraint implemented and verified
+occurrence.start_time <= segment.start_time
+
+segment.end_time <= occurrence.end_time
+```
+
+Although service-level write enforcement belongs to a later phase,
+planner-state may detect violations when reading.
+
+If detected:
+
+```text
+fail safely
+```
+
+rather than presenting corrupted planner state as valid.
+
+Do not mutate the database from GET.
+
+---
+
+# 11. Sibling overlap
+
+Migration 004 already protects sibling overlap through PostgreSQL.
+
+The read path does not need to become a second conflict engine.
+
+It may assert obvious structural consistency in tests, but do not duplicate
+the full exclusion-constraint implementation in Python.
+
+---
+
+# 12. `conflict_reason`
+
+Schema 004 renamed:
+
+```text
+status_reason
+```
+
+to:
+
+```text
+conflict_reason
+```
+
+All planner-state read SQL for schema 004 must use:
+
+```text
+conflict_reason
+```
+
+Do not query the old physical column in the new-schema read path.
+
+---
+
+# 13. Conflict context API
+
+Expose the new semantic API field:
+
+```text
+conflictContext
+```
+
+when conflict metadata exists.
+
+Conceptual shape:
+
+```js
+{
+  reason: "priority_override",
+  sourceOccurrenceId: "..."
+}
+```
+
+Allowed reasons in schema 004:
+
+```text
+priority_override
+user_forced_override
+```
+
+---
+
+# 14. Conflict context pair
+
+The database guarantees conflict metadata as a pair.
+
+Planner-state must treat:
+
+```text
+conflict_reason
+source_occurrence_id
+```
+
+as one context.
+
+Valid:
+
+```text
+both NULL
 ```
 
 or:
 
 ```text
-B. exclusion constraint intentionally omitted;
-   approved fallback selected
+both present
 ```
 
-Do not leave the decision ambiguous in migration 004.
+Do not fabricate one side.
 
 ---
 
-# 36. Documentation update
+# 15. Historical conflict semantics
 
-If implementation discovers a factual technical constraint that changes the
-approved DB approach:
-
-```text
-do not silently rewrite architecture
-```
-
-Report:
+Do NOT preserve the old assumption:
 
 ```text
-finding
-impact
-alternatives
-recommendation
+conflict context only valid when status is cancelled/not_finished
 ```
 
-before making a contradictory architectural choice.
+That rule was removed by migration 004.
 
-Minor implementation details that do not alter approved semantics may be
-documented directly in tests/comments as appropriate.
+`conflictContext` is historical structural metadata.
+
+It may exist even if the current aggregate status is something else.
 
 ---
 
-# 37. Git rules
+# 16. `statusContext` compatibility
+
+The final public direction is:
+
+```text
+conflictContext
+```
+
+not:
+
+```text
+statusContext
+```
+
+However the frontend has not yet been migrated.
+
+For this phase, a short-lived compatibility alias MAY be emitted if required
+to keep existing read consumers/tests operational.
+
+If an alias is used:
+
+```text
+conflictContext
+```
+
+must remain the canonical source.
+
+Never maintain:
+
+```text
+two independent contexts
+```
+
+or two independent pieces of state.
+
+Document clearly:
+
+```text
+where the alias exists
+why it exists
+when it should be removed
+```
+
+Do not preserve old semantic restrictions merely to satisfy the alias.
+
+---
+
+# 17. `originReason`
+
+Planner-state must support reading:
+
+```text
+origin_reason
+```
+
+and expose conceptually:
+
+```text
+originReason
+```
+
+Allowed current non-null value:
+
+```text
+conflict_insertion
+```
+
+When DB value is NULL:
+
+```text
+omit the optional API field
+```
+
+or follow the repository's established nullable-field convention.
+
+Do not invent:
+
+```text
+normal
+normal_creation
+```
+
+---
+
+# 18. `lastConflictAction`
+
+Planner-state must support:
+
+```text
+last_conflict_action
+```
+
+and expose:
+
+```text
+lastConflictAction
+```
+
+Allowed non-null values:
+
+```text
+conflict_insertion
+conflict_move
+```
+
+Do not derive history beyond the stored value.
+
+---
+
+# 19. `sourceGenerationSlotId`
+
+Preserve current support for:
+
+```text
+sourceGenerationSlotId
+```
+
+No recurrence semantics change in this phase.
+
+---
+
+# 20. No invented segment IDs
+
+Never create segment IDs during:
+
+```text
+hydrate
+serialization
+fallback
+GET
+```
+
+Segment IDs must come from:
+
+```text
+occurrence_segments.id
+```
+
+persisted by PostgreSQL.
+
+If a parent has no persisted child:
+
+```text
+that is invalid schema state
+```
+
+not a reason to fabricate a segment.
+
+---
+
+# 21. Planner-state query consistency
+
+Parent occurrences and child segments must be read from:
+
+```text
+the same coherent database snapshot
+```
+
+Preserve the existing read transaction semantics, currently based on:
+
+```text
+REPEATABLE READ
+READ ONLY
+```
+
+or an equivalent verified approach.
+
+Do not fetch parents and segments through unrelated snapshots.
+
+---
+
+# 22. Avoid N+1 queries
+
+Do not issue:
+
+```text
+one segment query per occurrence
+```
+
+for planner-state.
+
+Prefer a bounded query strategy such as:
+
+```text
+one parent query
++
+one segments query
+```
+
+within the same read transaction,
+
+or another clean equivalent.
+
+The implementation should remain understandable and testable.
+
+---
+
+# 23. Repository responsibility
+
+Repository code should:
+
+```text
+read rows
+map DB columns
+return structured persistence data
+```
+
+Do not move aggregate/domain mutation rules into the repository.
+
+---
+
+# 24. Service responsibility
+
+Planner-state service should:
+
+```text
+assemble API representation
+validate supported stored values
+validate references required by the contract
+serialize times
+attach ordered segments
+```
+
+Do not implement future:
+
+```text
+split
+trim
+translate
+reconciliation
+conflict resolution
+```
+
+here.
+
+---
+
+# 25. Time serialization
+
+Continue canonical API time representation:
+
+```text
+HH:MM
+```
+
+Preserve existing rejection behavior for unsupported subminute DB values.
+
+Do not silently truncate:
+
+```text
+seconds
+microseconds
+```
+
+---
+
+# 26. PostgreSQL integration fixture
+
+Add or extend isolated PostgreSQL tests so schema 004 is exercised.
+
+Test flow should include:
+
+```text
+001
+→ 002
+→ 003
+→ 004
+```
+
+then insert/read representative schema-004 data.
+
+Do not use:
+
+```text
+vcs_dev
+```
+
+---
+
+# 27. Minimum planner-state integration cases
+
+Verify at least:
+
+### Single segment
+
+```text
+Occurrence 08:00–10:00 pending
+
+Segment:
+08:00–10:00 pending
+```
+
+serializes correctly.
+
+### Multiple segments
+
+```text
+Occurrence 13:00–17:00 in_progress
+
+Segments:
+13:00–14:00 completed
+14:30–17:00 pending
+```
+
+serializes both children in deterministic order.
+
+### Conflict metadata
+
+Verify:
+
+```text
+priority_override
+```
+
+and:
+
+```text
+user_forced_override
+```
+
+can be read without assuming parent status must be cancelled/not_finished.
+
+### Origin metadata
+
+Verify:
+
+```text
+originReason = conflict_insertion
+```
+
+when present.
+
+### Last conflict action
+
+Verify:
+
+```text
+conflict_insertion
+conflict_move
+```
+
+when present.
+
+### Generation provenance
+
+Verify:
+
+```text
+sourceGenerationSlotId
+```
+
+is preserved.
+
+---
+
+# 28. Invalid read-state tests
+
+Add focused tests for safe rejection of invalid states where possible.
+
+Examples:
+
+```text
+parent with zero segments
+
+invalid subminute time
+
+segment outside parent envelope
+```
+
+For DB-protected states such as sibling overlap:
+
+```text
+the database constraint test may remain the proof
+```
+
+rather than bypassing PostgreSQL protections unnaturally.
+
+---
+
+# 29. Existing legacy backend tests
+
+Update tests only where required by the new read contract.
+
+Do not rewrite unrelated tests.
+
+Preserve existing behavior where not contradicted by approved schema 004.
+
+---
+
+# 30. Backend runtime writes remain out of scope
+
+Do NOT adapt write behavior yet.
+
+Do not implement schema-004 write compatibility for:
+
+```text
+Create PlanItem
+
+PATCH occurrence
+
+DELETE occurrence behavior changes
+
+Apply Week
+
+Apply Future
+
+status mutation
+
+priority override writes
+
+user-forced conflict writes
+```
+
+unless a tiny non-behavioral refactor is strictly necessary for the read path.
+
+If a write path becomes visibly incompatible:
+
+```text
+document it
+```
+
+Do not expand scope to fix it.
+
+---
+
+# 31. No segment creation runtime yet
+
+Do not modify:
+
+```text
+plan_item_materializer.py
+plan_item_creation_service.py
+```
+
+to create segments during real runtime operations in this phase.
+
+That belongs to the later creation/write phase.
+
+---
+
+# 32. No aggregate domain implementation yet
+
+Do NOT implement:
+
+```text
+deriveOccurrenceStatus(...)
+```
+
+as mutation authority.
+
+Do not update parent status from children.
+
+Read:
+
+```text
+stored parent aggregate
+```
+
+only.
+
+Aggregate implementation belongs to its dedicated phase.
+
+---
+
+# 33. No reconciliation implementation
+
+Do NOT implement:
+
+```text
+pending → not_completed
+
+in_progress → not_finished
+```
+
+on segments yet.
+
+Do not introduce:
+
+```text
+POST /api/planner/reconcile
+```
+
+in this task.
+
+---
+
+# 34. No conflict engine changes
+
+Do NOT change:
+
+```text
+blocking status policy
+
+segment-aware conflict detection
+
+priority override engine
+
+split/trim resolution
+
+confirmed conflict snapshots
+```
+
+yet.
+
+Even though current code is known to omit `not_finished`, that correction
+belongs to the later domain/conflict phase unless required solely by a read
+test.
+
+Document the known divergence rather than expanding scope.
+
+---
+
+# 35. No frontend changes
+
+Do NOT modify:
+
+```text
+planner-store.js
+planner-matrix.js
+app.js frontend
+conflict-detector.js
+occurrence-status.js
+plan-item-form.js
+frontend API validators
+```
+
+during this task.
+
+The frontend read/display compatibility phase comes next.
+
+---
+
+# 36. Existing application compatibility
+
+Because `vcs_dev` remains on schema 003 during this task:
+
+```text
+do not claim the local running application is ready for migration 004
+```
+
+The purpose is only to prove:
+
+```text
+new backend read code
++
+schema 004
+```
+
+works correctly in isolation.
+
+Real database rollout still requires later write compatibility planning.
+
+---
+
+# 37. Test commands
+
+Run the focused tests required by your implementation.
+
+Also run the existing backend test suite:
+
+```text
+.venv/bin/python -m unittest discover \
+  -s modules/gestor_de_habitos/backend \
+  -p 'test_*.py'
+```
+
+Run migration 004 tests:
+
+```text
+.venv/bin/python -W error::ResourceWarning \
+  -m unittest -v \
+  modules/gestor_de_habitos/db/test_migration_004.py
+```
+
+If new PostgreSQL integration tests use another command, report it exactly.
+
+Run:
+
+```text
+git diff --check
+```
+
+before completion.
+
+---
+
+# 38. No fake success
+
+If some existing tests cannot run because they require opt-in infrastructure:
+
+```text
+report the skip honestly
+```
+
+Do not represent skipped tests as passed.
+
+The new schema-004 read path must have at least one actual PostgreSQL 16
+verification, not mocks only.
+
+---
+
+# 39. Documentation
+
+Update backend/database documentation only when necessary to explain:
+
+```text
+new planner-state read contract
+temporary compatibility alias
+schema-004 test procedure
+```
+
+Do not create broad speculative documentation.
+
+---
+
+# 40. Git rules
 
 The user controls Git.
 
@@ -955,60 +1120,89 @@ switch branch
 create branch
 ```
 
-Do not revert user work.
+Do not revert pre-existing user changes.
 
 ---
 
-# 38. Completion report
+# 41. Completion report
 
 At completion provide:
 
-### Files changed
+## Files changed
 
-List every file created/modified.
+List all created/modified files.
 
-### Migration summary
+## Read path
 
 Explain:
 
 ```text
-what 004 creates
-what 004 renames
-what 004 backfills
-what constraints it adds
+how occurrences are queried
+
+how segments are queried
+
+how they are assembled
+
+how snapshot consistency is preserved
 ```
 
-### `btree_gist`
+## Planner-state contract
 
-Report:
+Show one representative serialized occurrence with:
 
 ```text
-availability
-prototype result
-final selected strategy
+segments[]
+conflictContext
+originReason
+lastConflictAction
+sourceGenerationSlotId
 ```
 
-### Tests
+where applicable.
 
-Report exact commands and results.
+## Compatibility
 
-### Safety
+State explicitly whether:
+
+```text
+statusContext
+```
+
+still exists temporarily and why.
+
+## Tests
+
+Give exact commands and results.
+
+## Safety
 
 Confirm:
 
 ```text
-vcs_dev was not modified
-001/002/003 were not modified
-no backend runtime behavior was activated
-no frontend behavior was changed
+vcs_dev not queried or modified
+
+001/002/003/004 not modified
+
+frontend not modified
+
+runtime segment writes not implemented
+
+reconciliation not implemented
+
+new conflict engine not implemented
 ```
 
-### Git
+## Known remaining incompatibilities
+
+List write paths that still cannot safely operate on schema 004.
+
+## Git
 
 Show:
 
 ```text
 git diff --stat
+
 git status --short --untracked-files=all
 ```
 
@@ -1018,53 +1212,60 @@ No push.
 
 ---
 
-# 39. Definition of done
+# 42. Definition of done
 
-This task is complete only when:
+This task is complete when:
 
 ```text
-004_occurrence_segments.sql exists
+planner-state backend can read schema 004
 
-001→004 succeeds on isolated PostgreSQL 16
+every occurrence returned contains persisted segments[]
 
-legacy occurrence backfill is verified
+segment IDs come only from PostgreSQL
 
-all legacy occurrences receive exactly one equivalent segment
+segments are deterministically ordered
 
-local segment constraints are verified
+parent envelope fields remain intact
 
-ON DELETE CASCADE is verified
+parent status remains the stored materialized aggregate
 
-conflict_reason migration is verified
+conflict_reason is read as conflictContext
 
-origin_reason / last_conflict_action schema is verified
+origin_reason is readable
 
-source_occurrence_id NO ACTION is preserved
+last_conflict_action is readable
 
-sibling no-overlap strategy has an explicit verified outcome
+sourceGenerationSlotId remains supported
 
-no real vcs_dev mutation occurred
+reads occur from one coherent DB snapshot
 
-no application runtime implementation occurred
+schema-004 read path is verified on PostgreSQL 16
+
+existing backend tests remain healthy or justified changes are documented
+
+vcs_dev remains untouched
+
+no write-side OccurrenceSegment behavior was implemented
 ```
 
 ---
 
 # Final principle
 
-This phase creates only the database foundation.
+This phase teaches the backend to understand the new persisted model.
 
-The desired result is:
+It does NOT yet teach the backend to modify that model.
+
+Desired transition:
 
 ```text
-old database model
-+
-safe segment storage capability
-+
-exact legacy backfill
+schema 004
+        ↓
+backend can read it faithfully
+        ↓
+planner-state exposes persisted segments
+        ↓
+STOP
 ```
 
-without yet changing how the running application behaves.
-
-Do not expand scope merely because the next implementation step appears
-obvious.
+Do not continue into mutations merely because the new data is now available.
