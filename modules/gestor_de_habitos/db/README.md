@@ -17,5 +17,10 @@ Las migraciones viven en:
 db/migrations/
 ├── 001_initial_schema.sql
 ├── 002_fix_occurrence_status_context.sql
-└── 003_multi_slot_scheduling.sql
+├── 003_multi_slot_scheduling.sql
+└── 004_occurrence_segments.sql
 ```
+
+La migración 004 requiere un despliegue coordinado con un backend compatible con
+`conflict_reason` y `occurrence_segments`. No debe aplicarse a `vcs_dev` antes de
+esa fase de compatibilidad.
