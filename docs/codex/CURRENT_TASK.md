@@ -1,52 +1,50 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Segment Status Mutation + Persistent Reconciliation
+## OccurrenceSegment v1 — Frontend Segment Status + Reconciliation Integration
 
 ### Objective
 
-Implement the authoritative backend behavior for:
+Connect the existing frontend OccurrenceSegment read/display model to the
+authoritative backend write behavior already implemented for:
 
 ```text
 OccurrenceSegment status mutation
 +
 persistent temporal reconciliation
-+
-atomic Occurrence aggregate updates
 ```
 
-This phase replaces the conceptual write:
+This phase must replace legacy frontend parent-status writes with:
 
 ```text
-Occurrence.status = X
+Segment status request
+        ↓
+backend validation
+        ↓
+backend aggregate recalculation
+        ↓
+GET planner-state
+        ↓
+frontend hydrate
 ```
 
-with:
+It must also change planner bootstrap from:
 
 ```text
-OccurrenceSegment.status = X
-        ↓
-derive_occurrence_status(...)
-        ↓
-Occurrence.status = aggregate
-        ↓
-COMMIT
+GET planner-state
+→ hydrate
 ```
 
-It also moves temporal reconciliation into persistent backend domain behavior:
+to:
 
 ```text
-pending
-→ not_completed
-
-in_progress
-→ not_finished
+POST planner/reconcile
+→ GET planner-state
+→ hydrate
 ```
 
-for past dates.
+This phase is an INTEGRATION phase.
 
-This phase is BACKEND ONLY.
-
-Frontend integration comes in a later task.
+It does NOT implement structural segment editing or conflict resolution.
 
 ---
 
@@ -70,27 +68,17 @@ docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
 modules/gestor_de_habitos/docs/valores.md
 ```
 
-Also inspect:
+Also inspect the completed backend implementation for:
 
 ```text
-modules/gestor_de_habitos/db/migrations/004_occurrence_segments.sql
+PATCH /api/occurrence-segments/<segment_id>/status
+
+POST /api/planner/reconcile
+
+GET /api/planner-state
 ```
 
-and all work completed in previous OccurrenceSegment phases, especially:
-
-```text
-occurrence_segment_domain.py
-
-plan_item_creation_service.py
-
-planner_state_service.py
-
-planner_state_repository.py
-
-scheduling_policy.py
-```
-
-Read the relevant existing tests before implementation.
+Read the existing frontend mutation/bootstrap tests before implementation.
 
 ---
 
@@ -124,25 +112,23 @@ Do not silently reinterpret approved behavior.
 This task is limited to:
 
 ```text
-backend segment-status mutation
+frontend API integration for segment status
 
-temporal-zone validation for segment statuses
+frontend API integration for reconciliation
 
-completed-time validation
+bootstrap reconciliation flow
 
-aggregate recalculation
+single-segment status control migration
 
-atomic parent + child persistence
+multi-segment child status controls
 
-read-only segment conflict guard for status activation
+authoritative GET-after-write hydration
 
-persistent reconciliation service
+minimal CORS support required by these routes
 
-explicit reconciliation endpoint
+frontend tests
 
-backend tests
-
-isolated PostgreSQL 16 verification
+browser verification
 ```
 
 Do NOT implement:
@@ -150,7 +136,7 @@ Do NOT implement:
 ```text
 segment time editing
 
-segment create/delete UI/API
+segment create/delete
 
 split
 
@@ -170,9 +156,7 @@ priority conflict resolution
 
 user-forced conflict resolution
 
-structural conflict engine
-
-frontend integration
+conflict confirmation handshake
 
 pause/resume
 
@@ -204,17 +188,17 @@ Do NOT apply migration 004 to:
 vcs_dev
 ```
 
-Do NOT query, clean or modify real development data.
+Do NOT clean or mutate real development data.
 
-Use:
+Frontend tests should use:
 
 ```text
-isolated PostgreSQL 16
+mocks
+fixtures
+existing frontend test infrastructure
 ```
 
-for actual schema-004 write verification.
-
-Do not expose credentials or private `.env` contents.
+If real schema-004 verification is needed, use isolated PostgreSQL 16 only.
 
 ---
 
@@ -229,1064 +213,364 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
-If a genuine defect is discovered:
-
-```text
-STOP before modifying the migration
-```
-
-and report:
-
-```text
-finding
-impact
-alternatives
-recommendation
-```
-
 ---
 
-# 4. Existing aggregate domain is authoritative
+# 4. Preserve completed backend semantics
 
-Reuse:
+Do NOT redesign the completed backend behavior.
 
-```text
-derive_occurrence_status(...)
-```
-
-from the completed OccurrenceSegment backend domain.
-
-Do NOT create a second aggregate implementation.
-
-Do NOT derive aggregate status inside:
-
-```text
-repository SQL
-Flask route
-frontend
-planner-state renderer
-```
-
----
-
-# 5. Temporal phases
-
-Use the approved explicit phases:
-
-```text
-future
-current_day
-previous_editable_day
-frozen_history
-```
-
-Do not replace them with an ambiguous boolean such as:
-
-```text
-is_historical
-```
-
----
-
-# 6. Temporal-zone derivation
-
-Backend must determine the phase from:
-
-```text
-occurrence.occurrence_date
-+
-authoritative current date/time
-```
-
-Conceptually:
-
-```text
-date > today
-→ future
-
-date == today
-→ current_day
-
-date == yesterday
-→ previous_editable_day
-
-date < yesterday
-→ frozen_history
-```
-
-Do not trust a public API caller to declare the temporal phase.
-
----
-
-# 7. Clock/date authority
-
-Do NOT accept arbitrary values such as:
-
-```text
-today
-now
-temporalPhase
-```
-
-from public request payloads.
-
-The backend determines current date/time.
-
-For deterministic testing, use a small injectable clock/time provider or
-equivalent existing project mechanism.
-
-Avoid hidden calls to the wall clock throughout domain logic.
-
-Prefer:
-
-```text
-one authoritative now value per operation
-```
-
-from which:
-
-```text
-today
-current time
-temporal phase
-```
-
-are derived coherently.
-
-Do not expand this task into the final production timezone/job architecture.
-
-If the project currently relies on system-local application time, preserve
-that convention and document it.
-
----
-
-# 8. Segment status mutation endpoint
-
-Introduce an explicit backend endpoint for changing a persisted segment
-status.
-
-Preferred contract:
+Existing authoritative routes are:
 
 ```text
 PATCH /api/occurrence-segments/<segment_id>/status
+
+POST /api/planner/reconcile
+
+GET /api/planner-state
+```
+
+Frontend must consume them.
+
+Do not create competing client-side domain rules.
+
+---
+
+# 5. CORS
+
+The browser frontend runs from a different local origin than Flask.
+
+Add only the minimum backend CORS support required for the two newly consumed
+routes:
+
+```text
+PATCH /api/occurrence-segments/<segment_id>/status
+
+POST /api/planner/reconcile
+```
+
+Follow the existing CORS/origin architecture.
+
+Do NOT:
+
+```text
+allow every origin
+
+hard-code unrelated origins
+
+redesign global CORS
+
+change security policy
+```
+
+Preserve:
+
+```text
+VCS_ALLOWED_ORIGINS
+```
+
+or the existing equivalent source of allowed origins.
+
+Add/update CORS tests as necessary.
+
+---
+
+# 6. Frontend API client
+
+Extend the existing planner API layer with focused operations conceptually
+equivalent to:
+
+```text
+updateSegmentStatus(segmentId, status)
+
+reconcilePlanner()
+```
+
+Use existing request/error conventions.
+
+Do not call `fetch()` directly from view modules if the current architecture
+uses a centralized API module.
+
+---
+
+# 7. Segment status request
+
+Request:
+
+```text
+PATCH /api/occurrence-segments/<segmentId>/status
 ```
 
 Payload:
 
 ```json
 {
-  "status": "completed"
+  "status": "<canonical-status>"
 }
 ```
 
-If repository routing conventions strongly justify a minor naming variation,
-keep the semantics equivalent and report the final route.
-
-Do NOT expose parent aggregate status as directly writable.
-
----
-
-# 9. Successful status response
-
-A successful mutation should return enough authoritative information to
-confirm both levels.
-
-Conceptually:
-
-```json
-{
-  "status": "ok",
-  "occurrenceId": "<uuid>",
-  "segmentId": "<uuid>",
-  "segmentStatus": "completed",
-  "occurrenceStatus": "completed"
-}
-```
-
-Exact envelope may follow existing API conventions.
-
-Do not return a value that suggests parent status was independently chosen.
-
----
-
-# 10. Valid status values
-
-The endpoint accepts only:
+Do not send:
 
 ```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
+occurrenceStatus
 
-Unknown values are rejected.
+temporalPhase
 
-Do not add aliases.
+now
 
----
+today
 
-# 11. FUTURE status rules
-
-For:
-
-```text
-future
-```
-
-allowed stable segment statuses are:
-
-```text
-pending
-cancelled
-```
-
-Reject:
-
-```text
-in_progress
-completed
-not_completed
-not_finished
-```
-
-Do not silently transform them.
-
----
-
-# 12. CURRENT_DAY status rules
-
-For:
-
-```text
-current_day
-```
-
-the six statuses may be used:
-
-```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
-
-subject to all integrity rules in this task.
-
----
-
-# 13. PREVIOUS_EDITABLE_DAY status rules
-
-For:
-
-```text
-previous_editable_day
-```
-
-allowed stable statuses are:
-
-```text
-completed
-not_completed
-not_finished
-cancelled
-```
-
-Reject:
-
-```text
-pending
-in_progress
-```
-
-as persisted stable history.
-
-The user may still correct the interpretation of what happened while the day
-remains editable.
-
----
-
-# 14. FROZEN_HISTORY
-
-For:
-
-```text
-frozen_history
-```
-
-status mutation is forbidden.
-
-Reject:
-
-```text
-PATCH segment status
-```
-
-even if the requested status equals the currently stored status.
-
-Frozen history is read-only.
-
----
-
-# 15. Completed current-time rule
-
-A segment may be persisted as:
-
-```text
-completed
-```
-
-only if:
-
-```text
-segment.endDateTime <= now
-```
-
-This validation is segment-level.
-
-Do NOT use:
-
-```text
-occurrence.endDateTime
-```
-
-for this rule.
-
-Example:
-
-```text
-Occurrence:
-13:00–17:00
-
-now:
-15:00
-
-Seg 1:
-13:00–14:00
-→ completed allowed
-
-Seg 2:
-15:30–17:00
-→ completed NOT allowed
-```
-
-The parent general envelope may extend into the future.
-
----
-
-# 16. Do not invent additional temporal restrictions
-
-Do not add unapproved rules such as:
-
-```text
-in_progress requires current time inside segment
-
-pending cannot exist before segment start
-
-completed requires segment start before now
-```
-
-unless already present in approved normative documentation.
-
-Implement only approved integrity rules.
-
----
-
-# 17. Status mutation operates on one segment
-
-The public mutation target is:
-
-```text
-segmentId
-```
-
-not:
-
-```text
-occurrenceId
-```
-
-The endpoint changes exactly one segment requested by the user.
-
-The parent aggregate is then recomputed.
-
----
-
-# 18. Parent aggregate update
-
-After candidate segment status changes:
-
-```text
-derive_occurrence_status(all parent segments, phase)
-```
-
-and persist:
-
-```text
-occurrences.status = derived result
-```
-
-in the same transaction.
-
-Never persist:
-
-```text
-segment status
-```
-
-without the corresponding aggregate update.
-
----
-
-# 19. Preserve conflict metadata
-
-A normal manual segment-status correction must NOT automatically clear or
-rewrite:
-
-```text
-conflict_reason
-source_occurrence_id
-origin_reason
-last_conflict_action
-```
-
-Those fields have separate semantics.
-
-Status correction is not a new conflict event by itself.
-
----
-
-# 20. Structural data remains unchanged
-
-Status mutation must NOT modify:
-
-```text
-occurrence_date
-
-occurrence.start_time
-
-occurrence.end_time
-
-segment.start_time
-
-segment.end_time
-
-segment.id
-
-source_generation_slot_id
-```
-
-This task changes status only.
-
----
-
-# 21. Transaction and locking
-
-Status mutation must be atomic.
-
-Use the established transaction strategy:
-
-```text
-SERIALIZABLE
-```
-
-where appropriate.
-
-Conceptually:
-
-```text
-1. identify parent
-2. lock parent
-3. lock its segments deterministically
-4. derive temporal phase
-5. validate requested status
-6. validate temporal integrity
-7. validate blocking conflicts when required
-8. build candidate segment state
-9. derive parent aggregate
-10. persist child + parent
-11. COMMIT
-```
-
-Use a deterministic lock order.
-
----
-
-# 22. Parent lock protects aggregate
-
-A segment mutation must lock its parent before final aggregate derivation.
-
-Two concurrent writers must not independently derive and overwrite:
-
-```text
-Occurrence.status
-```
-
-from different child snapshots.
-
----
-
-# 23. Read all sibling segments before aggregate
-
-Aggregate derivation uses:
-
-```text
-all persisted segments belonging to the parent
-```
-
-with the requested segment replaced by its candidate status.
-
-Do not derive only from the changed child.
-
----
-
-# 24. No zero-segment state
-
-This phase does not delete segments.
-
-Nevertheless, continue treating:
-
-```text
-0 segments
-```
-
-as invalid.
-
-Do not fabricate a segment if corruption is encountered.
-
----
-
-# 25. Status occupation semantics
-
-Canonical blocking statuses:
-
-```text
-pending
-in_progress
-completed
-not_finished
-```
-
-Non-blocking:
-
-```text
-not_completed
-cancelled
-```
-
-Reuse the authoritative backend scheduling definition where appropriate.
-
-Do not create another divergent status list.
-
----
-
-# 26. Status changes can change occupation
-
-A transition such as:
-
-```text
-cancelled
-→ pending
-```
-
-or:
-
-```text
-not_completed
-→ completed
-```
-
-can make a segment occupy time again.
-
-VCS must not create an unresolved schedule overlap by changing status.
-
----
-
-# 27. Minimal segment-aware conflict guard
-
-This phase MAY implement the minimum segment-aware overlap query necessary to
-validate status mutation.
-
-This is:
-
-```text
-CONFLICT DETECTION FOR REJECTION ONLY
-```
-
-It is NOT the new conflict-resolution engine.
-
-When the candidate segment status is blocking:
-
-```text
-check overlap against other blocking persisted segments
-```
-
-for the same date.
-
-Use actual:
-
-```text
-OccurrenceSegment.start_time
-OccurrenceSegment.end_time
-OccurrenceSegment.status
-```
-
-not parent envelopes.
-
----
-
-# 28. Conflict guard semantics
-
-Use half-open overlap semantics:
-
-```text
-[start, end)
-```
-
-Adjacency is valid.
-
-Example:
-
-```text
-08:00–09:00
-09:00–10:00
-```
-
-is NOT conflict.
-
----
-
-# 29. Exclude the segment's own parent correctly
-
-Sibling segments cannot overlap due schema constraints.
-
-The status conflict guard is concerned with occupying segments belonging to
-other logical occurrences.
-
-Do not report the segment itself as its own conflict.
-
-Do not treat gaps in the parent general envelope as occupied time.
-
----
-
-# 30. No priority resolution during status mutation
-
-If activating/changing a segment to a blocking status would overlap another
-blocking segment:
-
-```text
-REJECT
-```
-
-Do NOT:
-
-```text
-apply priority_override
-
-apply user_forced_override
-
-cancel blocker
-
-split blocker
-
-trim blocker
-
-modify blocker status
-
-move blocker
-```
-
-Conflict resolution belongs to a later phase.
-
----
-
-# 31. Segment status conflict response
-
-Use a controlled conflict response.
-
-Preferred code:
-
-```text
-segment_status_conflict
-```
-
-Return sufficient blocker information for later frontend UX.
-
-Conceptually each blocker should include:
-
-```text
-occurrenceId
-segmentId
-planItemId
-date
 startTime
+
 endTime
-status
 ```
 
-This is informative only.
-
-Do not implement the future authorization/confirmation handshake yet.
+The backend owns those decisions.
 
 ---
 
-# 32. Conflict rejection is atomic
+# 8. Reconciliation request
 
-If status activation conflicts:
-
-```text
-target segment unchanged
-
-parent aggregate unchanged
-
-blockers unchanged
-
-metadata unchanged
-```
-
-No partial write is allowed.
-
----
-
-# 33. Existing conflict engine remains untouched
-
-Do NOT reinterpret this minimal overlap guard as permission to rewrite:
-
-```text
-PlanItem creation conflict engine
-
-priority override
-
-Apply Week conflicts
-
-Apply Future conflicts
-
-split/trim resolution
-```
-
-Those remain later work.
-
----
-
-# 34. Persistent reconciliation service
-
-Implement one backend service responsible for temporal reconciliation.
-
-It must operate on persisted:
-
-```text
-OccurrenceSegments
-```
-
-not directly on parent status.
-
----
-
-# 35. Reconciliation mapping
-
-For every historical segment requiring reconciliation:
-
-```text
-pending
-→ not_completed
-```
-
-```text
-in_progress
-→ not_finished
-```
-
-Preserve:
-
-```text
-completed
-not_completed
-not_finished
-cancelled
-```
-
----
-
-# 36. Reconciliation is segment-by-segment
-
-Do NOT perform:
-
-```text
-Occurrence.status pending → not_completed
-```
-
-directly.
-
-Correct flow:
-
-```text
-reconcile child statuses
-        ↓
-derive_occurrence_status(children, historical phase)
-        ↓
-persist parent aggregate
-```
-
----
-
-# 37. Reconciliation target dates
-
-A reconciliation run must correctly handle every persisted occurrence with:
-
-```text
-occurrence_date < today
-```
-
-that may require historical normalization/integrity checking.
-
-This includes:
-
-```text
-yesterday
-→ PREVIOUS_EDITABLE_DAY
-
-older dates
-→ FROZEN_HISTORY
-```
-
-This allows recovery if VCS was not opened for several days.
-
----
-
-# 38. Yesterday reconciliation
-
-For yesterday:
-
-```text
-pending
-→ not_completed
-
-in_progress
-→ not_finished
-```
-
-then derive aggregate using:
-
-```text
-previous_editable_day
-```
-
-The date remains editable after reconciliation.
-
----
-
-# 39. Pre-frozen / older-date reconciliation
-
-For dates already:
-
-```text
-frozen_history
-```
-
-run the same transient mapping idempotently and derive the aggregate using:
-
-```text
-frozen_history
-```
-
-This represents the required final reconciliation/integrity pass before
-history is considered stable.
-
----
-
-# 40. Reconciliation idempotency
-
-Running reconciliation multiple times with the same effective `now` must not
-continue changing data.
-
-Example:
-
-```text
-completed
-not_completed
-not_finished
-cancelled
-```
-
-remain unchanged.
-
-A second run after:
-
-```text
-pending → not_completed
-```
-
-must perform no further status transition.
-
----
-
-# 41. Reconciliation aggregate integrity
-
-For every parent processed by reconciliation:
-
-```text
-derive the expected historical aggregate
-```
-
-after child normalization.
-
-If the persisted parent aggregate differs:
-
-```text
-update it inside the explicit reconciliation transaction
-```
-
-This is allowed because reconciliation is an explicit write operation.
-
-Do NOT move this repair into GET planner-state.
-
----
-
-# 42. No reconciliation of today/future
-
-Persistent reconciliation must NOT transform statuses for:
-
-```text
-current_day
-future
-```
-
----
-
-# 43. Explicit reconciliation endpoint
-
-Expose an explicit backend command endpoint.
-
-Preferred contract:
+Request:
 
 ```text
 POST /api/planner/reconcile
 ```
 
-No client-provided date is required.
+with no domain payload.
 
-The backend derives current date/time.
+Do not send:
 
-If existing route conventions justify a minor naming variation, preserve the
-same semantics and report it.
+```text
+today
+
+now
+
+timezone
+
+temporalPhase
+```
+
+The backend determines current temporal context.
 
 ---
 
-# 44. Reconciliation response
+# 9. Backend remains status authority
 
-Return a small operational summary.
+Frontend must NOT compute the new parent aggregate and write it.
+
+After a status mutation:
+
+```text
+PATCH segment status
+→ GET planner-state
+→ hydrate authoritative result
+```
+
+Do not perform:
+
+```text
+occurrence.status = localDerivedStatus
+```
+
+as persisted/domain truth.
+
+---
+
+# 10. Avoid optimistic domain mutation
+
+Prefer the existing authoritative mutation pattern:
+
+```text
+request mutation
+→ request planner-state
+→ hydrate
+```
+
+Do not permanently mutate local segment/parent status before backend success.
+
+Temporary UI pending/loading state is allowed.
+
+---
+
+# 11. Single-segment occurrence status control
+
+For an occurrence with exactly one segment:
+
+```text
+the existing parent-row status control may remain visually similar
+```
+
+but its semantics must change.
+
+BEFORE:
+
+```text
+control
+→ mutate occurrence.status locally/legacy
+```
+
+NOW:
+
+```text
+control
+→ identify persisted Segment 1
+→ PATCH Segment 1.status
+→ GET planner-state
+→ hydrate
+```
+
+The occurrence parent remains the aggregate.
+
+---
+
+# 12. Single-segment identity
+
+Do not infer Segment 1 using:
+
+```text
+occurrence times
+
+array index alone
+
+synthetic ID
+```
+
+Use:
+
+```text
+occurrence.segments[0].id
+```
+
+from the persisted backend contract.
+
+The fact that there is exactly one child allows the UX proxy.
+
+---
+
+# 13. Multi-segment parent status
+
+For a multi-segment occurrence:
+
+```text
+Occurrence.status
+```
+
+remains:
+
+```text
+read-only aggregate information
+```
+
+Do NOT make the parent status badge/button mutate all segments.
+
+Do NOT introduce a bulk-status action in this phase.
+
+---
+
+# 14. Multi-segment child status controls
+
+Each expanded segment row should expose its own status control.
 
 Conceptually:
 
-```json
-{
-  "status": "ok",
-  "updatedOccurrences": 3,
-  "updatedSegments": 4
-}
+```text
+Seg 1 | 13:00 | 14:00 | completed
+
+Seg 2 | 14:30 | 16:00 | pending
+
+Seg 3 | 16:00 | 17:00 | pending
 ```
 
-Exact naming may follow existing API conventions.
-
-Do not return an entire planner-state response from the reconciliation
-command.
-
-The caller can perform:
+Each control operates only on:
 
 ```text
-POST reconcile
-→ GET planner-state
+its persisted segment ID
 ```
 
 ---
 
-# 45. Reconciliation is not part of GET
+# 15. Segment status choices
 
-Keep:
+Use only canonical statuses:
 
 ```text
-GET /api/planner-state
+pending
+in_progress
+completed
+not_completed
+not_finished
+cancelled
 ```
 
-read-only.
-
-Do NOT invoke persistent reconciliation as a hidden side effect of GET.
+Do not add frontend aliases.
 
 ---
 
-# 46. No public arbitrary-date reconciliation
+# 16. Temporal rules remain backend authoritative
 
-Do not allow API clients to submit:
+The frontend may hide/disable obviously unavailable options for UX if current
+temporal utilities already support doing so cleanly.
 
-```json
-{
-  "today": "2035-01-01"
-}
-```
-
-and thereby force history transitions.
-
-Tests may inject a clock at service/application construction level.
-
-Public API uses backend time authority.
-
----
-
-# 47. Reconciliation transaction strategy
-
-A reconciliation run may affect multiple parents.
-
-Use coherent transactional behavior.
-
-At minimum:
+However:
 
 ```text
-lock affected parents deterministically
-
-lock their segments deterministically
-
-normalize children
-
-derive aggregates
-
-persist
-
-COMMIT
+backend response is authoritative
 ```
 
-Avoid different lock ordering from segment-status mutation.
+Do not duplicate the entire temporal validation engine in the frontend.
 
----
-
-# 48. Reconciliation failure
-
-If reconciliation fails partway through its transactional unit:
+If frontend and backend disagree:
 
 ```text
-do not leave a parent with reconciled children
-and stale aggregate
+show backend error
+
+refresh authoritative planner-state when appropriate
 ```
 
-Parent/children changes must remain atomic.
-
-Choose transaction granularity deliberately and document it.
-
-For the current MVP, a single reconciliation command transaction is acceptable
-if consistent with existing service architecture and dataset scale.
-
-Do not optimize prematurely.
+Do not override the backend.
 
 ---
 
-# 49. Historical status mutation after reconciliation
+# 17. FUTURE UX
 
-After reconciliation, yesterday remains editable.
+Future segments ultimately support stable statuses:
 
-The user may later correct a segment among:
+```text
+pending
+cancelled
+```
+
+The frontend may limit the visible choices accordingly if it can determine the
+zone using existing temporal utilities.
+
+Do not implement new time architecture merely for this filtering.
+
+Backend still validates every request.
+
+---
+
+# 18. CURRENT_DAY UX
+
+Current-day segment controls may expose the six canonical statuses according
+to existing UI conventions.
+
+Backend enforces:
+
+```text
+completed end-time rule
+
+conflict integrity
+
+other temporal rules
+```
+
+---
+
+# 19. PREVIOUS_EDITABLE_DAY UX
+
+Yesterday remains editable.
+
+Stable choices:
 
 ```text
 completed
@@ -1295,711 +579,1106 @@ not_finished
 cancelled
 ```
 
-Status mutation must then recompute the historical aggregate.
-
-Example:
-
-```text
-Seg 1 completed
-Seg 2 not_completed
-→ parent not_finished
-```
-
-If the user corrects Seg 2:
-
-```text
-not_completed
-→ completed
-```
-
-result:
-
-```text
-completed + completed
-→ completed
-```
-
----
-
-# 50. Historical transient corruption
-
-If a status-mutation request for:
-
-```text
-previous_editable_day
-```
-
-encounters sibling segments still persisted as:
+Do not offer:
 
 ```text
 pending
 in_progress
 ```
 
-do NOT silently reconcile unrelated siblings inside the status endpoint.
+if existing frontend temporal state can determine this cleanly.
 
-Return a controlled error indicating reconciliation is required.
-
-Preferred code:
-
-```text
-temporal_reconciliation_required
-```
-
-The explicit reconciliation command remains the authority for those
-transitions.
+Backend remains authoritative.
 
 ---
 
-# 51. Frozen mutation remains forbidden after reconciliation
+# 20. FROZEN_HISTORY UX
 
-Reconciliation may normalize frozen history.
+Frozen segment statuses are read-only.
 
-It does NOT make frozen history user-editable.
+Do not send PATCH requests from frozen rows.
 
-After reconciliation:
-
-```text
-PATCH segment status on frozen date
-→ rejected
-```
+The backend already rejects them; frontend should also avoid presenting an
+active control where possible.
 
 ---
 
-# 52. Conflict metadata during reconciliation
+# 21. Existing status progression
 
-Reconciliation does NOT represent a conflict event.
+Inspect the current status-control UX.
 
-Do not clear or rewrite:
+If it uses:
 
 ```text
-conflict_reason
-source_occurrence_id
-origin_reason
-last_conflict_action
+advanceOccurrenceStatus()
 ```
 
-because reconciliation changed segment status.
+or another cyclic transition mechanism, preserve its familiar interaction only
+where doing so maps unambiguously to the valid segment statuses.
+
+Do NOT preserve an old status cycle if it:
+
+```text
+writes parent status
+
+offers invalid temporal states
+
+bypasses backend
+```
+
+A small explicit segment-status control is preferable to maintaining invalid
+legacy semantics.
+
+Do not redesign unrelated UI.
 
 ---
 
-# 53. No realized-time invention
+# 22. Remove legacy parent status writes from active frontend paths
 
-Reconciliation changes only status.
-
-Do NOT modify:
+No active frontend status control should call:
 
 ```text
-segment.start_time
-segment.end_time
-occurrence.start_time
-occurrence.end_time
+setOccurrenceStatus(...)
+
+advanceOccurrenceStatus(...)
 ```
 
-to invent when work actually happened.
+in a way that directly mutates parent domain status.
+
+If these methods remain for unrelated legacy tests/code:
+
+```text
+make them unreachable from the new active status UI
+```
+
+or remove them if safe within scope.
+
+Document remaining legacy code.
 
 ---
 
-# 54. No structural segmentation during reconciliation
+# 23. Mutation coordinator
 
-Do NOT:
+Follow existing frontend mutation architecture.
 
-```text
-split
-
-merge
-
-trim
-
-delete
-
-create
-```
-
-segments during reconciliation.
-
-Only transform:
+Prefer a coordinator flow equivalent to:
 
 ```text
-status
+guard double submit
+
+PATCH segment
+
+GET planner-state
+
+hydrate
+
+restore selection if still valid
+
+release pending state
 ```
 
-and recompute aggregate.
+Do not place the entire mutation workflow in the view.
 
 ---
 
-# 55. Repository responsibilities
+# 24. Double-submit protection
 
-Repository code should provide focused persistence operations such as:
+Prevent repeated status requests from:
 
 ```text
-lock segment + parent
+double click
 
-list sibling segments
+rapid tapping
 
-find blocking overlapping segments
-
-list reconciliation candidates
-
-update segment status
-
-update parent aggregate
+pending request
 ```
 
-Exact organization may follow repository conventions.
+using the project's existing mutation/pending mechanisms.
 
-Do NOT place temporal/domain precedence rules inside SQL repositories.
+Do not invent unrelated global state.
 
 ---
 
-# 56. Service responsibilities
+# 25. Mutation success
 
-Service/domain layers own:
+After successful PATCH:
 
 ```text
-temporal phase
-
-allowed status rules
-
-completed-time validation
-
-candidate final state
-
-aggregate derivation
-
-reconciliation mapping
-
-conflict rejection semantics
-
-transaction orchestration
+GET planner-state
 ```
 
-Keep Flask routes thin.
+must refresh:
+
+```text
+segment status
+
+parent aggregate
+
+monthly aggregate display
+
+selection-dependent rendering
+```
+
+from authoritative state.
 
 ---
 
-# 57. Existing planner-state behavior must remain intact
+# 26. Preserve selection after refresh
 
-Do not regress:
+When possible after status mutation:
 
 ```text
-segments[]
-
-conflictContext
-
-originReason
-
-lastConflictAction
-
-sourceGenerationSlotId
-
-parent aggregate read
+selectedOccurrenceId
 ```
+
+should remain selected.
+
+If a specific segment was selected and still exists:
+
+```text
+selectedSegmentId
+```
+
+should remain selected.
+
+Do not preserve selection by array index.
+
+Use stable persisted IDs.
 
 ---
 
-# 58. Existing PlanItem creation must remain intact
+# 27. Preserve expansion after refresh
 
-Do not regress the previous phase:
-
-```text
-non-conflicting Create PlanItem
-→ parent + default segment
-```
-
-The legacy conflict-write guard must remain active.
-
-Do NOT re-enable:
+If a multi-segment occurrence was expanded before status mutation:
 
 ```text
-apply_priority_overrides()
+keep it expanded
 ```
 
-from schema-004 PlanItem creation.
+when the same occurrence still exists after hydration.
+
+Expansion remains transient frontend state.
 
 ---
 
-# 59. No frontend changes
+# 28. Segment status conflict UX
 
-Do NOT modify frontend files in this task.
-
-Do not wire:
-
-```text
-status buttons
-
-segment status rows
-
-bootstrap reconciliation
-```
-
-yet.
-
-That will be the next frontend integration phase.
-
----
-
-# 60. Pure domain tests
-
-Add focused tests for temporal status authorization.
-
-At minimum:
-
-```text
-FUTURE:
-pending allowed
-cancelled allowed
-completed rejected
-in_progress rejected
-not_completed rejected
-not_finished rejected
-
-CURRENT_DAY:
-all six accepted subject to completed-time rule
-
-PREVIOUS_EDITABLE_DAY:
-completed allowed
-not_completed allowed
-not_finished allowed
-cancelled allowed
-pending rejected
-in_progress rejected
-
-FROZEN_HISTORY:
-mutation rejected
-```
-
----
-
-# 61. Completed-time tests
-
-Test current day:
-
-```text
-segment ending before now
-→ completed allowed
-
-segment ending exactly at now
-→ completed allowed
-
-segment ending after now
-→ completed rejected
-```
-
-Use an injected deterministic `now`.
-
-Do not rely on test wall-clock timing.
-
----
-
-# 62. Aggregate mutation tests
-
-Verify a segment update recalculates the parent.
-
-Examples:
-
-```text
-CURRENT_DAY
-
-completed + pending
-→ parent in_progress
-
-pending + cancelled
-→ parent pending
-
-not_completed + cancelled
-→ parent not_completed
-```
-
-And historical:
-
-```text
-completed + not_completed
-→ parent not_finished
-
-completed + completed
-→ parent completed
-```
-
----
-
-# 63. Single-segment mutation tests
-
-Verify:
-
-```text
-Segment pending
-→ completed
-```
-
-produces:
-
-```text
-Segment completed
-Occurrence completed
-```
-
-when temporally valid.
-
----
-
-# 64. Metadata preservation tests
-
-Changing segment status must preserve existing:
-
-```text
-conflict_reason
-source_occurrence_id
-origin_reason
-last_conflict_action
-source_generation_slot_id
-```
-
-unless another already-approved rule explicitly changes them.
-
----
-
-# 65. Conflict guard tests
-
-Use schema 004 data such as:
-
-```text
-Occurrence A
-Seg A:
-08:00–09:00 pending
-
-Occurrence B
-Seg B:
-08:30–09:30 cancelled
-```
-
-Attempt:
-
-```text
-Seg B cancelled → pending
-```
-
-Expected:
+Backend may return:
 
 ```text
 409 segment_status_conflict
 ```
 
-with no writes.
-
-Also verify:
+with:
 
 ```text
-09:00–10:00
+blockers[]
 ```
 
-adjacent to:
+This phase does NOT resolve that conflict.
+
+Frontend should:
 
 ```text
-08:00–09:00
+show a clear error/message
+
+preserve authoritative current state
+
+not retry automatically
+
+not modify blockers
 ```
 
-is accepted.
+Do not implement:
+
+```text
+priority override
+
+user-forced override
+
+split
+
+trim
+
+move
+```
+
+from this response.
 
 ---
 
-# 66. Gap-aware conflict test
+# 29. Conflict blocker information
 
-Prove the guard uses segments rather than parent envelope.
-
-Example:
-
-```text
-Occurrence A:
-08:00–12:00
-
-segments:
-08:00–09:00 pending
-11:00–12:00 pending
-```
-
-Another segment:
+If the existing UI error architecture can display concise blocker context
+without a large redesign, it may use:
 
 ```text
-09:30–10:30 cancelled
+startTime
+endTime
+status
 ```
 
-Changing it to:
+from the returned blockers.
 
-```text
-pending
-```
+Do not create the final conflict-resolution modal in this phase.
 
-must be allowed because the envelope gap is not occupied.
+A clear message is sufficient.
 
 ---
 
-# 67. Non-blocking transition tests
+# 30. Other status API errors
 
-Verify transitions to:
+Handle backend errors coherently:
 
 ```text
-cancelled
-not_completed
+invalid_payload
+
+segment_not_found
+
+history_frozen
+
+segment_status_not_allowed
+
+segment_not_ended
+
+temporal_reconciliation_required
+
+segment_status_conflict
+
+concurrent_conflict
+
+persisted_state_invalid
+
+database_unavailable
 ```
 
-do not require conflict resolution merely because their interval overlaps
-another occurrence.
+Do not create a unique elaborate UI for every code.
 
-They are non-blocking statuses.
+Map them into understandable existing error surfaces while preserving the
+error code for debugging/tests where appropriate.
 
 ---
 
-# 68. Reconciliation mapping tests
+# 31. `temporal_reconciliation_required`
 
-For a historical date:
+If status mutation returns:
 
 ```text
-pending
-→ not_completed
+temporal_reconciliation_required
+```
 
-in_progress
-→ not_finished
+do NOT silently mutate siblings locally.
 
-completed
-→ completed
+A reasonable integration flow is:
 
-not_completed
-→ not_completed
+```text
+run explicit reconciliation
+→ GET planner-state
+→ ask user to retry the status action
+```
 
-not_finished
-→ not_finished
+or fail with a clear message if automatic command orchestration would make the
+interaction ambiguous.
 
-cancelled
-→ cancelled
+Do not hide the fact that reconciliation occurred.
+
+Use the simplest behavior consistent with current UI architecture and test it.
+
+---
+
+# 32. Bootstrap reconciliation
+
+Planner startup should execute:
+
+```text
+POST /api/planner/reconcile
+```
+
+before the authoritative planner-state GET.
+
+Flow:
+
+```text
+bootstrap start
+        ↓
+POST reconcile
+        ↓
+GET planner-state
+        ↓
+hydrate
+        ↓
+render
 ```
 
 ---
 
-# 69. Reconciliation aggregate tests
+# 33. Bootstrap reconciliation result
 
-Examples:
+The frontend does not need to display:
 
 ```text
-before:
+updatedOccurrences
+updatedSegments
+```
 
-completed
-pending
+during ordinary successful bootstrap.
 
-after reconciliation:
+The purpose is state normalization.
 
-completed
-not_completed
+Do not add noisy UI such as:
 
-parent:
-not_finished
+```text
+"4 segmentos reconciliados"
+```
+
+on every startup unless existing UX naturally supports operational notices.
+
+---
+
+# 34. Reconciliation failure
+
+If:
+
+```text
+POST reconcile
+```
+
+fails because of:
+
+```text
+database unavailable
+
+persisted invalid state
+
+concurrency failure
+
+unexpected backend error
+```
+
+do NOT silently continue into a normal GET and present potentially stale
+historical state as fully reconciled.
+
+Use the existing bootstrap failure/error UI.
+
+A retry may rerun reconciliation because the command is idempotent.
+
+---
+
+# 35. Reconciliation idempotency in frontend
+
+Frontend may safely call:
+
+```text
+POST reconcile
+```
+
+on every bootstrap.
+
+Do not attempt to keep a client-side flag such as:
+
+```text
+alreadyReconciledToday
+```
+
+The backend command is authoritative and idempotent.
+
+---
+
+# 36. Reconciliation does not replace GET
+
+Do not hydrate planner state from the reconciliation summary.
+
+Always perform:
+
+```text
+GET planner-state
+```
+
+after successful reconciliation.
+
+---
+
+# 37. No hidden reconciliation inside unrelated UI renders
+
+Call reconciliation from intentional orchestration points such as:
+
+```text
+bootstrap
+```
+
+or explicit recovery.
+
+Do not call it from:
+
+```text
+render()
+
+buildPlannerRows()
+
+status badge formatter()
+```
+
+---
+
+# 38. Existing frontend local reconciliation
+
+The old frontend contains legacy local temporal reconciliation behavior.
+
+Now that backend reconciliation exists:
+
+```text
+frontend must stop acting as independent reconciliation authority
+```
+
+Remove, disable or bypass active calls that mutate local statuses during:
+
+```text
+bootstrap
+
+render
+
+normal planner operation
+```
+
+Do not maintain two reconciliation authorities.
+
+---
+
+# 39. Reusable temporal display helpers may remain
+
+Do not delete useful frontend utilities merely because local persistence
+authority moves backend-side.
+
+Helpers for:
+
+```text
+determining display zone
+
+read-only/frozen presentation
+
+labels
+
+UI option filtering
+```
+
+may remain.
+
+Only remove/bypass:
+
+```text
+local status mutation pretending to reconcile persisted state
+```
+
+---
+
+# 40. Monthly aggregate
+
+Preserve the existing monthly aggregate behavior.
+
+Because parent aggregate is refreshed by GET:
+
+```text
+deriveAggregateOccurrenceDisplay(...)
+```
+
+should naturally consume the new authoritative parent status.
+
+Do not make monthly aggregate read segments directly unless an approved rule
+requires it.
+
+---
+
+# 41. `conflictContext`
+
+Preserve completed frontend migration to:
+
+```text
+conflictContext
+```
+
+Do not reintroduce:
+
+```text
+statusContext
+```
+
+as an active frontend dependency.
+
+---
+
+# 42. `originReason` / `lastConflictAction`
+
+Preserve:
+
+```text
+originReason
+
+lastConflictAction
+```
+
+through hydrate/status refresh.
+
+Status mutation must not cause the frontend to discard them.
+
+---
+
+# 43. Source provenance
+
+Preserve:
+
+```text
+sourceGenerationSlotId
+```
+
+through mutation → GET → hydrate.
+
+---
+
+# 44. Multi-segment structural controls remain disabled
+
+Continue guarding existing parent-level controls that would perform:
+
+```text
+date/time edit
+
+recurrence edit
+
+delete via incompatible path
+
+legacy add behavior
+```
+
+for multi-segment occurrences where they are still unsafe.
+
+This phase only unlocks:
+
+```text
+status mutation
+```
+
+per persisted segment.
+
+---
+
+# 45. Structural segment UI remains out of scope
+
+Do NOT add controls for:
+
+```text
+Add Segment
+
+Delete Segment
+
+Split
+
+Trim
+
+Move Segment
+
+Resize
+
+Reset Segmentation
+```
+
+---
+
+# 46. Conflict resolution UI remains out of scope
+
+Do NOT implement:
+
+```text
+Ajustar
+
+Segmentar y continuar
+
+Finalizar y continuar
+
+Cancelar y continuar
+
+Confirmar corrección
+
+priority override confirmation
+
+user-forced override confirmation
+```
+
+---
+
+# 47. Apply Week / Apply Future remain unchanged
+
+Do NOT make recurring mutations segment-aware.
+
+Continue guarding operations where existing multi-segment safety requires it.
+
+---
+
+# 48. No planner chronology redesign
+
+The previous read/display phase documented that expanded child rows currently
+remain grouped beneath their parent rather than globally interleaving with
+other occurrences.
+
+Do NOT solve that chronology/layout redesign in this task.
+
+Preserve the limitation and leave it for the dedicated planner UX cleanup
+phase.
+
+---
+
+# 49. Browser accessibility
+
+Segment status controls must have understandable accessible names.
+
+Do not make status mutation depend solely on:
+
+```text
+color
+
+icon
+```
+
+Keep:
+
+```text
+keyboard accessibility
+
+focus behavior
+
+disabled state
+```
+
+consistent with current UI.
+
+---
+
+# 50. Mobile behavior
+
+Status controls on segment rows must remain usable at the existing mobile
+breakpoint.
+
+Do not introduce horizontal overflow.
+
+Do not redesign the entire mobile planner.
+
+---
+
+# 51. API tests
+
+Add/update tests covering:
+
+```text
+PATCH segment status request
+
+payload
+
+backend success parsing
+
+backend controlled error parsing
+
+POST reconciliation
+
+no reconciliation payload
+
+GET-after-status mutation
+
+POST-reconcile-before-GET bootstrap order
+```
+
+---
+
+# 52. Bootstrap tests
+
+Verify exact call order:
+
+```text
+1. POST reconcile
+2. GET planner-state
+3. hydrate
+```
+
+Do not allow GET to race ahead of reconciliation.
+
+---
+
+# 53. Bootstrap failure tests
+
+Verify:
+
+```text
+reconcile fails
+→ planner-state GET does not proceed as successful bootstrap
+→ existing failure UI/state is used
+```
+
+Retry should be possible.
+
+---
+
+# 54. Single-segment status integration test
+
+Given:
+
+```text
+Occurrence
+└── one Segment pending
+```
+
+status interaction must target:
+
+```text
+segment.id
+```
+
+not:
+
+```text
+occurrence.id
+```
+
+After successful mutation + GET:
+
+```text
+segment status updated
+
+parent aggregate updated
+
+same occurrence selected where practical
+```
+
+---
+
+# 55. Multi-segment status integration tests
+
+Given:
+
+```text
+Occurrence in_progress
+
+Seg 1 completed
+Seg 2 pending
+```
+
+changing:
+
+```text
+Seg 2 pending → completed
+```
+
+must send PATCH for:
+
+```text
+Seg 2.id
+```
+
+After GET:
+
+```text
+Seg 1 completed
+Seg 2 completed
+Occurrence completed
+```
+
+according to backend authoritative response.
+
+Do not calculate this result solely in frontend tests without mocking the GET
+response.
+
+---
+
+# 56. Parent multi-segment read-only test
+
+Verify clicking/interacting with the parent aggregate does NOT send:
+
+```text
+PATCH occurrence status
+
+PATCH all segments
+```
+
+Parent remains informational.
+
+---
+
+# 57. Frozen status UI test
+
+Frozen segment status should not present an active mutation path.
+
+If a request is nevertheless simulated and backend rejects it:
+
+```text
+state remains unchanged
+```
+
+---
+
+# 58. Conflict error test
+
+Simulate:
+
+```text
+409 segment_status_conflict
+```
+
+with blockers.
+
+Verify:
+
+```text
+no optimistic local status change survives
+
+no blocker mutation is attempted
+
+error is surfaced
+
+no conflict-resolution request is invented
+```
+
+---
+
+# 59. Concurrent conflict test
+
+Simulate:
+
+```text
+409 concurrent_conflict
+```
+
+Frontend should:
+
+```text
+surface conflict/retry message
+
+refresh only according to established recovery strategy
+```
+
+Do not silently retry the mutation itself.
+
+---
+
+# 60. Reconciliation-required test
+
+Simulate:
+
+```text
+409 temporal_reconciliation_required
+```
+
+Verify the chosen explicit behavior is deterministic and documented.
+
+Do not locally transform sibling statuses.
+
+---
+
+# 61. Local reconciliation retirement test
+
+Update tests that previously expected frontend code to perform:
+
+```text
+pending → not_completed
+
+in_progress → not_finished
+```
+
+locally.
+
+New expectation:
+
+```text
+backend reconciliation
++
+GET authoritative state
+```
+
+Frontend should not mutate these statuses independently.
+
+---
+
+# 62. Selection tests
+
+Verify after status refresh:
+
+```text
+selectedOccurrenceId
+```
+
+survives when parent remains.
+
+Verify:
+
+```text
+selectedSegmentId
+```
+
+survives when child remains.
+
+If selected entity disappeared unexpectedly:
+
+```text
+clear selection safely
+```
+
+Do not retain dangling IDs.
+
+---
+
+# 63. Expansion tests
+
+Verify an expanded occurrence remains expanded after:
+
+```text
+status PATCH
+→ GET
+→ hydrate
+```
+
+when it still exists.
+
+---
+
+# 64. Double-submit test
+
+Verify rapid repeated status interaction does not generate duplicate concurrent
+PATCH requests from the same control.
+
+---
+
+# 65. Monthly aggregate regression
+
+Verify status refresh updates monthly presentation from refreshed parent
+aggregate without changing monthly aggregate semantics.
+
+---
+
+# 66. CORS tests
+
+Verify allowed frontend origin can use:
+
+```text
+PATCH segment status
+
+POST reconciliation
+```
+
+including browser preflight where applicable.
+
+Verify unapproved origins remain rejected according to existing policy.
+
+Do not weaken CORS globally.
+
+---
+
+# 67. Frontend full suite
+
+Run all frontend test files:
+
+```text
+for test_file in modules/gestor_de_habitos/tests/*.test.mjs
+do
+  node "$test_file" || exit 1
+done
+```
+
+Report exact totals.
+
+---
+
+# 68. Backend regression
+
+Because minimal CORS code may change backend routing, run the complete backend
+suite:
+
+```text
+.venv/bin/python -m unittest discover \
+  -s modules/gestor_de_habitos/backend \
+  -p 'test_*.py'
+```
+
+Report skips honestly.
+
+---
+
+# 69. Syntax / consistency checks
+
+Run:
+
+```text
+node --check
+```
+
+for modified JS files as appropriate.
+
+Run:
+
+```text
+.venv/bin/python -m compileall -q \
+  modules/gestor_de_habitos/backend
 ```
 
 and:
 
 ```text
-before:
-
-in_progress
-cancelled
-
-after:
-
-not_finished
-cancelled
-
-parent:
-not_finished
+git diff --check
 ```
 
 ---
 
-# 70. Reconciliation idempotency test
+# 70. Browser verification
 
-Run reconciliation twice with the same deterministic `now`.
+Verify the integrated flow in a browser-compatible test environment without
+using real `vcs_dev`.
 
-Second run must produce:
+At minimum inspect:
 
 ```text
-0 additional segment transitions
+desktop
+
+mobile
 ```
 
-and no semantic data difference.
-
----
-
-# 71. Missed-days test
-
-Simulate VCS not opening for multiple days.
-
-Create persisted occurrences on:
+and verify:
 
 ```text
-today - 1
-today - 2
-today - 5
+single-segment status interaction
+
+multi-segment status controls
+
+parent aggregate read-only
+
+expand/collapse preserved
+
+selection preserved
+
+error state
+
+no overflow regression
 ```
 
-with transient statuses.
-
-One reconciliation call must correctly normalize all historical dates.
-
-Yesterday remains editable by policy.
-
-Older dates are frozen after normalization.
+Use mock/isolated backend state where necessary.
 
 ---
 
-# 72. Today/future reconciliation test
+# 71. Do not apply schema 004 to real runtime
 
-Verify reconciliation does NOT modify:
+Even after frontend status/reconciliation integration succeeds:
 
 ```text
-today
-future dates
+DO NOT apply migration 004 to vcs_dev
 ```
+
+Structural mutations and recurring writes remain incompatible.
 
 ---
 
-# 73. Reconciliation rollback test
+# 72. Existing data remains preserved
 
-Force a failure after at least one candidate has been processed but before
-commit.
+Do not delete legacy PlanItems.
 
-Verify no persisted parent/segment pair is left partially reconciled.
-
-Use isolated PostgreSQL 16.
+They are intentionally retained as part of VCS development history and will
+later exercise the real migration/backfill path.
 
 ---
 
-# 74. Real PostgreSQL 16 endpoint test
-
-Against:
-
-```text
-001 → 002 → 003 → 004
-```
-
-verify actual HTTP/service behavior for:
-
-```text
-PATCH segment status
-POST planner reconciliation
-GET planner-state
-```
-
-without using `vcs_dev`.
-
----
-
-# 75. Round-trip status mutation
-
-Verify:
-
-```text
-PATCH segment
-→ success
-→ GET planner-state
-```
-
-returns:
-
-```text
-new segment status
-correct parent aggregate
-same segment ID
-same time interval
-same metadata
-```
-
----
-
-# 76. Round-trip reconciliation
-
-Verify:
-
-```text
-POST reconcile
-→ GET planner-state
-```
-
-returns reconciled:
-
-```text
-child statuses
-parent aggregates
-```
-
-persistently.
-
-A second GET must return the same data.
-
----
-
-# 77. Concurrency test
-
-Where practical, add focused PostgreSQL coverage proving two concurrent status
-writers on segments of the same parent cannot produce a lost aggregate.
-
-The implementation should use:
-
-```text
-parent lock
-+
-SERIALIZABLE
-```
-
-and controlled serialization handling consistent with project patterns.
-
-Do not build a large concurrency framework solely for this test if existing
-infrastructure cannot support it cleanly.
-
-At minimum document and test the locking order.
-
----
-
-# 78. Existing tests
-
-Run the complete backend suite.
-
-Update existing tests only where approved status-write behavior has changed.
-
-Do not rewrite unrelated expectations.
-
----
-
-# 79. PostgreSQL integration harness
-
-Reuse the existing isolated PostgreSQL 16 infrastructure where practical.
-
-Do not create another unrelated database test framework.
-
----
-
-# 80. No fake runtime readiness
-
-At the end of this phase, schema 004 is still NOT ready to replace the real
-runtime database.
-
-Remaining incompatible write paths include at least:
-
-```text
-frontend status mutation wiring
-
-structural segment mutations
-
-Apply Week
-
-Apply Future
-
-segment-aware conflict resolution
-```
-
-Do not claim otherwise.
-
----
-
-# 81. Expected state after this phase
+# 73. Expected state after this phase
 
 Expected architecture:
 
@@ -2022,11 +1701,14 @@ aggregate domain
 segment status backend mutation
 ✅
 
-persistent reconciliation backend
+persistent backend reconciliation
 ✅
 
-frontend status/reconciliation integration
-❌
+frontend segment-status integration
+✅
+
+bootstrap reconciliation integration
+✅
 
 structural segment mutation
 ❌
@@ -2036,37 +1718,59 @@ Apply Week/Future segment-aware
 
 conflict resolution engine
 ❌
+
+planner chronology final UX
+❌
 ```
 
 ---
 
-# 82. Documentation
+# 74. Remaining legacy write code
 
-Update documentation only where necessary to explain:
-
-```text
-segment status endpoint
-
-reconciliation command
-
-clock/time authority
-
-temporary conflict rejection
-```
-
-Do not create speculative future documentation.
-
-If a production-scale concern is discovered:
+At completion identify any active or dormant frontend paths that still
+conceptually write:
 
 ```text
-document it in the existing production concerns location
+Occurrence.status
 ```
 
-rather than expanding current scope.
+directly.
+
+Distinguish:
+
+```text
+unreachable legacy helper
+```
+
+from:
+
+```text
+still-active incompatible path
+```
+
+No still-active parent status write should remain in normal planner status UI.
 
 ---
 
-# 83. Git rules
+# 75. Documentation
+
+Update documentation only if necessary to explain:
+
+```text
+bootstrap reconciliation
+
+segment status mutation integration
+
+temporary error behavior
+
+remaining runtime incompatibilities
+```
+
+Do not create speculative feature docs.
+
+---
+
+# 76. Git rules
 
 The user controls Git.
 
@@ -2085,177 +1789,127 @@ Do not revert user work.
 
 ---
 
-# 84. Test commands
-
-Run focused tests for:
-
-```text
-segment status domain
-
-segment status service/API
-
-reconciliation
-
-conflict guard
-```
-
-Run the full backend suite:
-
-```text
-.venv/bin/python -m unittest discover \
-  -s modules/gestor_de_habitos/backend \
-  -p 'test_*.py'
-```
-
-Run the schema-004 PostgreSQL tests relevant to this phase.
-
-Run:
-
-```text
-.venv/bin/python -m compileall -q \
-  modules/gestor_de_habitos/backend
-```
-
-and:
-
-```text
-git diff --check
-```
-
-Verify frontend files remain unchanged.
-
----
-
-# 85. Completion report
+# 77. Completion report
 
 At completion provide:
 
 ## Files changed
 
-List every created/modified file.
+List all created/modified files.
 
-## Status endpoint
+## Bootstrap
 
-Report:
-
-```text
-final route
-
-request payload
-
-success payload
-
-error codes
-```
-
-## Temporal rules
-
-Explain:
+Explain exact flow:
 
 ```text
-future
-
-current day
-
-previous editable day
-
-frozen history
-
-completed end-time rule
-```
-
-## Aggregate
-
-Explain:
-
-```text
-how all sibling segments are loaded
-
-how aggregate is derived
-
-how parent + child are committed atomically
-```
-
-## Conflict guard
-
-Explain:
-
-```text
-when it runs
-
-how blockers are queried by segment
-
-response shape
-
-why it is detection/rejection only
-```
-
-## Reconciliation
-
-Explain:
-
-```text
-endpoint
-
-date authority
-
-pending → not_completed
-
-in_progress → not_finished
-
-yesterday handling
-
-older frozen handling
-
-idempotency
-```
-
-## PostgreSQL verification
-
-Describe actual:
-
-```text
-001 → 004
-
-PATCH segment status
-
 POST reconcile
 
 GET planner-state
+
+hydrate
 ```
 
-tests.
+and failure behavior.
+
+## API integration
+
+Explain:
+
+```text
+segment PATCH client
+
+reconciliation client
+
+CORS changes
+```
+
+## Single-segment UX
+
+Explain how the familiar status control now targets:
+
+```text
+Segment 1
+```
+
+instead of parent status.
+
+## Multi-segment UX
+
+Explain:
+
+```text
+parent aggregate read-only
+
+child status controls
+
+selection
+
+expansion
+```
+
+## Error handling
+
+Explain frontend behavior for:
+
+```text
+segment_status_conflict
+
+segment_not_ended
+
+segment_status_not_allowed
+
+history_frozen
+
+temporal_reconciliation_required
+
+concurrent_conflict
+
+database_unavailable
+```
+
+## Legacy reconciliation
+
+Confirm whether active frontend local reconciliation has been fully removed or
+bypassed.
+
+## Legacy parent writes
+
+List any remaining direct parent-status helpers and whether they are active or
+dormant.
 
 ## Tests
 
 Give exact commands and results.
+
+## Browser verification
+
+Report desktop/mobile findings.
 
 ## Safety
 
 Confirm:
 
 ```text
-vcs_dev not queried or modified
+vcs_dev not modified
+
+legacy PlanItems not deleted
 
 migrations unchanged
 
-frontend unchanged
-
-no segment time/structure mutations implemented
+no structural segment mutations
 
 no split/trim/resize/reset
 
 Apply Week/Future unchanged
 
-priority/user-forced conflict resolution not implemented
+no priority/user-forced conflict resolution
 
-PlanItem legacy override remains guarded
+no planner chronology redesign
 ```
 
 ## Remaining incompatibilities
 
-List what still prevents schema 004 from becoming the active real runtime
-database.
+List what still prevents schema 004 from becoming active on `vcs_dev`.
 
 ## Git
 
@@ -2273,85 +1927,95 @@ No push.
 
 ---
 
-# 86. Definition of done
+# 78. Definition of done
 
 This task is complete when:
 
 ```text
-segment status has an explicit backend mutation path
+bootstrap reconciles before planner-state GET
 
-parent status is never independently chosen by that mutation
+frontend no longer reconciles persisted statuses independently
 
-all sibling segments participate in aggregate derivation
+single-segment status UI writes persisted Segment 1
 
-temporal-zone status rules are enforced
+multi-segment children have segment-specific status controls
 
-completed segment future-end is rejected
+multi-segment parent aggregate remains read-only
 
-frozen history is immutable
+status mutations use PATCH segment endpoint
 
-status activation cannot create unresolved segment overlap
+successful writes refresh planner-state authoritatively
 
-conflict guard uses segments rather than parent envelopes
+selection/expansion survive refresh when valid
 
-reconciliation persists pending → not_completed
+conflict rejection does not mutate local/blocker state
 
-reconciliation persists in_progress → not_finished
+CORS permits the new frontend requests without weakening origin policy
 
-reconciliation recalculates parent aggregates
+monthly aggregate continues using refreshed parent aggregate
 
-reconciliation handles missed historical days
+frontend/backend tests pass
 
-reconciliation is idempotent
-
-GET planner-state remains read-only
-
-schema-004 status/reconciliation paths are verified on PostgreSQL 16
+desktop/mobile behavior is verified
 
 vcs_dev remains untouched
 
-no structural segment editing or conflict resolution was implemented
+legacy PlanItems remain preserved
 ```
 
 ---
 
 # Final principle
 
-VCS no longer changes the meaning of an occurrence by writing directly to:
+The frontend no longer decides:
+
+```text
+what the occurrence status should become
+```
+
+It expresses only:
+
+```text
+what status the user wants for this Segment
+```
+
+The backend decides whether that request is valid and derives:
 
 ```text
 Occurrence.status
 ```
 
-The operational truth is:
+from all persisted children.
+
+Likewise, the frontend no longer decides whether historical statuses need
+reconciliation.
+
+Bootstrap asks the backend to reconcile:
 
 ```text
-OccurrenceSegment.status
+POST reconcile
 ```
 
-and the parent is a derived summary:
+and then reads the authoritative state:
 
 ```text
-Segments
-    ↓
-derive_occurrence_status(...)
-    ↓
-Occurrence.status
+GET planner-state
 ```
 
-Temporal reconciliation follows the same rule:
+The desired application loop is now:
 
 ```text
-reconcile children
-        ↓
-derive parent
-        ↓
-persist together
+USER
+ ↓
+SEGMENT
+ ↓
+BACKEND DOMAIN
+ ↓
+POSTGRESQL
+ ↓
+OCCURRENCE AGGREGATE
+ ↓
+PLANNER-STATE
+ ↓
+UI
 ```
-
-While the day remains editable:
-
-> VCS protects temporal integrity, but allows the user to correct the
-> interpretation of what happened.
-
-Frozen history remains immutable.

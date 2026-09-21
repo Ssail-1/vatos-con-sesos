@@ -274,6 +274,95 @@ export function deleteOccurrence(occurrenceId, options = {}) {
     return mutateOccurrence("DELETE", occurrenceId, undefined, options);
 }
 
+export async function updateSegmentStatus(segmentId, status, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+    let response;
+    try {
+        response = await fetchImpl(
+            buildApiUrl(`/api/occurrence-segments/${encodeURIComponent(segmentId)}/status`, baseUrl),
+            {
+                method: "PATCH",
+                headers: { Accept: "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify({ status }),
+            },
+        );
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+    let payload;
+    try {
+        payload = await readJson(response);
+    } catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+    if (!response?.ok) {
+        throw new PlannerApiError(
+            isRecord(payload) && typeof payload.code === "string" ? payload.code : "http_error",
+            isRecord(payload) && typeof payload.message === "string"
+                ? payload.message : "No se pudo cambiar el estado del segment.",
+            {
+                status: Number.isInteger(response?.status) ? response.status : null,
+                blockers: isRecord(payload) && Array.isArray(payload.blockers)
+                    ? payload.blockers.map((blocker) => ({ ...blocker })) : [],
+            },
+        );
+    }
+    if (
+        !isRecord(payload) || payload.status !== "ok" ||
+        typeof payload.segmentId !== "string" || payload.segmentId !== segmentId ||
+        typeof payload.occurrenceId !== "string" ||
+        payload.segmentStatus !== status || !isValidOccurrenceStatus(payload.occurrenceStatus)
+    ) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "El cambio fue aceptado, pero su respuesta no cumple el contrato esperado.",
+            { mutationConfirmed: true, status: response.status },
+        );
+    }
+    return payload;
+}
+
+export async function reconcilePlanner({
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+    let response;
+    try {
+        response = await fetchImpl(buildApiUrl("/api/planner/reconcile", baseUrl), {
+            method: "POST",
+            headers: { Accept: "application/json" },
+        });
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+    const payload = await readJson(response);
+    if (!response?.ok) {
+        throw new PlannerApiError(
+            isRecord(payload) && typeof payload.code === "string" ? payload.code : "http_error",
+            isRecord(payload) && typeof payload.message === "string"
+                ? payload.message : "No se pudo reconciliar el planner.",
+            { status: Number.isInteger(response?.status) ? response.status : null },
+        );
+    }
+    if (
+        !isRecord(payload) || payload.status !== "ok" ||
+        !Number.isInteger(payload.updatedOccurrences) || payload.updatedOccurrences < 0 ||
+        !Number.isInteger(payload.updatedSegments) || payload.updatedSegments < 0
+    ) {
+        throw new PlannerApiError("invalid_response", "La reconciliación devolvió una respuesta inválida.");
+    }
+    return payload;
+}
+
 async function mutateRecurringSchedule(operation, planItemId, payload, {
     fetchImpl = globalThis.fetch,
     baseUrl = getApiBaseUrl(),

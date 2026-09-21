@@ -4,12 +4,15 @@ import {
     createPlanItem,
     deleteOccurrence,
     fetchPlannerState,
+    reconcilePlanner,
+    updateSegmentStatus,
     updateOccurrence,
 } from "./api/planner-api.js";
 import { createPlannerBootstrap } from "./bootstrap/planner-bootstrap.js";
 import {
     createOccurrenceMutationCoordinator,
     getOccurrenceMutationErrorMessage,
+    getSegmentStatusMutationErrorMessage,
 } from "./mutations/occurrence-mutation.js";
 import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
 import {
@@ -65,6 +68,7 @@ let selectedPlanItemId = null;
 let selectedOccurrenceId = null;
 let selectedSegmentId = null;
 const expandedOccurrenceIds = new Set();
+let statusMutationPending = false;
 
 function clearPlannerSelection() {
     selectedPlanItemId = null;
@@ -112,6 +116,10 @@ function render() {
     elements.toggleMonthRecordsButton.setAttribute("aria-pressed", String(showAllMonthRecords));
     elements.toggleMonthRecordsButton.setAttribute("aria-label", showAllMonthRecords ? "Mostrar solo el Plan del día" : "Mostrar todos los registros del mes");
     const visibleOccurrences = plannerStore.getOccurrencesForMonth(year, month);
+    const existingOccurrenceIds = new Set(plannerStore.getOccurrences().map(({ id }) => id));
+    expandedOccurrenceIds.forEach((id) => {
+        if (!existingOccurrenceIds.has(id)) expandedOccurrenceIds.delete(id);
+    });
     const selectedOccurrence = selectedOccurrenceId
         ? visibleOccurrences.find(({ id }) => id === selectedOccurrenceId)
         : null;
@@ -127,6 +135,7 @@ function render() {
         monthDates: getMonthDates(year, month), currentDate, selectedDate,
         selectedPlanItemId, selectedOccurrenceId, selectedSegmentId,
         expandedOccurrenceIds, showAllMonthRecords,
+        statusMutationPending,
     });
     elements.emptyState.hidden = count > 0;
 }
@@ -162,18 +171,7 @@ function moveMonth(offset) {
 const matrixView = createPlannerMatrixView({
     matrixHead: elements.matrixHead, matrixBody: elements.matrixBody, statusLegend: elements.statusLegend,
     onDateSelect: selectDate,
-    onStatusChange: (id) => {
-        try {
-            clearFeedback();
-            const updated = plannerStore.advanceOccurrenceStatus(id);
-            render();
-            return updated;
-        } catch (error) {
-            showFeedback(error.message);
-            render();
-            return null;
-        }
-    },
+    onStatusChange: (request) => { void persistSegmentStatus(request); },
     onRowSelect: (selection, restore) => {
         const sameSelection = selectedPlanItemId === selection.planItemId
             && selectedOccurrenceId === selection.occurrenceId
@@ -284,6 +282,32 @@ const occurrenceDeleteMutation = createOccurrenceMutationCoordinator({
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
+
+const segmentStatusMutation = createOccurrenceMutationCoordinator({
+    mutateOccurrence: updateSegmentStatus,
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+async function persistSegmentStatus({ segmentId, status }) {
+    if (statusMutationPending) return;
+    statusMutationPending = true;
+    showFeedback("Guardando estado del segment…", "notice");
+    render();
+    const outcome = await segmentStatusMutation.submit(segmentId, status);
+    statusMutationPending = false;
+    render();
+    matrixView.focusSegmentStatusControl(segmentId);
+    if (outcome.status === "synced") {
+        showFeedback("El estado del segment se guardó y el planner quedó sincronizado.", "notice");
+    } else if (outcome.status === "saved_refresh_error") {
+        showFeedback(
+            "El estado se guardó, pero no se pudo actualizar la vista. Activa de nuevo el control para reintentar solo la lectura; no se repetirá el cambio.",
+        );
+    } else {
+        showFeedback(getSegmentStatusMutationErrorMessage(outcome.error));
+    }
+}
 
 const recurringScheduleMutation = createRecurringScheduleMutationCoordinator({
     applyWeek,
@@ -609,6 +633,7 @@ elements.monthPicker.addEventListener("change", () => {
 elements.addActivityButton.addEventListener("click", () => planItemFormView.openCreate(formatDateKey(selectedDate), elements.addActivityButton));
 
 const plannerBootstrap = createPlannerBootstrap({
+    reconcilePlanner,
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
     onLoading: showBootstrapLoading,

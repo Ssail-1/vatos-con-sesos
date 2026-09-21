@@ -30,6 +30,16 @@ export function getNextStatus(currentStatus) {
     return occurrenceStatuses[(safeIndex + 1) % occurrenceStatuses.length];
 }
 
+export function getSelectableSegmentStatuses(date, today, zone) {
+    // Solo filtra opciones evidentes de UI; el backend conserva la autoridad temporal.
+    if (zone === TEMPORAL_ZONES.FUTURE) return ["pending", "cancelled"];
+    if (zone === TEMPORAL_ZONES.FROZEN) return [];
+    if (date < today) {
+        return ["completed", "not_completed", "not_finished", "cancelled"];
+    }
+    return occurrenceStatuses;
+}
+
 export function getStatusPresentation(status, planItemName, dateLabel, actionDescription = "Activar para cambiar estado.") {
     const safeStatus = statusDefinitions[status] ? status : "pending";
     const definition = statusDefinitions[safeStatus];
@@ -39,3 +49,4 @@ export function getStatusPresentation(status, planItemName, dateLabel, actionDes
         accessibleLabel: `${planItemName}, ${dateLabel}: ${definition.label}. ${actionDescription}`,
     };
 }
+import { TEMPORAL_ZONES } from "./temporal-integrity.js";

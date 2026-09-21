@@ -96,3 +96,24 @@ export function getOccurrenceMutationErrorMessage(error, operation = "update") {
         ? "No se pudo eliminar la aparición. Inténtalo nuevamente."
         : "No se pudo guardar la aparición. Inténtalo nuevamente.";
 }
+
+const SEGMENT_ERROR_MESSAGES = Object.freeze({
+    invalid_payload: "El estado enviado no es válido. Actualiza el planner.",
+    segment_not_found: "El segment ya no existe. Actualiza el planner.",
+    history_frozen: "Este segment pertenece al historial congelado y es de solo lectura.",
+    segment_status_not_allowed: "Ese estado no está permitido en la fecha del segment.",
+    segment_not_ended: "El segment todavía no termina; no puede marcarse como completado.",
+    temporal_reconciliation_required: "El historial requiere reconciliación. Recarga el planner y vuelve a intentar el cambio; no se modificaron otros segments.",
+    segment_status_conflict: "El estado solicitado ocuparía un horario ya reservado por otro segment. No se modificó ningún registro.",
+    concurrent_conflict: "La agenda cambió durante la operación. Recarga el planner antes de volver a intentarlo.",
+    persisted_state_invalid: "El estado persistido no es válido. No se guardó el cambio.",
+    database_unavailable: "No fue posible completar el cambio en PostgreSQL.",
+});
+
+export function getSegmentStatusMutationErrorMessage(error) {
+    if (error?.code === "network_error") {
+        return "No se pudo conectar con el backend. El estado visible no se modificó.";
+    }
+    return SEGMENT_ERROR_MESSAGES[error?.code]
+        ?? "No se pudo cambiar el estado del segment. Inténtalo nuevamente.";
+}

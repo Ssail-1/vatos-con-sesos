@@ -1,12 +1,13 @@
 export function createPlannerBootstrap({
+    reconcilePlanner,
     loadPlannerState,
     hydratePlannerState,
     onLoading = () => {},
     onReady = () => {},
     onError = () => {},
 }) {
-    if (typeof loadPlannerState !== "function" || typeof hydratePlannerState !== "function") {
-        throw new TypeError("El bootstrap requiere carga e hidratación del planner.");
+    if (typeof reconcilePlanner !== "function" || typeof loadPlannerState !== "function" || typeof hydratePlannerState !== "function") {
+        throw new TypeError("El bootstrap requiere reconciliación, carga e hidratación del planner.");
     }
 
     let inFlight = null;
@@ -16,6 +17,7 @@ export function createPlannerBootstrap({
         onLoading();
         inFlight = (async () => {
             try {
+                await reconcilePlanner();
                 const serverState = await loadPlannerState();
                 const hydratedState = hydratePlannerState(serverState);
                 onReady(hydratedState);

@@ -49,11 +49,23 @@ def add_frontend_cors(response):
         and request.path.count("/") == 4
         and request.path.rsplit("/", 1)[-1] in {"apply-week", "apply-future"}
     )
+    segment_status_mutation = (
+        request.method in {"PATCH", "OPTIONS"}
+        and request.path.startswith("/api/occurrence-segments/")
+        and request.path.count("/") == 4
+        and request.path.endswith("/status")
+    )
+    planner_reconciliation = (
+        request.method in {"POST", "OPTIONS"}
+        and request.path == "/api/planner/reconcile"
+    )
     if (
         not planner_read
         and not plan_item_creation
         and not occurrence_mutation
         and not recurring_schedule_mutation
+        and not segment_status_mutation
+        and not planner_reconciliation
     ):
         return response
     response.headers["Access-Control-Allow-Origin"] = origin
@@ -67,6 +79,11 @@ def add_frontend_cors(response):
     if recurring_schedule_mutation:
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if segment_status_mutation:
+        response.headers["Access-Control-Allow-Methods"] = "PATCH, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if planner_reconciliation:
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return response
 
 

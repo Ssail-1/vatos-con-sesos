@@ -54,7 +54,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
         { historyEditWindowDays: 0 },
     );
     assert.equal(wideWindow.getOccurrencesForPlanItem("wide-window")[0].status, "pending");
-    assert.equal(closedWindow.getOccurrencesForPlanItem("closed-window")[0].status, "not_completed");
+    assert.equal(closedWindow.getOccurrencesForPlanItem("closed-window")[0].status, "pending", "el frontend no reconcilia status por sí mismo");
 }
 
 {
@@ -62,17 +62,9 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const items = statuses.map((status, index) => activity(`frozen-${status}`, "2026-09-27", `${String(8 + index).padStart(2, "0")}:00`, `${String(9 + index).padStart(2, "0")}:00`));
     const overrides = statuses.map((status, index) => ({ planItemId: items[index].id, date: "2026-09-27", status }));
     const store = createPlannerStore(items, overrides, "2026-09-29");
-    const expected = {
-        pending: "not_completed",
-        in_progress: "not_finished",
-        completed: "completed",
-        not_completed: "not_completed",
-        not_finished: "not_finished",
-        cancelled: "cancelled",
-    };
     statuses.forEach((originalStatus) => {
         const occurrence = store.getOccurrencesForPlanItem(`frozen-${originalStatus}`)[0];
-        assert.equal(occurrence.status, expected[originalStatus], `${originalStatus} se reconcilia correctamente`);
+        assert.equal(occurrence.status, originalStatus, "los statuses solo cambian tras reconcile backend + GET");
         assert.equal(occurrence.planItemId, `frozen-${originalStatus}`);
         assert.equal(occurrence.date, "2026-09-27");
     });
@@ -229,7 +221,8 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const occurrence = store.getOccurrencesForPlanItem("day-change")[0];
     assert.equal(occurrence.status, "pending");
     currentDate = "2026-09-29";
-    assert.equal(store.reconcileTemporalState()[0].status, "not_completed");
+    assert.deepEqual(store.reconcileTemporalState(), [], "la reconciliación local no altera statuses");
+    assert.equal(store.getOccurrenceById(occurrence.id).status, "pending");
     assert.deepEqual(store.reconcileTemporalState(), []);
 }
 

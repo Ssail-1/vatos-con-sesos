@@ -5,6 +5,7 @@ import { getApiBaseUrl } from "../js/api/api-config.js";
 import {
     fetchPlannerState,
     PlannerApiError,
+    reconcilePlanner,
     validatePlannerStateResponse,
 } from "../js/api/planner-api.js";
 import { createPlannerBootstrap } from "../js/bootstrap/planner-bootstrap.js";
@@ -169,7 +170,9 @@ test("bootstrap controla error y retry sin duplicar carga concurrente", async ()
     let releaseFirstRequest;
     const firstRequest = new Promise((resolve) => { releaseFirstRequest = resolve; });
     const bootstrap = createPlannerBootstrap({
+        reconcilePlanner: async () => { events.push("reconcile"); },
         loadPlannerState: async () => {
+            events.push("get");
             attempts += 1;
             if (attempts === 1) {
                 await firstRequest;
@@ -177,7 +180,7 @@ test("bootstrap controla error y retry sin duplicar carga concurrente", async ()
             }
             return persistedState();
         },
-        hydratePlannerState: (state) => store.hydratePlannerState(state),
+        hydratePlannerState: (state) => { events.push("hydrate"); return store.hydratePlannerState(state); },
         onLoading: () => events.push("loading"),
         onReady: () => events.push("ready"),
         onError: () => events.push("error"),
@@ -190,6 +193,40 @@ test("bootstrap controla error y retry sin duplicar carga concurrente", async ()
     assert.equal((await bootstrap.retry()).status, "ready");
 
     assert.equal(attempts, 2);
-    assert.deepEqual(events, ["loading", "error", "loading", "ready"]);
+    assert.deepEqual(events, ["loading", "reconcile", "get", "error", "loading", "reconcile", "get", "hydrate", "ready"]);
     assert.equal(store.getOccurrences().length, 3);
+});
+
+test("reconciliation API envía POST sin payload y valida el summary", async () => {
+    const calls = [];
+    const result = await reconcilePlanner({
+        baseUrl: "http://localhost:5000",
+        fetchImpl: async (...args) => {
+            calls.push(args);
+            return successfulResponse({ status: "ok", updatedOccurrences: 2, updatedSegments: 3 });
+        },
+    });
+    assert.deepEqual(result, { status: "ok", updatedOccurrences: 2, updatedSegments: 3 });
+    assert.equal(calls[0][0], "http://localhost:5000/api/planner/reconcile");
+    assert.deepEqual(calls[0][1], { method: "POST", headers: { Accept: "application/json" } });
+    assert.equal("body" in calls[0][1], false);
+});
+
+test("reconcile falla: GET/hydrate no inician y retry repite reconcile antes de GET", async () => {
+    const calls = [];
+    let fail = true;
+    const bootstrap = createPlannerBootstrap({
+        reconcilePlanner: async () => {
+            calls.push("reconcile");
+            if (fail) throw new Error("database_unavailable");
+        },
+        loadPlannerState: async () => { calls.push("get"); return persistedState(); },
+        hydratePlannerState: (state) => { calls.push("hydrate"); return state; },
+        onError: () => calls.push("error"),
+    });
+    assert.equal((await bootstrap.start()).status, "error");
+    assert.deepEqual(calls, ["reconcile", "error"]);
+    fail = false;
+    assert.equal((await bootstrap.retry()).status, "ready");
+    assert.deepEqual(calls, ["reconcile", "error", "reconcile", "get", "hydrate"]);
 });

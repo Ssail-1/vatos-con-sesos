@@ -28,7 +28,6 @@ import {
     getDateTemporalZone,
     getHistoryCutoff,
     HISTORY_EDIT_WINDOW_DAYS,
-    reconcileFrozenStatus,
     TEMPORAL_ZONES,
 } from "../domain/temporal-integrity.js";
 import { findConflictInDraftSet, findOccurrenceConflict, findOccurrenceConflicts } from "../scheduling/conflict-detector.js";
@@ -429,17 +428,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function reconcileTemporalState(referenceDate = getCurrentReferenceDate()) {
-        const reconciled = [];
-        occurrences.forEach((occurrence) => {
-            // Schema-004 state remains read-only until persistent segment
-            // reconciliation becomes the backend authority in a later phase.
-            if (Array.isArray(occurrence.segments)) return;
-            if (getDateTemporalZone(occurrence.date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN) return;
-            const reconciledStatus = reconcileFrozenStatus(occurrence.status);
-            if (reconciledStatus === occurrence.status) return;
-            occurrence.status = reconciledStatus;
-            reconciled.push(cloneOccurrence(occurrence));
-        });
+        // La reconciliación de status pertenece exclusivamente al backend.
+        // Este helper legacy solo conserva el saneamiento local de exclusiones
+        // usado por los editores en memoria; nunca cambia statuses.
         planItems.forEach((planItem) => {
             const config = planItem.generationConfig;
             if (config === null) return;
@@ -467,7 +458,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             }
             if (changed) planItem.generationConfig = candidate;
         });
-        return reconciled;
+        return [];
     }
 
     function requireScheduleMutableDate(date) {
@@ -527,7 +518,8 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         }
     }
 
-    // El bootstrap aplica primero sus fixtures y después cierra cualquier historia ya congelada.
+    // Los fixtures legacy siguen usando saneamiento local de exclusiones;
+    // los status persistidos solo cambian por el comando backend explícito.
     reconcileTemporalState();
 
     function describeConflict(conflict) {

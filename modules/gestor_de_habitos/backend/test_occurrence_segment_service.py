@@ -2,6 +2,7 @@
 
 from contextlib import ExitStack
 from datetime import date, datetime, time
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -460,6 +461,48 @@ class EndpointTests(unittest.TestCase):
             )
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(invalid.get_json()["code"], "invalid_payload")
+
+    def test_cors_permits_only_configured_origin_for_new_routes(self):
+        origin = "http://127.0.0.1:8000"
+        with patch.dict(os.environ, {"VCS_ALLOWED_ORIGINS": origin}), patch.object(
+            service,
+            "mutate_segment_status",
+            return_value={"status": "ok", "segmentId": str(SEGMENT_ID)},
+        ), patch.object(
+            service,
+            "reconcile_planner",
+            return_value={"status": "ok", "updatedOccurrences": 0, "updatedSegments": 0},
+        ):
+            segment_path = f"/api/occurrence-segments/{SEGMENT_ID}/status"
+            preflight_patch = self.client.options(
+                segment_path,
+                headers={"Origin": origin, "Access-Control-Request-Method": "PATCH"},
+            )
+            actual_patch = self.client.patch(
+                segment_path, json={"status": "pending"}, headers={"Origin": origin}
+            )
+            preflight_reconcile = self.client.options(
+                "/api/planner/reconcile",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+            actual_reconcile = self.client.post(
+                "/api/planner/reconcile", headers={"Origin": origin}
+            )
+            rejected = self.client.options(
+                segment_path,
+                headers={"Origin": "http://unapproved.invalid"},
+            )
+        for response, method in (
+            (preflight_patch, "PATCH, OPTIONS"),
+            (actual_patch, "PATCH, OPTIONS"),
+            (preflight_reconcile, "POST, OPTIONS"),
+            (actual_reconcile, "POST, OPTIONS"),
+        ):
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), origin)
+            self.assertEqual(response.headers.get("Access-Control-Allow-Methods"), method)
+            self.assertEqual(response.headers.get("Vary"), "Origin")
+        self.assertEqual(preflight_patch.headers.get("Access-Control-Allow-Headers"), "Content-Type")
+        self.assertNotIn("Access-Control-Allow-Origin", rejected.headers)
 
 
 if __name__ == "__main__":
