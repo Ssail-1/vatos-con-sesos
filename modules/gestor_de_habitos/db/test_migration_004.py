@@ -28,6 +28,7 @@ import database as backend_database
 from app import app as backend_app
 import plan_item_creation_service as backend_creation_service
 import occurrence_segment_service as backend_segment_service
+import occurrence_structure_service as backend_structure_service
 from repositories import plan_item_repository as backend_plan_item_repository
 from repositories import occurrence_segment_repository as backend_segment_repository
 
@@ -79,8 +80,8 @@ def migration_sql(name):
     return (MIGRATION_DIRECTORY / name).read_text(encoding="utf-8")
 
 
-class OccurrenceSegmentMigrationTests(unittest.TestCase):
-    """Exercise 001 → 004 against a real disposable PostgreSQL 16 cluster."""
+class OccurrenceSegmentMigrationHarness(unittest.TestCase):
+    """Infraestructura compartida de PostgreSQL 16 efímero para schema 004."""
 
     @classmethod
     def setUpClass(cls):
@@ -128,22 +129,29 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
                 "-h ''",
             )
         )
-        subprocess.run(
-            [
-                str(PG_CTL),
-                "-D",
-                str(cls._data_directory),
-                "-l",
-                str(cls._server_log),
-                "-o",
-                server_options,
-                "-w",
-                "start",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    str(PG_CTL),
+                    "-D",
+                    str(cls._data_directory),
+                    "-l",
+                    str(cls._server_log),
+                    "-o",
+                    server_options,
+                    "-w",
+                    "start",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            server_log = cls._server_log.read_text(encoding="utf-8") if cls._server_log.exists() else ""
+            cls._temporary_directory.cleanup()
+            raise RuntimeError(
+                f"PostgreSQL 16 isolated startup failed: {error.stderr}\n{server_log}"
+            ) from error
 
         cls._admin_dsn = cls._dsn("postgres", ADMIN_ROLE)
         try:
@@ -328,6 +336,9 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
                 """,
                 ((slot_id, day) for slot_id, day, _, _ in entries),
             )
+
+class OccurrenceSegmentMigrationTests(OccurrenceSegmentMigrationHarness):
+    """Exercise 001 → 004 against a real disposable PostgreSQL 16 cluster."""
 
     def test_empty_database_applies_001_through_004_with_btree_gist(self):
         database_url = self._create_database()
@@ -2043,6 +2054,421 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
             self.assertNotIn("conflict_reason", columns)
             self.assertNotIn("origin_reason", columns)
             self.assertNotIn("last_conflict_action", columns)
+
+
+class OccurrenceStructurePostgreSQLTests(OccurrenceSegmentMigrationHarness):
+    """Comandos estructurales reales sobre schema 001→004 desechable."""
+
+    def _fixture(self, *, with_blocker=False):
+        dsn = self._create_database()
+        plan_id, occurrence_id = UUID(int=9001), UUID(int=9002)
+        first_id, second_id = UUID(int=9003), UUID(int=9004)
+        blocker_plan, blocker_id, blocker_segment = UUID(int=9005), UUID(int=9006), UUID(int=9007)
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, plan_id)
+            self._insert_manual_config(connection, plan_id, [(generation_slot_id(9008), "2026-09-20", "08:00", "12:00")])
+            self._insert_occurrence(connection, occurrence_id, plan_id, start_time="08:00", end_time="12:00")
+            connection.execute(
+                """INSERT INTO public.occurrence_segments
+                   (id, occurrence_id, start_time, end_time, status)
+                   VALUES (%s, %s, '08:00', '09:00', 'pending'),
+                          (%s, %s, '11:00', '12:00', 'pending')""",
+                (first_id, occurrence_id, second_id, occurrence_id),
+            )
+            if with_blocker:
+                self._insert_plan_item(connection, blocker_plan)
+                self._insert_manual_config(connection, blocker_plan, [(generation_slot_id(9009), "2026-09-20", "09:30", "10:30")])
+                self._insert_occurrence(connection, blocker_id, blocker_plan, start_time="09:30", end_time="10:30")
+                connection.execute(
+                    """INSERT INTO public.occurrence_segments
+                       (id, occurrence_id, start_time, end_time, status)
+                       VALUES (%s, %s, '09:30', '10:30', 'pending')""",
+                    (blocker_segment, blocker_id),
+                )
+        return dsn, occurrence_id, first_id, second_id, blocker_id, blocker_segment
+
+    def test_translate_structure_reset_round_trip_and_status_regression(self):
+        dsn, occurrence_id, first_id, second_id, _, _ = self._fixture()
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)
+        ):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}"
+            mismatch = client.post(path + "/translate", json={"startTime": "13:00", "endTime": "18:00"})
+            self.assertEqual((mismatch.status_code, mismatch.get_json()["code"]), (400, "occurrence_translate_duration_mismatch"))
+            wrapping = client.post(path + "/translate", json={"startTime": "23:00", "endTime": "03:00"})
+            self.assertEqual(wrapping.status_code, 400)
+            moved = client.post(path + "/translate", json={"startTime": "13:00", "endTime": "17:00"})
+            self.assertEqual(moved.status_code, 200, moved.get_json())
+            state_response = client.get("/api/planner-state")
+            self.assertEqual(state_response.status_code, 200, state_response.get_json())
+            state = state_response.get_json()
+            occurrence = state["occurrences"][0]
+            self.assertEqual(occurrence["date"], "2026-09-20")
+            self.assertEqual((occurrence["startTime"], occurrence["endTime"]), ("13:00", "17:00"))
+            self.assertEqual(
+                [(row["id"], row["startTime"], row["endTime"], row["status"]) for row in occurrence["segments"]],
+                [(str(first_id), "13:00", "14:00", "pending"), (str(second_id), "16:00", "17:00", "pending")],
+            )
+
+            changed = client.put(path + "/structure", json={
+                "startTime": "13:00", "endTime": "17:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "13:00", "endTime": "14:30"},
+                    {"startTime": "15:00", "endTime": "17:00", "status": "pending"},
+                ],
+            })
+            self.assertEqual(changed.status_code, 200, changed.get_json())
+            new_id = changed.get_json()["segmentIds"][1]
+            self.assertNotIn(new_id, (str(first_id), str(second_id)))
+            self.assertEqual(UUID(new_id).version, 4)
+            occurrence = client.get("/api/planner-state").get_json()["occurrences"][0]
+            self.assertEqual([row["id"] for row in occurrence["segments"]], [str(first_id), new_id])
+            self.assertEqual(occurrence["segments"][0]["endTime"], "14:30")
+            self.assertEqual(client.patch(f"/api/occurrence-segments/{second_id}/status", json={"status": "cancelled"}).status_code, 404)
+            self.assertEqual(client.patch(f"/api/occurrence-segments/{first_id}/status", json={"status": "completed"}).status_code, 200)
+
+            reset = client.post(path + "/reset-segmentation", json={"startTime": "13:00", "endTime": "17:00"})
+            self.assertEqual(reset.status_code, 200, reset.get_json())
+            final = client.get("/api/planner-state").get_json()["occurrences"][0]
+            self.assertEqual(len(final["segments"]), 1)
+            self.assertEqual(final["segments"][0]["id"], reset.get_json()["segmentIds"][0])
+            self.assertNotIn(final["segments"][0]["id"], (str(first_id), new_id))
+            self.assertEqual((final["segments"][0]["startTime"], final["segments"][0]["endTime"]), ("13:00", "17:00"))
+            self.assertEqual(final["segments"][0]["status"], "in_progress")
+            self.assertEqual(final["status"], "in_progress")
+
+    def test_gap_aware_conflict_and_atomic_rejection(self):
+        dsn, occurrence_id, first_id, second_id, blocker_id, blocker_segment = self._fixture(with_blocker=True)
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)
+        ):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}"
+            # El envelope 08–12 solapa 09:30–10:30, pero sus children no.
+            accepted = client.put(path + "/structure", json={
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                    {"id": str(second_id), "startTime": "11:00", "endTime": "12:00"},
+                ],
+            })
+            self.assertEqual(accepted.status_code, 200, accepted.get_json())
+            rejected = client.post(path + "/reset-segmentation", json={"startTime": "08:00", "endTime": "12:00"})
+            self.assertEqual(rejected.status_code, 409, rejected.get_json())
+            self.assertEqual(rejected.get_json()["code"], "occurrence_structure_conflict")
+            self.assertEqual(rejected.get_json()["blockers"][0]["occurrenceId"], str(blocker_id))
+            self.assertEqual(rejected.get_json()["blockers"][0]["segmentId"], str(blocker_segment))
+            state = client.get("/api/planner-state").get_json()
+            target = next(row for row in state["occurrences"] if row["id"] == str(occurrence_id))
+            self.assertEqual([row["id"] for row in target["segments"]], [str(first_id), str(second_id)])
+
+    def test_identity_validation_and_rollback_at_each_write_boundary(self):
+        dsn, occurrence_id, first_id, second_id, _, _ = self._fixture()
+        foreign_occurrence, foreign_segment = UUID(int=9011), UUID(int=9012)
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            self._insert_occurrence(
+                connection, foreign_occurrence, UUID(int=9001),
+                start_time="15:00", end_time="16:00", status="cancelled",
+            )
+            connection.execute(
+                """INSERT INTO public.occurrence_segments
+                   (id, occurrence_id, start_time, end_time, status)
+                   VALUES (%s, %s, '15:00', '16:00', 'cancelled')""",
+                (foreign_segment, foreign_occurrence),
+            )
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)
+        ):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}/structure"
+            initial = client.get("/api/planner-state").get_json()
+            invalid_payloads = [
+                ([], "occurrence_requires_segment"),
+                ([{"id": str(UUID(int=9010)), "startTime": "08:00", "endTime": "09:00"}], "segment_not_owned"),
+                ([{"id": str(foreign_segment), "startTime": "08:00", "endTime": "09:00"}], "segment_not_owned"),
+                ([{"id": str(first_id), "startTime": "08:00", "endTime": "09:00", "status": "cancelled"}], "invalid_payload"),
+                ([{"id": str(first_id), "startTime": "08:00", "endTime": "09:00"}] * 2, "duplicate_segment_id"),
+            ]
+            for segments, code in invalid_payloads:
+                with self.subTest(code=code):
+                    response = client.put(path, json={"startTime": "08:00", "endTime": "12:00", "segments": segments})
+                    self.assertEqual(response.status_code, 400, response.get_json())
+                    self.assertEqual(response.get_json()["code"], code)
+            valid = {
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:30"},
+                    {"startTime": "10:00", "endTime": "12:00", "status": "pending"},
+                ],
+            }
+            for function_name in (
+                "insert_segment", "delete_segments", "update_occurrence_structure"
+            ):
+                with self.subTest(function_name=function_name), patch.object(
+                    backend_segment_repository, function_name,
+                    side_effect=psycopg.Error("forced isolated failure"),
+                ):
+                    response = client.put(path, json=valid)
+                    self.assertEqual(response.status_code, 503, response.get_json())
+                self.assertEqual(client.get("/api/planner-state").get_json(), initial)
+
+            # Resize explícito: los children enviados caben; no hay escalado.
+            outside = client.put(path, json={
+                "startTime": "08:00", "endTime": "11:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                    {"id": str(second_id), "startTime": "11:00", "endTime": "12:00"},
+                ],
+            })
+            self.assertEqual((outside.status_code, outside.get_json()["code"]), (400, "segment_outside_occurrence"))
+            resized = client.put(path, json={
+                "startTime": "08:00", "endTime": "11:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:15"},
+                    {"id": str(second_id), "startTime": "10:00", "endTime": "11:00"},
+                ],
+            })
+            self.assertEqual(resized.status_code, 200, resized.get_json())
+            target = next(row for row in client.get("/api/planner-state").get_json()["occurrences"] if row["id"] == str(occurrence_id))
+            self.assertEqual((target["startTime"], target["endTime"]), ("08:00", "11:00"))
+            self.assertEqual([(row["id"], row["startTime"], row["endTime"]) for row in target["segments"]], [
+                (str(first_id), "08:00", "09:15"), (str(second_id), "10:00", "11:00")
+            ])
+
+            # Un split manual conserva la identidad izquierda y crea otra derecha.
+            split = client.put(path, json={
+                "startTime": "08:00", "endTime": "11:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "08:30"},
+                    {"startTime": "08:45", "endTime": "09:15", "status": "pending"},
+                    {"startTime": "09:30", "endTime": "10:00", "status": "pending"},
+                    {"id": str(second_id), "startTime": "10:00", "endTime": "11:00"},
+                ],
+            })
+            self.assertEqual(split.status_code, 200, split.get_json())
+            new_ids = split.get_json()["segmentIds"][1:3]
+            self.assertEqual(len(set(new_ids)), 2)
+            self.assertTrue(all(UUID(value).version == 4 for value in new_ids))
+            # La omisión de los dos nuevos children los elimina en un único PUT.
+            deleted = client.put(path, json={
+                "startTime": "08:00", "endTime": "11:00",
+                "segments": [{"id": str(first_id), "startTime": "08:00", "endTime": "08:30"}],
+            })
+            self.assertEqual(deleted.status_code, 200, deleted.get_json())
+            target = next(row for row in client.get("/api/planner-state").get_json()["occurrences"] if row["id"] == str(occurrence_id))
+            self.assertEqual([row["id"] for row in target["segments"]], [str(first_id)])
+
+    def test_temporal_guards_and_completed_time(self):
+        dsn, occurrence_id, first_id, _, _, _ = self._fixture()
+        with patch.object(backend_database, "get_database_url", return_value=dsn):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}"
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 22, 12, 0)):
+                for method, suffix, payload in (
+                    (client.post, "/translate", {"startTime": "13:00", "endTime": "17:00"}),
+                    (client.put, "/structure", {"startTime": "08:00", "endTime": "12:00", "segments": [{"id": str(first_id), "startTime": "08:00", "endTime": "09:00"}]}),
+                    (client.post, "/reset-segmentation", {"startTime": "08:00", "endTime": "12:00"}),
+                ):
+                    response = method(path + suffix, json=payload)
+                    self.assertEqual((response.status_code, response.get_json()["code"]), (409, "history_frozen"))
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 21, 12, 0)):
+                response = client.post(path + "/translate", json={"startTime": "13:00", "endTime": "17:00"})
+                self.assertEqual((response.status_code, response.get_json()["code"]), (409, "temporal_reconciliation_required"))
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 8, 30)):
+                # Completed before its end is rejected by the existing status API.
+                response = client.patch(f"/api/occurrence-segments/{first_id}/status", json={"status": "completed"})
+                self.assertEqual((response.status_code, response.get_json()["code"]), (409, "segment_not_ended"))
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)):
+                response = client.patch(f"/api/occurrence-segments/{first_id}/status", json={"status": "completed"})
+                self.assertEqual(response.status_code, 200, response.get_json())
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 10, 0)):
+                response = client.put(path + "/structure", json={
+                    "startTime": "08:00", "endTime": "12:00", "segments": [
+                        {"id": str(first_id), "startTime": "08:00", "endTime": "11:00"},
+                    ],
+                })
+                self.assertEqual((response.status_code, response.get_json()["code"]), (409, "segment_not_ended"))
+                allowed = client.put(path + "/structure", json={
+                    "startTime": "08:00", "endTime": "12:00", "segments": [
+                        {"id": str(first_id), "startTime": "08:00", "endTime": "09:30"},
+                    ],
+                })
+                self.assertEqual(allowed.status_code, 200, allowed.get_json())
+
+    def test_multiple_blockers_are_ordered_and_nonblocking_candidates_are_free(self):
+        dsn, occurrence_id, first_id, second_id, blocker_id, blocker_segment = self._fixture(with_blocker=True)
+        other_plan, other_id, other_segment = UUID(int=9020), UUID(int=9021), UUID(int=9022)
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            self._insert_plan_item(connection, other_plan)
+            self._insert_manual_config(connection, other_plan, [(generation_slot_id(9023), "2026-09-20", "10:30", "11:30")])
+            self._insert_occurrence(connection, other_id, other_plan, start_time="10:30", end_time="11:30", status="not_finished")
+            connection.execute(
+                """INSERT INTO public.occurrence_segments
+                   (id, occurrence_id, start_time, end_time, status)
+                   VALUES (%s, %s, '10:30', '11:30', 'not_finished')""",
+                (other_segment, other_id),
+            )
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)
+        ):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}/structure"
+            conflict = client.put(path, json={
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [{"id": str(first_id), "startTime": "08:00", "endTime": "12:00"}],
+            })
+            self.assertEqual(conflict.status_code, 409, conflict.get_json())
+            self.assertEqual(
+                [row["segmentId"] for row in conflict.get_json()["blockers"]],
+                [str(blocker_segment), str(other_segment)],
+            )
+            nonblocking = client.put(path, json={
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                    {"id": str(second_id), "startTime": "09:00", "endTime": "12:00"},
+                ],
+            })
+            self.assertEqual(nonblocking.status_code, 409, nonblocking.get_json())
+            # El status de un child existente no se puede cambiar por structure.
+            cancelled = client.patch(f"/api/occurrence-segments/{second_id}/status", json={"status": "cancelled"})
+            self.assertEqual(cancelled.status_code, 200, cancelled.get_json())
+            free = client.put(path, json={
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                    {"id": str(second_id), "startTime": "09:00", "endTime": "12:00"},
+                ],
+            })
+            self.assertEqual(free.status_code, 200, free.get_json())
+            self.assertEqual(free.get_json()["occurrenceStatus"], "pending")
+            noncompleted = client.patch(
+                f"/api/occurrence-segments/{second_id}/status",
+                json={"status": "not_completed"},
+            )
+            self.assertEqual(noncompleted.status_code, 200, noncompleted.get_json())
+            still_free = client.put(path, json={
+                "startTime": "08:00", "endTime": "12:00",
+                "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                    {"id": str(second_id), "startTime": "09:00", "endTime": "12:00"},
+                ],
+            })
+            self.assertEqual(still_free.status_code, 200, still_free.get_json())
+
+    def test_yesterday_reconciliation_then_structure_and_metadata_preservation(self):
+        dsn, occurrence_id, first_id, second_id, _, _ = self._fixture()
+        source_id = UUID(int=9030)
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """UPDATE public.occurrences
+                   SET origin_reason = 'conflict_insertion', last_conflict_action = 'conflict_move',
+                       source_generation_slot_id = %s
+                   WHERE id = %s""",
+                (generation_slot_id(9008), occurrence_id),
+            )
+            self._insert_occurrence(
+                connection, source_id, UUID(int=9001),
+                start_time="14:00", end_time="15:00", status="cancelled",
+                conflict_reason="priority_override", source_occurrence_id=occurrence_id,
+            )
+            connection.execute(
+                """INSERT INTO public.occurrence_segments
+                   (id, occurrence_id, start_time, end_time, status)
+                   VALUES (%s, %s, '14:00', '15:00', 'cancelled')""",
+                (UUID(int=9031), source_id),
+            )
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_service, "_now", return_value=datetime(2026, 9, 21, 12, 0)
+        ):
+            client = backend_app.test_client()
+            reconciled = client.post("/api/planner/reconcile")
+            self.assertEqual(reconciled.status_code, 200, reconciled.get_json())
+            moved = client.post(
+                f"/api/occurrences/{occurrence_id}/translate",
+                json={"startTime": "09:00", "endTime": "13:00"},
+            )
+            self.assertEqual(moved.status_code, 200, moved.get_json())
+            state = client.get("/api/planner-state").get_json()
+            target = next(row for row in state["occurrences"] if row["id"] == str(occurrence_id))
+            referenced = next(row for row in state["occurrences"] if row["id"] == str(source_id))
+            self.assertEqual(target["sourceGenerationSlotId"], generation_slot_id(9008))
+            self.assertEqual(target["originReason"], "conflict_insertion")
+            self.assertEqual(target["lastConflictAction"], "conflict_move")
+            self.assertEqual(referenced["conflictContext"]["sourceOccurrenceId"], str(occurrence_id))
+            self.assertEqual(
+                [(row["id"], row["status"]) for row in target["segments"]],
+                [(str(first_id), "not_completed"), (str(second_id), "not_completed")],
+            )
+
+    def test_future_new_status_and_reset_completed_time(self):
+        dsn, occurrence_id, first_id, second_id, _, _ = self._fixture()
+        with patch.object(backend_database, "get_database_url", return_value=dsn):
+            client = backend_app.test_client()
+            path = f"/api/occurrences/{occurrence_id}"
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 19, 12, 0)):
+                invalid = client.put(path + "/structure", json={
+                    "startTime": "08:00", "endTime": "12:00", "segments": [
+                        {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                        {"startTime": "10:00", "endTime": "12:00", "status": "completed"},
+                    ],
+                })
+                self.assertEqual((invalid.status_code, invalid.get_json()["code"]), (409, "segment_status_not_allowed"))
+                valid = client.put(path + "/structure", json={
+                    "startTime": "08:00", "endTime": "12:00", "segments": [
+                        {"id": str(first_id), "startTime": "08:00", "endTime": "09:00"},
+                        {"startTime": "10:00", "endTime": "12:00", "status": "cancelled"},
+                    ],
+                })
+                self.assertEqual(valid.status_code, 200, valid.get_json())
+                self.assertEqual(valid.get_json()["occurrenceStatus"], "pending")
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 18, 0)):
+                for segment_id in valid.get_json()["segmentIds"]:
+                    response = client.patch(f"/api/occurrence-segments/{segment_id}/status", json={"status": "completed"})
+                    self.assertEqual(response.status_code, 200, response.get_json())
+            previous = client.get("/api/planner-state").get_json()
+            with patch.object(backend_segment_service, "_now", return_value=datetime(2026, 9, 20, 10, 0)):
+                rejected = client.post(path + "/reset-segmentation", json={"startTime": "08:00", "endTime": "12:00"})
+                self.assertEqual((rejected.status_code, rejected.get_json()["code"]), (409, "segment_not_ended"))
+            self.assertEqual(client.get("/api/planner-state").get_json(), previous)
+
+    def test_concurrent_structure_writes_keep_one_complete_graph(self):
+        dsn, occurrence_id, first_id, second_id, _, _ = self._fixture()
+        barrier = Barrier(2)
+        original_lock = backend_segment_repository.lock_occurrence
+
+        def synchronized_lock(*args, **kwargs):
+            barrier.wait(timeout=5)
+            return original_lock(*args, **kwargs)
+
+        def replace(index):
+            payload = {
+                "startTime": "08:00", "endTime": "12:00", "segments": [
+                    {"id": str(first_id), "startTime": "08:00", "endTime": f"09:{index}0"},
+                    {"startTime": f"10:{index}0", "endTime": "12:00", "status": "pending"},
+                ],
+            }
+            try:
+                return backend_structure_service.replace_occurrence_structure(
+                    str(occurrence_id), payload, now=datetime(2026, 9, 20, 18, 0)
+                )
+            except backend_structure_service.OccurrenceStructureConflictError as error:
+                return error.code
+
+        with patch.object(backend_database, "get_database_url", return_value=dsn), patch.object(
+            backend_segment_repository, "lock_occurrence", side_effect=synchronized_lock
+        ), ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(replace, (1, 2)))
+        self.assertEqual(sum(isinstance(result, dict) for result in results), 1)
+        self.assertEqual(results.count("concurrent_conflict"), 1)
+        with patch.object(backend_database, "get_database_url", return_value=dsn):
+            target = backend_app.test_client().get("/api/planner-state").get_json()["occurrences"][0]
+        self.assertEqual(len(target["segments"]), 2)
+        self.assertEqual(target["segments"][0]["id"], str(first_id))
+        self.assertNotEqual(target["segments"][1]["id"], str(second_id))
+        self.assertEqual(target["status"], "pending")
 
 
 if __name__ == "__main__":

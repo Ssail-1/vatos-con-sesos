@@ -1,4 +1,4 @@
-"""SQL transaccional para status y reconciliación de OccurrenceSegments."""
+"""SQL transaccional para los children y aggregate de OccurrenceSegments."""
 
 from psycopg.rows import dict_row
 
@@ -170,3 +170,110 @@ def lock_segments_for_occurrences(connection, occurrence_ids):
             (occurrence_ids,),
         )
         return cursor.fetchall()
+
+
+def lock_external_blockers_for_candidates(
+    connection, occurrence_id, occurrence_date, candidate_segments, blocking_statuses
+):
+    """Bloquea en orden todos los blockers reales del set candidato ocupante."""
+    if not candidate_segments:
+        return []
+    starts = [segment["startTime"] for segment in candidate_segments]
+    ends = [segment["endTime"] for segment in candidate_segments]
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                occurrence.id AS occurrence_id,
+                occurrence.plan_item_id,
+                occurrence.occurrence_date,
+                segment.id AS segment_id,
+                segment.start_time,
+                segment.end_time,
+                segment.status
+            FROM public.occurrence_segments AS segment
+            INNER JOIN public.occurrences AS occurrence
+                ON occurrence.id = segment.occurrence_id
+            WHERE occurrence.occurrence_date = %s
+              AND occurrence.id <> %s
+              AND segment.status = ANY(%s)
+              AND EXISTS (
+                  SELECT 1
+                  FROM unnest(%s::time[], %s::time[])
+                      AS candidate(start_time, end_time)
+                  WHERE segment.start_time < candidate.end_time
+                    AND segment.end_time > candidate.start_time
+              )
+            ORDER BY occurrence.id, segment.start_time, segment.end_time, segment.id
+            FOR UPDATE OF segment
+            """,
+            (
+                occurrence_date,
+                occurrence_id,
+                sorted(blocking_statuses),
+                starts,
+                ends,
+            ),
+        )
+        return cursor.fetchall()
+
+
+def update_segment_times(connection, segment_id, occurrence_id, start_time, end_time):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE public.occurrence_segments
+            SET start_time = %s, end_time = %s
+            WHERE id = %s AND occurrence_id = %s
+            """,
+            (start_time, end_time, segment_id, occurrence_id),
+        )
+        return cursor.rowcount
+
+
+def insert_segment(connection, segment, occurrence_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO public.occurrence_segments
+                (id, occurrence_id, start_time, end_time, status)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                segment["id"],
+                occurrence_id,
+                segment["startTime"],
+                segment["endTime"],
+                segment["status"],
+            ),
+        )
+        return cursor.rowcount
+
+
+def delete_segments(connection, occurrence_id, segment_ids):
+    if not segment_ids:
+        return 0
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            DELETE FROM public.occurrence_segments
+            WHERE occurrence_id = %s AND id = ANY(%s::uuid[])
+            """,
+            (occurrence_id, segment_ids),
+        )
+        return cursor.rowcount
+
+
+def update_occurrence_structure(
+    connection, occurrence_id, start_time, end_time, aggregate
+):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE public.occurrences
+            SET start_time = %s, end_time = %s, status = %s
+            WHERE id = %s
+            """,
+            (start_time, end_time, aggregate, occurrence_id),
+        )
+        return cursor.rowcount

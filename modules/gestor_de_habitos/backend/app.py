@@ -8,6 +8,7 @@ import database
 import future_schedule_service
 import occurrence_mutation_service
 import occurrence_segment_service
+import occurrence_structure_service
 import plan_item_creation_service
 import planner_state_service
 import week_mutation_service
@@ -262,6 +263,62 @@ def reconcile_planner():
         )
     except occurrence_segment_service.OccurrenceSegmentServiceError as error:
         return _occurrence_segment_error_response(error)
+    return jsonify(result)
+
+
+def _occurrence_structure_error_response(error):
+    if isinstance(error, occurrence_structure_service.OccurrenceStructureValidationError):
+        return jsonify(status="error", code=error.code, message=str(error)), 400
+    if isinstance(error, occurrence_structure_service.OccurrenceStructureNotFoundError):
+        return jsonify(
+            status="error", code="occurrence_not_found", message="La occurrence no existe."
+        ), 404
+    if isinstance(error, occurrence_structure_service.OccurrenceStructureConflictError):
+        body = {"status": "error", "code": error.code, "message": str(error)}
+        if error.blockers is not None:
+            body["blockers"] = error.blockers
+        return jsonify(body), 409
+    if isinstance(error, occurrence_structure_service.OccurrenceStructureConsistencyError):
+        return jsonify(
+            status="error", code="persisted_state_invalid",
+            message="El estado persistido del planner no es válido.",
+        ), 500
+    return jsonify(
+        status="error", code="database_unavailable",
+        message="No se pudo completar la operación estructural.",
+    ), 503
+
+
+@app.post("/api/occurrences/<occurrence_id>/translate")
+def translate_occurrence(occurrence_id):
+    try:
+        result = occurrence_structure_service.translate_occurrence(
+            occurrence_id, request.get_json(silent=True)
+        )
+    except occurrence_structure_service.OccurrenceStructureError as error:
+        return _occurrence_structure_error_response(error)
+    return jsonify(result)
+
+
+@app.put("/api/occurrences/<occurrence_id>/structure")
+def replace_occurrence_structure(occurrence_id):
+    try:
+        result = occurrence_structure_service.replace_occurrence_structure(
+            occurrence_id, request.get_json(silent=True)
+        )
+    except occurrence_structure_service.OccurrenceStructureError as error:
+        return _occurrence_structure_error_response(error)
+    return jsonify(result)
+
+
+@app.post("/api/occurrences/<occurrence_id>/reset-segmentation")
+def reset_occurrence_segmentation(occurrence_id):
+    try:
+        result = occurrence_structure_service.reset_occurrence_segmentation(
+            occurrence_id, request.get_json(silent=True)
+        )
+    except occurrence_structure_service.OccurrenceStructureError as error:
+        return _occurrence_structure_error_response(error)
     return jsonify(result)
 
 
