@@ -364,7 +364,7 @@ function createPlanItemRow(rowData, position, context) {
     const nameCell = document.createElement("th");
     const nameContent = document.createElement("span");
     const nameText = document.createElement("span");
-    const { groupSelected, rowSelected: parentSelected } = getPlannerRowSelection(
+    const { groupSelected } = getPlannerRowSelection(
         rowData,
         context,
     );
@@ -404,7 +404,7 @@ function createPlanItemRow(rowData, position, context) {
         nameContent.prepend(expandButton);
     }
 
-    if (parentSelected) {
+    if (groupSelected) {
         const referenceDate = formatDateKey(context.currentDate);
         const selectedDateKey = formatDateKey(context.selectedDate);
         const selectedDateFrozen = getDateTemporalZone(selectedDateKey, referenceDate) === TEMPORAL_ZONES.FROZEN;
@@ -447,16 +447,10 @@ function createPlanItemRow(rowData, position, context) {
             selectedDateFrozen
                 ? `${planItem.name}: historial congelado, solo lectura`
                 : selectedOccurrence
-                ? `Editar ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
+                ? `Editar horario de ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}, solo esta aparición`
                 : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
-        editButton.disabled = selectedDateFrozen || isMultiSegmentOccurrence(occurrence);
-        if (isMultiSegmentOccurrence(occurrence)) {
-            editButton.setAttribute(
-                "aria-label",
-                `${planItem.name}: la edición de occurrences con varios segments está temporalmente bloqueada`,
-            );
-        }
+        editButton.disabled = selectedDateFrozen;
         editButton.title = editButton.getAttribute("aria-label");
         editButton.addEventListener("click", (event) => {
             event.stopPropagation();

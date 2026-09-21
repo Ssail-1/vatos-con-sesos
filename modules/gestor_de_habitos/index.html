@@ -290,5 +290,40 @@
                 </div>
             </div>
         </dialog>
+
+        <dialog id="structureDialog" class="override-dialog structure-dialog" aria-labelledby="structureDialogTitle">
+            <form id="structureForm" class="override-dialog-content" novalidate>
+                <div class="dialog-heading">
+                    <p class="section-kicker">Plan del día · solo esta aparición</p>
+                    <h2 id="structureDialogTitle">Editar horario</h2>
+                    <p id="structureReference" class="insertion-reference"></p>
+                </div>
+                <div class="structure-envelope">
+                    <label class="form-field" for="structureStartTime">Inicio general
+                        <input id="structureStartTime" type="time" required />
+                    </label>
+                    <label class="form-field" for="structureEndTime">Final general
+                        <input id="structureEndTime" type="time" required />
+                    </label>
+                </div>
+                <div class="structure-heading">
+                    <h3>Segments de esta aparición</h3>
+                    <button id="structureAddSegmentButton" class="secondary-button" type="button">Agregar segmento</button>
+                </div>
+                <div id="structureSegments" class="structure-segments"></div>
+                <p id="structureDuration" class="insertion-reference" aria-live="polite"></p>
+                <p id="structureError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+                <p id="structureSaving" class="form-saving-status" role="status" hidden>Guardando estructura…</p>
+                <div class="structure-secondary-actions">
+                    <button id="structureTranslateButton" class="secondary-button" type="button">Mover toda la aparición</button>
+                    <button id="structureResetButton" class="destructive-button" type="button">Restablecer segmentación</button>
+                </div>
+                <div class="dialog-actions">
+                    <button id="structureCancelButton" class="secondary-button" type="button">Cancelar</button>
+                    <button id="structureRetryButton" class="secondary-button" type="button" hidden>Reintentar actualización</button>
+                    <button id="structureSaveButton" class="primary-button" type="submit">Guardar estructura</button>
+                </div>
+            </form>
+        </dialog>
     </body>
 </html>

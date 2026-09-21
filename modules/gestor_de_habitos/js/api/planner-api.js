@@ -328,6 +328,74 @@ export async function updateSegmentStatus(segmentId, status, {
     return payload;
 }
 
+async function structuralCommand(occurrenceId, action, method, body, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+    let response;
+    try {
+        response = await fetchImpl(
+            buildApiUrl(`/api/occurrences/${encodeURIComponent(occurrenceId)}/${action}`, baseUrl),
+            {
+                method,
+                headers: { Accept: "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            },
+        );
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+    let payload;
+    try {
+        payload = await readJson(response);
+    } catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+    if (!response?.ok) {
+        throw new PlannerApiError(
+            isRecord(payload) && typeof payload.code === "string" ? payload.code : "http_error",
+            isRecord(payload) && typeof payload.message === "string"
+                ? payload.message : "No se pudo guardar la estructura de la aparición.",
+            {
+                status: Number.isInteger(response?.status) ? response.status : null,
+                blockers: isRecord(payload) && Array.isArray(payload.blockers)
+                    ? payload.blockers.filter(isRecord).map((blocker) => ({ ...blocker })) : [],
+            },
+        );
+    }
+    if (
+        !isRecord(payload) || payload.status !== "ok"
+        || payload.occurrenceId !== occurrenceId
+        || !isValidOccurrenceStatus(payload.occurrenceStatus)
+        || !Array.isArray(payload.segmentIds)
+        || !payload.segmentIds.length
+        || !payload.segmentIds.every((id) => typeof id === "string" && Boolean(id))
+    ) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "El comando fue aceptado, pero su respuesta no cumple el contrato esperado.",
+            { mutationConfirmed: true, status: response.status },
+        );
+    }
+    return payload;
+}
+
+export function translateOccurrence(occurrenceId, startTime, endTime, options = {}) {
+    return structuralCommand(occurrenceId, "translate", "POST", { startTime, endTime }, options);
+}
+
+export function replaceOccurrenceStructure(occurrenceId, payload, options = {}) {
+    return structuralCommand(occurrenceId, "structure", "PUT", payload, options);
+}
+
+export function resetOccurrenceSegmentation(occurrenceId, startTime, endTime, options = {}) {
+    return structuralCommand(occurrenceId, "reset-segmentation", "POST", { startTime, endTime }, options);
+}
+
 export async function reconcilePlanner({
     fetchImpl = globalThis.fetch,
     baseUrl = getApiBaseUrl(),

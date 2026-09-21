@@ -5,6 +5,9 @@ import {
     deleteOccurrence,
     fetchPlannerState,
     reconcilePlanner,
+    replaceOccurrenceStructure,
+    resetOccurrenceSegmentation,
+    translateOccurrence,
     updateSegmentStatus,
     updateOccurrence,
 } from "./api/planner-api.js";
@@ -15,6 +18,10 @@ import {
     getSegmentStatusMutationErrorMessage,
 } from "./mutations/occurrence-mutation.js";
 import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
+import {
+    createOccurrenceStructureMutationCoordinator,
+    getOccurrenceStructureErrorMessage,
+} from "./mutations/occurrence-structure-mutation.js";
 import {
     buildApplyFuturePayload,
     createRecurringScheduleMutationCoordinator,
@@ -27,6 +34,7 @@ import { createOverrideConfirmationView } from "./views/override-confirmation.js
 import { createDeletionDialogView } from "./views/deletion-dialog.js";
 import { createPlanItemFormView } from "./views/plan-item-form.js";
 import { createPlannerMatrixView } from "./views/planner-matrix.js";
+import { createOccurrenceStructureEditorView } from "./views/occurrence-structure-editor.js";
 
 const byId = (id) => document.getElementById(id);
 const elements = Object.fromEntries([
@@ -47,6 +55,11 @@ const elements = Object.fromEntries([
     "overrideBackButton", "overrideContinueButton",
     "deletionDialog", "deletionSummary", "deleteOccurrenceButton", "deleteOccurrenceDetails",
     "stopPlanningButton", "stopPlanningDetails", "deletionError", "deletionBackButton",
+    "structureDialog", "structureForm", "structureDialogTitle", "structureReference",
+    "structureStartTime", "structureEndTime", "structureSegments", "structureDuration",
+    "structureError", "structureSaving", "structureAddSegmentButton",
+    "structureTranslateButton", "structureResetButton", "structureCancelButton",
+    "structureRetryButton", "structureSaveButton",
 ].map((id) => [id, byId(id)]));
 
 function getCurrentLocalDate() {
@@ -202,9 +215,9 @@ const matrixView = createPlannerMatrixView({
         const index = daily.findIndex(({ id }) => id === occurrence.id);
         planItemFormView.openInsertBefore(item, occurrence, index > 0 ? daily[index - 1].endTime : "", opener);
     },
-    onEdit: (item, occurrence, opener, selectedDateKey, scheduleOnly) => (
-        planItemFormView.openEdit(item, occurrence, selectedDateKey, opener, scheduleOnly)
-    ),
+    onEdit: (item, occurrence, opener, selectedDateKey, scheduleOnly) => occurrence
+        ? structureEditorView.open(occurrence, item.name, opener)
+        : planItemFormView.openEdit(item, occurrence, selectedDateKey, opener, scheduleOnly),
     onDelete: (item, occurrence, opener, selectedDateKey) => {
         const options = plannerStore.getDeletionOptions(
             item.id,
@@ -287,6 +300,73 @@ const segmentStatusMutation = createOccurrenceMutationCoordinator({
     mutateOccurrence: updateSegmentStatus,
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+const structureMutation = createOccurrenceStructureMutationCoordinator({
+    translateOccurrence: (id, payload) => translateOccurrence(id, payload.startTime, payload.endTime),
+    replaceOccurrenceStructure,
+    resetOccurrenceSegmentation: (id, payload) => resetOccurrenceSegmentation(id, payload.startTime, payload.endTime),
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+async function submitStructureCommand(operation, occurrenceId, payload) {
+    const outcome = await structureMutation.submit(operation, occurrenceId, payload);
+    if (outcome.status === "synced") {
+        render();
+        showFeedback("La estructura se guardó y el planner quedó sincronizado.", "notice");
+        return outcome;
+    }
+    if (outcome.status === "review_required") {
+        render();
+        showFeedback("El planner se actualizó. Revisa si el cambio se guardó antes de editar de nuevo.", "notice");
+        return outcome;
+    }
+    if (outcome.status !== "mutation_error") return outcome;
+    const code = outcome.error?.code;
+    if (["occurrence_not_found", "concurrent_conflict", "history_frozen", "temporal_reconciliation_required"].includes(code)) {
+        if (["occurrence_not_found", "concurrent_conflict"].includes(code)) {
+            if (code === "occurrence_not_found") clearPlannerSelection();
+            try { plannerStore.hydratePlannerState(await fetchPlannerState()); }
+            catch { /* El mensaje visible pide actualizar el planner. */ }
+        }
+        render();
+        showFeedback(getOccurrenceStructureErrorMessage(outcome.error));
+        return { status: "invalidated" };
+    }
+    return outcome;
+}
+
+const structureEditorView = createOccurrenceStructureEditorView({
+    dialog: elements.structureDialog,
+    form: elements.structureForm,
+    title: elements.structureDialogTitle,
+    reference: elements.structureReference,
+    startInput: elements.structureStartTime,
+    endInput: elements.structureEndTime,
+    segmentsContainer: elements.structureSegments,
+    duration: elements.structureDuration,
+    errorRegion: elements.structureError,
+    savingStatus: elements.structureSaving,
+    addButton: elements.structureAddSegmentButton,
+    translateButton: elements.structureTranslateButton,
+    resetButton: elements.structureResetButton,
+    cancelButton: elements.structureCancelButton,
+    retryButton: elements.structureRetryButton,
+    saveButton: elements.structureSaveButton,
+    onCommand: submitStructureCommand,
+    onRetryRefresh: async () => {
+        const outcome = await structureMutation.retryRefresh();
+        if (["synced", "review_required"].includes(outcome.status)) {
+            render();
+            showFeedback(outcome.status === "synced"
+                ? "La estructura guardada se cargó desde el backend."
+                : "El planner se actualizó. Revisa el resultado antes de editar de nuevo.", "notice");
+        }
+        return outcome;
+    },
+    getCurrentDateKey: () => formatDateKey(getCurrentLocalDate()),
+    onRestoreFocus: (occurrenceId) => matrixView.focusPlannerRow({ occurrenceId }),
 });
 
 async function persistSegmentStatus({ segmentId, status }) {

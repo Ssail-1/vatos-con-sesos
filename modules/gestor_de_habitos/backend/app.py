@@ -44,6 +44,20 @@ def add_frontend_cors(response):
         and request.path.startswith("/api/occurrences/")
         and request.path.count("/") == 3
     )
+    structural_mutation = (
+        request.path.startswith("/api/occurrences/")
+        and request.path.count("/") == 4
+        and (
+            (
+                request.path.endswith("/structure")
+                and request.method in {"PUT", "OPTIONS"}
+            )
+            or (
+                request.path.rsplit("/", 1)[-1] in {"translate", "reset-segmentation"}
+                and request.method in {"POST", "OPTIONS"}
+            )
+        )
+    )
     recurring_schedule_mutation = (
         request.method in {"POST", "OPTIONS"}
         and request.path.startswith("/api/plan-items/")
@@ -64,6 +78,7 @@ def add_frontend_cors(response):
         not planner_read
         and not plan_item_creation
         and not occurrence_mutation
+        and not structural_mutation
         and not recurring_schedule_mutation
         and not segment_status_mutation
         and not planner_reconciliation
@@ -76,6 +91,11 @@ def add_frontend_cors(response):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if occurrence_mutation:
         response.headers["Access-Control-Allow-Methods"] = "PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if structural_mutation:
+        response.headers["Access-Control-Allow-Methods"] = (
+            "PUT, OPTIONS" if request.path.endswith("/structure") else "POST, OPTIONS"
+        )
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if recurring_schedule_mutation:
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
