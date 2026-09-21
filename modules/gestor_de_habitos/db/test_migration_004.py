@@ -4,11 +4,13 @@ The suite starts an isolated temporary cluster under /tmp, creates a dedicated
 non-superuser database owner, and never reads DATABASE_URL or backend/.env.
 """
 
-from datetime import date
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from threading import Barrier
 import unittest
 from unittest.mock import patch
 from uuid import UUID
@@ -25,7 +27,9 @@ if str(BACKEND_DIRECTORY) not in sys.path:
 import database as backend_database
 from app import app as backend_app
 import plan_item_creation_service as backend_creation_service
+import occurrence_segment_service as backend_segment_service
 from repositories import plan_item_repository as backend_plan_item_repository
+from repositories import occurrence_segment_repository as backend_segment_repository
 
 
 MIGRATIONS_001_TO_003 = (
@@ -286,6 +290,44 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
                 last_conflict_action,
             ),
         )
+
+    @staticmethod
+    def _insert_manual_config(connection, plan_item_id, entries):
+        connection.execute(
+            """
+            INSERT INTO public.generation_configs (
+                plan_item_id,
+                mode,
+                start_date,
+                end_date,
+                indefinite,
+                interval_days,
+                stopped_from_date
+            )
+            VALUES (%s, 'manual_dates', NULL, NULL, FALSE, NULL, NULL)
+            """,
+            (plan_item_id,),
+        )
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO public.generation_slots (
+                    id, plan_item_id, start_time, end_time
+                )
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    (slot_id, plan_item_id, start_time, end_time)
+                    for slot_id, _, start_time, end_time in entries
+                ),
+            )
+            cursor.executemany(
+                """
+                INSERT INTO public.generation_slot_dates (slot_id, entry_date)
+                VALUES (%s, %s)
+                """,
+                ((slot_id, day) for slot_id, day, _, _ in entries),
+            )
 
     def test_empty_database_applies_001_through_004_with_btree_gist(self):
         database_url = self._create_database()
@@ -1315,6 +1357,635 @@ class OccurrenceSegmentMigrationTests(unittest.TestCase):
                 (created_occurrences[0]["id"],),
             ).fetchone()
         self.assertEqual(blocker, ("not_finished", None, "not_finished"))
+
+    def test_segment_status_endpoint_round_trip_preserves_structure_and_metadata(self):
+        database_url = self._create_database()
+        payload = manual_creation_payload(
+            [
+                {
+                    "date": "2026-09-20",
+                    "startTime": "08:00",
+                    "endTime": "12:00",
+                }
+            ],
+            name="Segment status round trip",
+        )
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_creation_service, "_today", return_value=date(2026, 9, 20)
+        ):
+            client = backend_app.test_client()
+            created_response = client.post("/api/plan-items", json=payload)
+        self.assertEqual(created_response.status_code, 201)
+        plan_item_id = UUID(created_response.get_json()["planItem"]["id"])
+        created_occurrence = created_response.get_json()["occurrences"][0]
+        occurrence_id = UUID(created_occurrence["id"])
+        first_segment_id = UUID(int=810)
+        second_segment_id = UUID(int=811)
+        source_occurrence_id = UUID(int=812)
+        source_segment_id = UUID(int=813)
+
+        with psycopg.connect(database_url) as connection:
+            self._insert_occurrence(
+                connection,
+                source_occurrence_id,
+                plan_item_id,
+                start_time="06:00",
+                end_time="07:00",
+                status="completed",
+            )
+            connection.execute(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id, occurrence_id, start_time, end_time, status
+                ) VALUES (%s, %s, '06:00', '07:00', 'completed')
+                """,
+                (source_segment_id, source_occurrence_id),
+            )
+            connection.execute(
+                "DELETE FROM public.occurrence_segments WHERE occurrence_id = %s",
+                (occurrence_id,),
+            )
+            connection.execute(
+                """
+                UPDATE public.occurrences
+                SET conflict_reason = 'user_forced_override',
+                    source_occurrence_id = %s,
+                    origin_reason = 'conflict_insertion',
+                    last_conflict_action = 'conflict_move'
+                WHERE id = %s
+                """,
+                (source_occurrence_id, occurrence_id),
+            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO public.occurrence_segments (
+                        id, occurrence_id, start_time, end_time, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        (first_segment_id, occurrence_id, "08:00", "10:00", "pending"),
+                        (second_segment_id, occurrence_id, "10:00", "12:00", "pending"),
+                    ),
+                )
+
+        fixed_now = datetime(2026, 9, 20, 12, 0)
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(backend_segment_service, "_now", return_value=fixed_now):
+            client = backend_app.test_client()
+            mutation = client.patch(
+                f"/api/occurrence-segments/{first_segment_id}/status",
+                json={"status": "completed"},
+            )
+            first_state = client.get("/api/planner-state")
+            second_state = client.get("/api/planner-state")
+
+        self.assertEqual(mutation.status_code, 200, mutation.get_data(as_text=True))
+        self.assertEqual(
+            mutation.get_json(),
+            {
+                "status": "ok",
+                "occurrenceId": str(occurrence_id),
+                "segmentId": str(first_segment_id),
+                "segmentStatus": "completed",
+                "occurrenceStatus": "in_progress",
+            },
+        )
+        self.assertEqual(first_state.status_code, 200)
+        self.assertEqual(second_state.status_code, 200)
+        first_occurrence = next(
+            occurrence
+            for occurrence in first_state.get_json()["occurrences"]
+            if occurrence["id"] == str(occurrence_id)
+        )
+        second_occurrence = next(
+            occurrence
+            for occurrence in second_state.get_json()["occurrences"]
+            if occurrence["id"] == str(occurrence_id)
+        )
+        self.assertEqual(first_occurrence, second_occurrence)
+        self.assertEqual(first_occurrence["status"], "in_progress")
+        self.assertEqual(first_occurrence["startTime"], "08:00")
+        self.assertEqual(first_occurrence["endTime"], "12:00")
+        self.assertEqual(first_occurrence["originReason"], "conflict_insertion")
+        self.assertEqual(first_occurrence["lastConflictAction"], "conflict_move")
+        self.assertEqual(
+            first_occurrence["conflictContext"],
+            {
+                "reason": "user_forced_override",
+                "sourceOccurrenceId": str(source_occurrence_id),
+            },
+        )
+        self.assertEqual(
+            first_occurrence["sourceGenerationSlotId"],
+            payload["generationConfig"]["entries"][0]["id"],
+        )
+        self.assertEqual(
+            first_occurrence["segments"],
+            [
+                {
+                    "id": str(first_segment_id),
+                    "startTime": "08:00",
+                    "endTime": "10:00",
+                    "status": "completed",
+                },
+                {
+                    "id": str(second_segment_id),
+                    "startTime": "10:00",
+                    "endTime": "12:00",
+                    "status": "pending",
+                },
+            ],
+        )
+
+    def test_segment_status_conflict_guard_uses_child_intervals_and_is_atomic(self):
+        database_url = self._create_database()
+        blocker_plan_id = UUID(int=820)
+        blocker_occurrence_id = UUID(int=821)
+        target_plan_id = UUID(int=822)
+        target_occurrence_id = UUID(int=823)
+        blocker_segment_id = UUID(int=824)
+        target_segment_id = UUID(int=825)
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, blocker_plan_id)
+            self._insert_plan_item(connection, target_plan_id)
+            self._insert_occurrence(
+                connection,
+                blocker_occurrence_id,
+                blocker_plan_id,
+                start_time="08:00",
+                end_time="09:00",
+            )
+            self._insert_occurrence(
+                connection,
+                target_occurrence_id,
+                target_plan_id,
+                start_time="08:30",
+                end_time="09:30",
+                status="cancelled",
+            )
+            connection.execute(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id, occurrence_id, start_time, end_time, status
+                ) VALUES
+                    (%s, %s, '08:00', '09:00', 'pending'),
+                    (%s, %s, '08:30', '09:30', 'cancelled')
+                """,
+                (
+                    blocker_segment_id,
+                    blocker_occurrence_id,
+                    target_segment_id,
+                    target_occurrence_id,
+                ),
+            )
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_segment_service,
+            "_now",
+            return_value=datetime(2026, 9, 20, 12, 0),
+        ):
+            response = backend_app.test_client().patch(
+                f"/api/occurrence-segments/{target_segment_id}/status",
+                json={"status": "pending"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "status": "error",
+                "code": "segment_status_conflict",
+                "message": "El status solicitado solapa otro segmento ocupante.",
+                "blockers": [
+                    {
+                        "occurrenceId": str(blocker_occurrence_id),
+                        "segmentId": str(blocker_segment_id),
+                        "planItemId": str(blocker_plan_id),
+                        "date": "2026-09-20",
+                        "startTime": "08:00",
+                        "endTime": "09:00",
+                        "status": "pending",
+                    }
+                ],
+            },
+        )
+        with psycopg.connect(database_url) as connection:
+            target = connection.execute(
+                """
+                SELECT occurrence.status, segment.status
+                FROM public.occurrences AS occurrence
+                INNER JOIN public.occurrence_segments AS segment
+                    ON segment.occurrence_id = occurrence.id
+                WHERE segment.id = %s
+                """,
+                (target_segment_id,),
+            ).fetchone()
+            blocker = connection.execute(
+                "SELECT status FROM public.occurrence_segments WHERE id = %s",
+                (blocker_segment_id,),
+            ).fetchone()
+        self.assertEqual(target, ("cancelled", "cancelled"))
+        self.assertEqual(blocker, ("pending",))
+
+    def test_segment_status_guard_allows_parent_gap_and_adjacency(self):
+        database_url = self._create_database()
+        plan_ids = (UUID(int=830), UUID(int=831), UUID(int=832))
+        occurrence_ids = (UUID(int=833), UUID(int=834), UUID(int=835))
+        segment_ids = (UUID(int=836), UUID(int=837), UUID(int=838), UUID(int=839))
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            for plan_id in plan_ids:
+                self._insert_plan_item(connection, plan_id)
+            self._insert_occurrence(
+                connection, occurrence_ids[0], plan_ids[0], start_time="08:00", end_time="12:00"
+            )
+            self._insert_occurrence(
+                connection,
+                occurrence_ids[1],
+                plan_ids[1],
+                start_time="09:30",
+                end_time="10:30",
+                status="cancelled",
+            )
+            self._insert_occurrence(
+                connection,
+                occurrence_ids[2],
+                plan_ids[2],
+                start_time="12:00",
+                end_time="13:00",
+                status="cancelled",
+            )
+            connection.execute(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id, occurrence_id, start_time, end_time, status
+                ) VALUES
+                    (%s, %s, '08:00', '09:00', 'pending'),
+                    (%s, %s, '11:00', '12:00', 'pending'),
+                    (%s, %s, '09:30', '10:30', 'cancelled'),
+                    (%s, %s, '12:00', '13:00', 'cancelled')
+                """,
+                (
+                    segment_ids[0], occurrence_ids[0],
+                    segment_ids[1], occurrence_ids[0],
+                    segment_ids[2], occurrence_ids[1],
+                    segment_ids[3], occurrence_ids[2],
+                ),
+            )
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_segment_service,
+            "_now",
+            return_value=datetime(2026, 9, 20, 12, 0),
+        ):
+            client = backend_app.test_client()
+            gap = client.patch(
+                f"/api/occurrence-segments/{segment_ids[2]}/status",
+                json={"status": "pending"},
+            )
+            adjacent = client.patch(
+                f"/api/occurrence-segments/{segment_ids[3]}/status",
+                json={"status": "pending"},
+            )
+        self.assertEqual(gap.status_code, 200, gap.get_data(as_text=True))
+        self.assertEqual(adjacent.status_code, 200, adjacent.get_data(as_text=True))
+
+    def test_segment_status_rolls_back_child_when_parent_update_fails(self):
+        database_url = self._create_database()
+        plan_item_id = UUID(int=890)
+        occurrence_id = UUID(int=891)
+        segment_id = UUID(int=892)
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, plan_item_id)
+            self._insert_occurrence(connection, occurrence_id, plan_item_id)
+            connection.execute(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id, occurrence_id, start_time, end_time, status
+                ) VALUES (%s, %s, '08:00', '09:00', 'pending')
+                """,
+                (segment_id, occurrence_id),
+            )
+            connection.execute(
+                """
+                CREATE FUNCTION public.reject_parent_status_update()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'intentional parent failure';
+                END
+                $$
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER reject_parent_status_update
+                BEFORE UPDATE OF status ON public.occurrences
+                FOR EACH ROW EXECUTE FUNCTION public.reject_parent_status_update()
+                """
+            )
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_segment_service,
+            "_now",
+            return_value=datetime(2026, 9, 20, 12, 0),
+        ):
+            response = backend_app.test_client().patch(
+                f"/api/occurrence-segments/{segment_id}/status",
+                json={"status": "completed"},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("intentional parent failure", response.get_data(as_text=True))
+
+        with psycopg.connect(database_url) as connection:
+            row = connection.execute(
+                """
+                SELECT occurrence.status, segment.status
+                FROM public.occurrences AS occurrence
+                INNER JOIN public.occurrence_segments AS segment
+                    ON segment.occurrence_id = occurrence.id
+                WHERE occurrence.id = %s
+                """,
+                (occurrence_id,),
+            ).fetchone()
+        self.assertEqual(row, ("pending", "pending"))
+
+    def test_reconciliation_endpoint_is_persistent_idempotent_and_skips_today(self):
+        database_url = self._create_database()
+        plan_item_id = UUID(int=840)
+        occurrence_ids = tuple(UUID(int=841 + index) for index in range(5))
+        segment_ids = tuple(UUID(int=846 + index) for index in range(6))
+        slot_ids = tuple(
+            UUID(generation_slot_id(860 + index)) for index in range(5)
+        )
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, plan_item_id)
+            self._insert_manual_config(
+                connection,
+                plan_item_id,
+                (
+                    (slot_ids[0], "2026-09-19", "08:00", "10:00"),
+                    (slot_ids[1], "2026-09-18", "11:00", "12:00"),
+                    (slot_ids[2], "2026-09-15", "13:00", "14:00"),
+                    (slot_ids[3], "2026-09-20", "15:00", "16:00"),
+                    (slot_ids[4], "2026-09-21", "17:00", "18:00"),
+                ),
+            )
+            for occurrence_id, slot_id, day, start, end, status in (
+                (occurrence_ids[0], slot_ids[0], "2026-09-19", "08:00", "10:00", "pending"),
+                (occurrence_ids[1], slot_ids[1], "2026-09-18", "11:00", "12:00", "in_progress"),
+                (occurrence_ids[2], slot_ids[2], "2026-09-15", "13:00", "14:00", "completed"),
+                (occurrence_ids[3], slot_ids[3], "2026-09-20", "15:00", "16:00", "pending"),
+                (occurrence_ids[4], slot_ids[4], "2026-09-21", "17:00", "18:00", "pending"),
+            ):
+                self._insert_occurrence(
+                    connection,
+                    occurrence_id,
+                    plan_item_id,
+                    day=day,
+                    start_time=start,
+                    end_time=end,
+                    status=status,
+                )
+                connection.execute(
+                    "UPDATE public.occurrences SET source_generation_slot_id = %s WHERE id = %s",
+                    (slot_id, occurrence_id),
+                )
+            connection.execute(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id, occurrence_id, start_time, end_time, status
+                ) VALUES
+                    (%s, %s, '08:00', '09:00', 'completed'),
+                    (%s, %s, '09:00', '10:00', 'pending'),
+                    (%s, %s, '11:00', '12:00', 'in_progress'),
+                    (%s, %s, '13:00', '14:00', 'completed'),
+                    (%s, %s, '15:00', '16:00', 'pending'),
+                    (%s, %s, '17:00', '18:00', 'pending')
+                """,
+                (
+                    segment_ids[0], occurrence_ids[0],
+                    segment_ids[1], occurrence_ids[0],
+                    segment_ids[2], occurrence_ids[1],
+                    segment_ids[3], occurrence_ids[2],
+                    segment_ids[4], occurrence_ids[3],
+                    segment_ids[5], occurrence_ids[4],
+                ),
+            )
+
+        fixed_now = datetime(2026, 9, 20, 12, 0)
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(backend_segment_service, "_now", return_value=fixed_now):
+            client = backend_app.test_client()
+            first = client.post("/api/planner/reconcile")
+            first_state = client.get("/api/planner-state")
+            second = client.post("/api/planner/reconcile")
+            second_state = client.get("/api/planner-state")
+
+        self.assertEqual(first.status_code, 200, first.get_data(as_text=True))
+        self.assertEqual(
+            first.get_json(),
+            {"status": "ok", "updatedOccurrences": 2, "updatedSegments": 2},
+        )
+        self.assertEqual(
+            second.get_json(),
+            {"status": "ok", "updatedOccurrences": 0, "updatedSegments": 0},
+        )
+        self.assertEqual(
+            first_state.status_code, 200, first_state.get_data(as_text=True)
+        )
+        self.assertEqual(
+            second_state.status_code, 200, second_state.get_data(as_text=True)
+        )
+        self.assertEqual(first_state.get_json(), second_state.get_json())
+        by_id = {
+            item["id"]: item
+            for item in first_state.get_json()["occurrences"]
+        }
+        self.assertEqual(by_id[str(occurrence_ids[0])]["status"], "not_finished")
+        self.assertEqual(
+            [segment["status"] for segment in by_id[str(occurrence_ids[0])]["segments"]],
+            ["completed", "not_completed"],
+        )
+        self.assertEqual(by_id[str(occurrence_ids[1])]["status"], "not_finished")
+        self.assertEqual(by_id[str(occurrence_ids[2])]["status"], "completed")
+        self.assertEqual(by_id[str(occurrence_ids[3])]["status"], "pending")
+        self.assertEqual(by_id[str(occurrence_ids[4])]["status"], "pending")
+
+    def test_reconciliation_rolls_back_all_parents_on_late_failure(self):
+        database_url = self._create_database()
+        plan_item_id = UUID(int=860)
+        occurrence_ids = (UUID(int=861), UUID(int=862))
+        segment_ids = (UUID(int=863), UUID(int=864))
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            self._insert_plan_item(connection, plan_item_id)
+            for occurrence_id, segment_id, day in zip(
+                occurrence_ids,
+                segment_ids,
+                ("2026-09-18", "2026-09-19"),
+                strict=True,
+            ):
+                self._insert_occurrence(
+                    connection,
+                    occurrence_id,
+                    plan_item_id,
+                    day=day,
+                    status="pending",
+                )
+                connection.execute(
+                    """
+                    INSERT INTO public.occurrence_segments (
+                        id, occurrence_id, start_time, end_time, status
+                    ) VALUES (%s, %s, '08:00', '09:00', 'pending')
+                    """,
+                    (segment_id, occurrence_id),
+                )
+            connection.execute(
+                """
+                CREATE FUNCTION public.reject_late_reconciliation()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.id = '00000000-0000-0000-0000-00000000035e'::uuid THEN
+                        RAISE EXCEPTION 'intentional reconciliation failure';
+                    END IF;
+                    RETURN NEW;
+                END
+                $$
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER reject_late_reconciliation
+                BEFORE UPDATE OF status ON public.occurrences
+                FOR EACH ROW EXECUTE FUNCTION public.reject_late_reconciliation()
+                """
+            )
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_segment_service,
+            "_now",
+            return_value=datetime(2026, 9, 20, 12, 0),
+        ):
+            response = backend_app.test_client().post("/api/planner/reconcile")
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn(
+            "intentional reconciliation failure", response.get_data(as_text=True)
+        )
+
+        with psycopg.connect(database_url) as connection:
+            rows = connection.execute(
+                """
+                SELECT occurrence.status, segment.status
+                FROM public.occurrences AS occurrence
+                INNER JOIN public.occurrence_segments AS segment
+                    ON segment.occurrence_id = occurrence.id
+                ORDER BY occurrence.id
+                """
+            ).fetchall()
+        self.assertEqual(rows, [("pending", "pending"), ("pending", "pending")])
+
+    def test_concurrent_overlapping_activations_cannot_both_commit(self):
+        database_url = self._create_database()
+        plan_ids = (UUID(int=870), UUID(int=871))
+        occurrence_ids = (UUID(int=872), UUID(int=873))
+        segment_ids = (UUID(int=874), UUID(int=875))
+
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            self._apply_001_to_004(connection)
+            for plan_id, occurrence_id, segment_id, start, end in zip(
+                plan_ids,
+                occurrence_ids,
+                segment_ids,
+                ("08:00", "08:30"),
+                ("09:00", "09:30"),
+                strict=True,
+            ):
+                self._insert_plan_item(connection, plan_id)
+                self._insert_occurrence(
+                    connection,
+                    occurrence_id,
+                    plan_id,
+                    start_time=start,
+                    end_time=end,
+                    status="cancelled",
+                )
+                connection.execute(
+                    """
+                    INSERT INTO public.occurrence_segments (
+                        id, occurrence_id, start_time, end_time, status
+                    ) VALUES (%s, %s, %s, %s, 'cancelled')
+                    """,
+                    (segment_id, occurrence_id, start, end),
+                )
+
+        both_read = Barrier(2)
+        original_list_overlaps = backend_segment_repository.list_blocking_overlaps
+
+        def synchronized_list_overlaps(*args, **kwargs):
+            both_read.wait(timeout=5)
+            return original_list_overlaps(*args, **kwargs)
+
+        def activate(segment_id):
+            try:
+                return backend_segment_service.mutate_segment_status(
+                    str(segment_id),
+                    {"status": "pending"},
+                    now=datetime(2026, 9, 20, 12, 0),
+                )
+            except backend_segment_service.OccurrenceSegmentConflictError as error:
+                return error.code
+
+        with patch.object(
+            backend_database, "get_database_url", return_value=database_url
+        ), patch.object(
+            backend_segment_repository,
+            "list_blocking_overlaps",
+            side_effect=synchronized_list_overlaps,
+        ), ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(activate, segment_ids))
+
+        self.assertEqual(
+            sum(isinstance(result, dict) for result in results),
+            1,
+        )
+        self.assertEqual(results.count("concurrent_conflict"), 1)
+        with psycopg.connect(database_url) as connection:
+            rows = connection.execute(
+                """
+                SELECT occurrence.status, segment.status
+                FROM public.occurrences AS occurrence
+                INNER JOIN public.occurrence_segments AS segment
+                    ON segment.occurrence_id = occurrence.id
+                ORDER BY occurrence.id
+                """
+            ).fetchall()
+        self.assertEqual(sorted(rows), [("cancelled", "cancelled"), ("pending", "pending")])
 
     def test_migration_is_atomic_when_a_late_step_fails(self):
         database_url = self._create_database()

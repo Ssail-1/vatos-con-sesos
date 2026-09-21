@@ -7,6 +7,7 @@ from flask import Flask, jsonify, request
 import database
 import future_schedule_service
 import occurrence_mutation_service
+import occurrence_segment_service
 import plan_item_creation_service
 import planner_state_service
 import week_mutation_service
@@ -182,6 +183,69 @@ def _occurrence_mutation_error_response(error):
         code="database_unavailable",
         message="No se pudo completar la operación sobre la occurrence.",
     ), 503
+
+
+def _occurrence_segment_error_response(error):
+    if isinstance(
+        error, occurrence_segment_service.OccurrenceSegmentValidationError
+    ):
+        return jsonify(
+            status="error",
+            code="invalid_payload",
+            message="El identificador o payload de OccurrenceSegment no es válido.",
+        ), 400
+    if isinstance(
+        error, occurrence_segment_service.OccurrenceSegmentNotFoundError
+    ):
+        return jsonify(
+            status="error",
+            code="segment_not_found",
+            message="El OccurrenceSegment no existe.",
+        ), 404
+    if isinstance(error, occurrence_segment_service.OccurrenceSegmentConflictError):
+        body = {
+            "status": "error",
+            "code": error.code,
+            "message": str(error),
+        }
+        if error.blockers is not None:
+            body["blockers"] = error.blockers
+        return jsonify(body), 409
+    if isinstance(
+        error, occurrence_segment_service.OccurrenceSegmentConsistencyError
+    ):
+        return jsonify(
+            status="error",
+            code="persisted_state_invalid",
+            message="El estado persistido del planner no es válido.",
+        ), 500
+    return jsonify(
+        status="error",
+        code="database_unavailable",
+        message="No se pudo completar la operación de OccurrenceSegment.",
+    ), 503
+
+
+@app.patch("/api/occurrence-segments/<segment_id>/status")
+def patch_occurrence_segment_status(segment_id):
+    try:
+        result = occurrence_segment_service.mutate_segment_status(
+            segment_id, request.get_json(silent=True)
+        )
+    except occurrence_segment_service.OccurrenceSegmentServiceError as error:
+        return _occurrence_segment_error_response(error)
+    return jsonify(result)
+
+
+@app.post("/api/planner/reconcile")
+def reconcile_planner():
+    try:
+        result = occurrence_segment_service.reconcile_planner(
+            request.get_json(silent=True)
+        )
+    except occurrence_segment_service.OccurrenceSegmentServiceError as error:
+        return _occurrence_segment_error_response(error)
+    return jsonify(result)
 
 
 @app.patch("/api/occurrences/<occurrence_id>")

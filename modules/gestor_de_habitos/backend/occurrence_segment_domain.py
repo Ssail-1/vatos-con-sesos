@@ -1,6 +1,6 @@
-"""Reglas puras del agregado de estado de OccurrenceSegment."""
+"""Reglas puras de status y agregado de OccurrenceSegment."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
 FUTURE = "future"
@@ -21,10 +21,25 @@ SEGMENT_STATUSES = frozenset(
         "cancelled",
     }
 )
+ALLOWED_STATUSES_BY_PHASE = {
+    FUTURE: frozenset({"pending", "cancelled"}),
+    CURRENT_DAY: SEGMENT_STATUSES,
+    PREVIOUS_EDITABLE_DAY: frozenset(
+        {"completed", "not_completed", "not_finished", "cancelled"}
+    ),
+}
 
 
 class OccurrenceSegmentDomainError(ValueError):
     """El conjunto de segmentos no representa un agregado válido."""
+
+
+class OccurrenceSegmentStatusError(OccurrenceSegmentDomainError):
+    """Una mutación de status contradice la fase o el tiempo actual."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
 
 
 def temporal_phase_for_date(
@@ -104,3 +119,52 @@ def derive_occurrence_status(segments, temporal_phase):
     if "not_completed" in unique_statuses:
         return "not_completed"
     return "cancelled"
+
+
+def validate_segment_status_for_phase(
+    status,
+    temporal_phase,
+    segment_end_datetime,
+    current_datetime,
+):
+    """Valida una corrección de status sin consultar reloj ni persistencia."""
+    if status not in SEGMENT_STATUSES:
+        raise OccurrenceSegmentStatusError(
+            "invalid_status", "El status del segmento no es válido."
+        )
+    if temporal_phase not in TEMPORAL_PHASES:
+        raise OccurrenceSegmentStatusError(
+            "invalid_temporal_phase", "La fase temporal no es válida."
+        )
+    if not isinstance(segment_end_datetime, datetime) or not isinstance(
+        current_datetime, datetime
+    ):
+        raise TypeError("Los límites temporales deben ser datetime.")
+    if segment_end_datetime.tzinfo != current_datetime.tzinfo:
+        raise TypeError("Los valores temporales deben compartir timezone.")
+    if temporal_phase == FROZEN_HISTORY:
+        raise OccurrenceSegmentStatusError(
+            "history_frozen", "El historial congelado es de solo lectura."
+        )
+    if status not in ALLOWED_STATUSES_BY_PHASE[temporal_phase]:
+        raise OccurrenceSegmentStatusError(
+            "segment_status_not_allowed",
+            "El status no está permitido en la fase temporal actual.",
+        )
+    if status == "completed" and segment_end_datetime > current_datetime:
+        raise OccurrenceSegmentStatusError(
+            "segment_not_ended",
+            "El segmento no puede completarse antes de su hora final.",
+        )
+
+
+def reconcile_segment_status(status):
+    """Normaliza un status histórico; la función es pura e idempotente."""
+    if status not in SEGMENT_STATUSES:
+        raise OccurrenceSegmentDomainError(
+            "El segmento contiene un status no reconocido."
+        )
+    return {
+        "pending": "not_completed",
+        "in_progress": "not_finished",
+    }.get(status, status)

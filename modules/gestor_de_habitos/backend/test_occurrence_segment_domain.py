@@ -1,6 +1,6 @@
 """Pruebas unitarias de las reglas puras de OccurrenceSegment."""
 
-from datetime import date
+from datetime import date, datetime
 import unittest
 
 from occurrence_segment_domain import (
@@ -9,8 +9,11 @@ from occurrence_segment_domain import (
     FUTURE,
     PREVIOUS_EDITABLE_DAY,
     OccurrenceSegmentDomainError,
+    OccurrenceSegmentStatusError,
     derive_occurrence_status,
+    reconcile_segment_status,
     temporal_phase_for_date,
+    validate_segment_status_for_phase,
 )
 from scheduling_policy import BLOCKING_STATUSES
 
@@ -134,6 +137,107 @@ class BlockingStatusTests(unittest.TestCase):
             {"pending", "in_progress", "completed", "not_finished"},
         )
         self.assertTrue({"not_completed", "cancelled"}.isdisjoint(BLOCKING_STATUSES))
+
+
+class SegmentStatusRuleTests(unittest.TestCase):
+    def setUp(self):
+        self.now = datetime(2026, 9, 20, 12, 0)
+        self.ended = datetime(2026, 9, 20, 11, 0)
+
+    def _assert_rejected(self, status, phase, expected_code):
+        with self.assertRaises(OccurrenceSegmentStatusError) as error:
+            validate_segment_status_for_phase(
+                status, phase, self.ended, self.now
+            )
+        self.assertEqual(error.exception.code, expected_code)
+
+    def test_future_accepts_only_pending_and_cancelled(self):
+        future_end = datetime(2026, 9, 21, 11, 0)
+        for status in ("pending", "cancelled"):
+            validate_segment_status_for_phase(status, FUTURE, future_end, self.now)
+        for status in (
+            "in_progress",
+            "completed",
+            "not_completed",
+            "not_finished",
+        ):
+            self._assert_rejected(status, FUTURE, "segment_status_not_allowed")
+
+    def test_current_day_accepts_all_six_subject_to_completed_time(self):
+        for status in (
+            "pending",
+            "in_progress",
+            "completed",
+            "not_completed",
+            "not_finished",
+            "cancelled",
+        ):
+            with self.subTest(status=status):
+                validate_segment_status_for_phase(
+                    status, CURRENT_DAY, self.ended, self.now
+                )
+
+    def test_previous_day_accepts_only_stable_historical_statuses(self):
+        yesterday_end = datetime(2026, 9, 19, 23, 0)
+        for status in (
+            "completed",
+            "not_completed",
+            "not_finished",
+            "cancelled",
+        ):
+            validate_segment_status_for_phase(
+                status, PREVIOUS_EDITABLE_DAY, yesterday_end, self.now
+            )
+        for status in ("pending", "in_progress"):
+            self._assert_rejected(
+                status, PREVIOUS_EDITABLE_DAY, "segment_status_not_allowed"
+            )
+
+    def test_frozen_history_rejects_even_same_status(self):
+        for status in (
+            "pending",
+            "in_progress",
+            "completed",
+            "not_completed",
+            "not_finished",
+            "cancelled",
+        ):
+            self._assert_rejected(status, FROZEN_HISTORY, "history_frozen")
+
+    def test_completed_accepts_before_and_exact_now_but_rejects_after(self):
+        validate_segment_status_for_phase(
+            "completed",
+            CURRENT_DAY,
+            datetime(2026, 9, 20, 11, 59),
+            self.now,
+        )
+        validate_segment_status_for_phase(
+            "completed", CURRENT_DAY, self.now, self.now
+        )
+        with self.assertRaises(OccurrenceSegmentStatusError) as error:
+            validate_segment_status_for_phase(
+                "completed",
+                CURRENT_DAY,
+                datetime(2026, 9, 20, 12, 1),
+                self.now,
+            )
+        self.assertEqual(error.exception.code, "segment_not_ended")
+
+    def test_reconciliation_mapping_is_idempotent(self):
+        expected = {
+            "pending": "not_completed",
+            "in_progress": "not_finished",
+            "completed": "completed",
+            "not_completed": "not_completed",
+            "not_finished": "not_finished",
+            "cancelled": "cancelled",
+        }
+        for original, reconciled in expected.items():
+            with self.subTest(original=original):
+                self.assertEqual(reconcile_segment_status(original), reconciled)
+                self.assertEqual(
+                    reconcile_segment_status(reconciled), reconciled
+                )
 
 
 if __name__ == "__main__":
