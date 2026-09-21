@@ -1,47 +1,58 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Frontend Read / Display Compatibility
+## OccurrenceSegment v1 — Backend Segment Domain + Creation + Aggregate Status
 
 ### Objective
 
-Adapt the planner frontend so it can understand and display the read contract
-already produced by the schema-004-compatible backend:
+Implement the first authoritative backend write foundation for
+OccurrenceSegment v1.
+
+This phase must introduce:
 
 ```text
-Occurrence
-├── general parent envelope
-├── materialized aggregate status
-└── 1..N persisted OccurrenceSegments
+pure OccurrenceSegment domain rules
+
+deriveOccurrenceStatus(...)
+
+default segment creation
+
+atomic parent + segment creation
+
+schema-004-compatible non-conflicting PlanItem creation
+
+backend blocking-status correction for not_finished
 ```
 
-This phase is:
+This phase does NOT implement structural segment editing or the new conflict
+engine.
+
+The primary transition is:
 
 ```text
-READ + DISPLAY COMPATIBILITY
+BEFORE
+
+Create PlanItem
+→ create Occurrence
+→ status stored directly on parent
 ```
 
-It must NOT implement OccurrenceSegment write behavior yet.
-
-The frontend should be able to:
+to:
 
 ```text
-hydrate segments[]
-preserve segment identities
-display single-segment occurrences normally
-display multi-segment occurrences coherently
-expand/collapse segment rows
-show structural duration
-track occurrence + segment selection
-consume conflictContext
-```
+NOW
 
-without yet allowing structural segment mutations.
+Create PlanItem
+→ create Occurrence
+→ create exactly one default OccurrenceSegment
+→ derive parent aggregate
+→ persist parent + child atomically
+```
 
 ---
 
 # Required reading
 
-Before making any change, read completely:
+Before changing anything, read completely:
 
 ```text
 AGENTS.md
@@ -59,20 +70,16 @@ docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
 modules/gestor_de_habitos/docs/valores.md
 ```
 
-Also inspect the current backend read contract implemented in the previous
-phase.
-
-Relevant backend files include at least:
+Also inspect:
 
 ```text
-modules/gestor_de_habitos/backend/planner_state_service.py
-
-modules/gestor_de_habitos/backend/repositories/planner_state_repository.py
-
-modules/gestor_de_habitos/backend/test_planner_state.py
+modules/gestor_de_habitos/db/migrations/004_occurrence_segments.sql
 ```
 
-Read existing frontend tests before changing implementation.
+and the backend/frontend work already completed for schema-004 read
+compatibility.
+
+Read all relevant existing tests before implementation.
 
 ---
 
@@ -85,19 +92,19 @@ CURRENT_TASK.md
 → current implementation scope
 
 OCCURRENCE_SEGMENT_DECISIONS.md
-→ approved technical decisions
+→ approved technical choices
 
 OCCURRENCE_SEGMENT_V1.md
 → approved model
 
 STATUS_CONFLICT_RULES.md
-→ approved product/domain behavior
+→ approved domain/product behavior
 
 TECHNICAL_AUDIT
 → evidence and alternatives
 ```
 
-Do not silently change approved rules.
+Do not silently reinterpret approved behavior.
 
 ---
 
@@ -106,18 +113,48 @@ Do not silently change approved rules.
 This task is limited to:
 
 ```text
-frontend API read validation
-frontend hydration/cloning
-frontend read model
-occurrence + segment selection state
-planner matrix rendering
-expand/collapse behavior
-segment duration display
-conflictContext consumption
-frontend tests
+backend pure segment domain
+
+aggregate status derivation
+
+default segment creation
+
+PlanItem creation on schema 004
+
+atomic parent + segment persistence
+
+backend blocking-status correction
+
+focused backend/PostgreSQL tests
 ```
 
-Do NOT implement segment write behavior.
+Do NOT implement:
+
+```text
+segment status API
+
+manual segment create/delete
+
+split
+
+trim
+
+resize
+
+reset segmentation
+
+persistent reconciliation
+
+Apply Week segment behavior
+
+Apply Future segment behavior
+
+segment-aware conflict engine
+
+user-forced conflict resolution
+
+frontend changes
+```
 
 ---
 
@@ -130,9 +167,9 @@ git status --short --untracked-files=all
 git diff --stat
 ```
 
-Preserve all existing user changes.
+Preserve all existing user work.
 
-Do not revert prior OccurrenceSegment work.
+Do not revert previously completed OccurrenceSegment phases.
 
 ---
 
@@ -144,22 +181,21 @@ Do NOT apply migration 004 to:
 vcs_dev
 ```
 
-Do NOT mutate or inspect real development data merely to implement this
-frontend phase.
+Do NOT inspect or mutate real development data for this task.
 
-The frontend can be verified using:
+Use:
 
 ```text
-fixtures
-mocked planner-state responses
-existing frontend test infrastructure
+isolated PostgreSQL 16
 ```
 
-and, if useful, the already verified backend schema-004 contract.
+for actual schema-004 write verification.
+
+Do not expose secrets or private `.env` contents.
 
 ---
 
-# 3. No migration changes
+# 3. Migrations are immutable
 
 Do NOT modify:
 
@@ -170,1004 +206,1446 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
----
-
-# 4. No backend write changes
-
-Do NOT adapt backend runtime mutations in this task.
-
-Out of scope:
+If a genuine migration defect is discovered:
 
 ```text
-Create PlanItem segment creation
+STOP before changing a migration
+```
 
-PATCH occurrence segment behavior
+and report:
 
-segment status mutation
-
-segment create/delete
-
-split
-
-trim
-
-reset segmentation
-
-Apply Week segment writes
-
-Apply Future segment writes
-
-persistent reconciliation
-
-segment-aware conflict resolution
+```text
+finding
+impact
+alternatives
+recommendation
 ```
 
 ---
 
-# 5. Backend read contract to consume
+# 4. Introduce a pure OccurrenceSegment domain responsibility
 
-The frontend must support occurrence objects conceptually shaped like:
+Create or use an appropriate backend domain module for rules such as:
 
-```js
-{
-  id,
-  planItemId,
-  date,
-  startTime,
-  endTime,
-  status,
-  sourceGenerationSlotId,
+```text
+validate segment status
 
-  segments: [
-    {
-      id,
-      startTime,
-      endTime,
-      status
-    }
-  ],
+derive occurrence aggregate
 
-  conflictContext: {
-    reason,
-    sourceOccurrenceId
-  },
+validate a segment collection
 
-  originReason,
-  lastConflictAction
-}
+blocking status semantics
 ```
 
-Optional metadata is omitted when not present.
+Follow existing repository structure and naming conventions.
+
+Do NOT place these rules inside:
+
+```text
+Flask routes
+
+SQL repositories
+
+planner-state renderer
+
+frontend
+```
+
+The domain must remain testable without PostgreSQL.
 
 ---
 
-# 6. `segments[]` is required in the new contract
+# 5. Avoid overengineering the domain module
 
-For schema-004 planner-state:
+Do not create a large generic framework.
 
-```text
-segments[]
-```
+This phase requires only the domain behavior actually needed now.
 
-is part of the occurrence model.
+Prefer small pure functions with explicit inputs and outputs.
 
-Do NOT fabricate segments client-side.
-
-Do NOT create synthetic IDs.
-
-Do NOT infer a segment from:
+Conceptually useful responsibilities include:
 
 ```text
-occurrence.startTime
-occurrence.endTime
-occurrence.status
+derive_occurrence_status(...)
+
+validate_segment_set(...)
 ```
 
-when the server omitted `segments`.
-
-A missing segment collection in the new contract is invalid.
+but exact names may follow current Python conventions.
 
 ---
 
-# 7. Persisted segment identity
+# 6. Canonical segment statuses
 
-Segment IDs come only from:
+The six canonical statuses remain:
 
 ```text
-backend / PostgreSQL
+pending
+
+in_progress
+
+completed
+
+not_completed
+
+not_finished
+
+cancelled
 ```
 
-Frontend clone/hydration must preserve them exactly.
+Do not add aliases.
 
-Do not derive identity from:
+Do not introduce:
 
 ```text
-ordinal
-time
-occurrence ID
-array index
+not_realized
+paused
+skipped
+running
+```
+
+or speculative future statuses.
+
+---
+
+# 7. Temporal phases
+
+Aggregate derivation must use an explicit temporal phase.
+
+Conceptually:
+
+```text
+FUTURE
+
+CURRENT_DAY
+
+PREVIOUS_EDITABLE_DAY
+
+FROZEN_HISTORY
+```
+
+Do not use an ambiguous boolean such as:
+
+```text
+isHistorical
+```
+
+The exact Python representation may follow repository style:
+
+```text
+constants
+Literal
+Enum
+validated strings
+```
+
+but avoid unnecessary abstraction.
+
+---
+
+# 8. Aggregate status — uniform case
+
+If every segment has the same status:
+
+```text
+aggregate = that status
+```
+
+Examples:
+
+```text
+pending + pending
+→ pending
+```
+
+```text
+completed + completed
+→ completed
+```
+
+```text
+not_finished + not_finished
+→ not_finished
+```
+
+```text
+cancelled + cancelled
+→ cancelled
 ```
 
 ---
 
-# 8. Frontend API validation
+# 9. Aggregate status — FUTURE
 
-Update the planner-state response validation so every occurrence validates:
+Persisted future segments should only later be allowed to remain:
 
 ```text
-segments is an array
-
-segments.length >= 1
-
-segment.id exists
-
-segment.startTime valid
-
-segment.endTime valid
-
-segment.status valid
+pending
+cancelled
 ```
 
-Continue validating parent occurrence fields.
+For aggregate purposes:
+
+```text
+all pending
+→ pending
+
+pending + cancelled
+→ pending
+
+all cancelled
+→ cancelled
+```
+
+This phase does NOT need to implement the full future status mutation
+validator.
+
+Do not invent realized future states merely to test aggregate behavior.
 
 ---
 
-# 9. Segment time validity
+# 10. Aggregate status — CURRENT_DAY
 
-Validate:
+For mixed segment statuses during the current editable day:
 
-```text
-segment.startTime < segment.endTime
-```
-
-using the existing canonical time conventions.
-
-Do not truncate or reinterpret invalid times.
-
----
-
-# 10. Segment bounds
-
-Frontend validation should reject a planner-state response where:
+If ANY segment is:
 
 ```text
-segment.startTime < occurrence.startTime
+completed
+in_progress
+not_finished
 ```
 
-or:
+then:
 
 ```text
-segment.endTime > occurrence.endTime
+Occurrence.status = in_progress
 ```
 
-The backend already validates these, but the frontend should not hydrate an
-obviously invalid API state.
-
-Do not turn the frontend into the authoritative validator.
-
----
-
-# 11. Sibling ordering
-
-Hydrated segments must retain deterministic chronological order equivalent to:
+Examples:
 
 ```text
-startTime
-endTime
-id
+completed + pending
+→ in_progress
+
+completed + cancelled
+→ in_progress
+
+not_finished + pending
+→ in_progress
+
+in_progress + cancelled
+→ in_progress
 ```
 
-Do not persist an ordinal.
-
----
-
-# 12. Deep cloning
-
-Update occurrence cloning so:
+Otherwise, if any segment is:
 
 ```text
-segments[]
-conflictContext
+pending
 ```
 
-and other nested structures are cloned safely.
-
-Do not share mutable segment arrays/objects across planner state snapshots.
-
----
-
-# 13. Preserve parent envelope
-
-The parent occurrence still exposes:
+then:
 
 ```text
-startTime
-endTime
+Occurrence.status = pending
 ```
-
-These represent:
-
-```text
-general occurrence window
-```
-
-They must remain visible and must not be replaced by first/last segment
-boundaries.
-
----
-
-# 14. Parent status
-
-The parent:
-
-```text
-occurrence.status
-```
-
-is the persisted materialized aggregate.
-
-In this phase:
-
-```text
-display it
-```
-
-but do NOT recalculate it from segments as frontend authority.
-
-A future domain phase will implement canonical aggregate derivation.
-
----
-
-# 15. Single-segment occurrence UX
-
-An occurrence with exactly one segment should remain visually close to the
-existing planner experience.
 
 Example:
 
 ```text
-Estudiar
-13:00 | 15:00 | 2h | pending
+pending + cancelled
+→ pending
 ```
 
-Do not force an expandable segment tree when there is only one segment.
+Otherwise, if any segment is:
 
-The single persisted segment remains present in state even if not rendered as
-a separate child row.
+```text
+not_completed
+```
+
+then:
+
+```text
+Occurrence.status = not_completed
+```
+
+Example:
+
+```text
+not_completed + cancelled
+→ not_completed
+```
+
+Otherwise:
+
+```text
+all cancelled
+→ cancelled
+```
 
 ---
 
-# 16. Multi-segment occurrence UX
+# 11. Aggregate status — historical phases
 
-An occurrence with multiple segments must render as one logical parent
-occurrence.
-
-Compact conceptual form:
+For:
 
 ```text
-▸ Estudiar | 13:00 | 17:00 | 3h30 | in_progress
+PREVIOUS_EDITABLE_DAY
+FROZEN_HISTORY
 ```
 
-Expanded conceptual form:
+the stable aggregate follows historical rules after reconciliation.
+
+If all segments have the same status:
 
 ```text
-▾ Estudiar | 13:00 | 17:00 | 3h30 | in_progress
-
-    Seg 1 | 13:00 | 14:00 | 1h   | completed
-    Seg 2 | 14:30 | 16:00 | 1h30 | completed
-    Seg 3 | 16:00 | 17:00 | 1h   | pending
+aggregate = that status
 ```
 
-Exact visual styling should follow the existing VCS identity.
+For mixed statuses:
 
-Do not redesign unrelated planner UI.
+If any segment is:
+
+```text
+completed
+not_finished
+```
+
+then:
+
+```text
+Occurrence.status = not_finished
+```
+
+Examples:
+
+```text
+completed + not_finished
+→ not_finished
+
+completed + not_completed
+→ not_finished
+
+completed + cancelled
+→ not_finished
+```
+
+Otherwise, if any segment is:
+
+```text
+not_completed
+```
+
+then:
+
+```text
+Occurrence.status = not_completed
+```
+
+Example:
+
+```text
+not_completed + cancelled
+→ not_completed
+```
+
+Otherwise:
+
+```text
+all cancelled
+→ cancelled
+```
 
 ---
 
-# 17. Expand / collapse
+# 12. Historical transient states
 
-Only the logical parent row owns:
-
-```text
-expand
-collapse
-```
-
-control.
-
-Segments must not contain nested expand controls.
-
-Suggested semantics:
+The normative architecture says that after reconciliation historical stable
+state must not retain:
 
 ```text
-▸ collapsed
-
-▾ expanded
+pending
+in_progress
 ```
 
-Use accessible controls consistent with existing frontend practices.
+This task does NOT implement reconciliation yet.
+
+The aggregate domain should not silently convert those statuses itself.
+
+Do not hide invalid temporal state by changing segment status inside:
+
+```text
+deriveOccurrenceStatus(...)
+```
+
+Aggregate derivation:
+
+```text
+reads statuses
+returns aggregate
+```
+
+It does NOT reconcile children.
+
+If phase-specific invalid data must be rejected to preserve clear semantics,
+do so explicitly and cover the choice with tests.
+
+Do not mutate input segments.
 
 ---
 
-# 18. Expansion state
+# 13. Aggregate function must be pure
 
-Expansion/collapse state is:
+The aggregate function must:
 
 ```text
-UI state
+have no DB access
+
+have no Flask access
+
+have no frontend dependency
+
+not mutate its inputs
+
+not modify time
+
+not reconcile statuses
+
+not persist anything
 ```
 
-not domain persistence.
+Same input:
 
-Do NOT save it to PostgreSQL.
+```text
+segments + temporal phase
+```
 
-It may reset after page reload unless existing frontend architecture provides a
-natural transient-state mechanism.
-
-Do not overengineer persistence for it.
+must produce the same result.
 
 ---
 
-# 19. Duration
+# 14. Empty segment collection is invalid
 
-Occurrence display duration must now be:
-
-```text
-SUM(segment duration)
-```
-
-for all segments.
-
-Do NOT calculate:
+Calling aggregate derivation with:
 
 ```text
-occurrence.endTime - occurrence.startTime
+0 segments
 ```
 
-for displayed structural duration when multiple segments exist.
+must fail explicitly.
+
+Do not invent:
+
+```text
+pending
+null
+cancelled
+```
+
+as fallback aggregate.
+
+Every valid Occurrence has:
+
+```text
+1..N segments
+```
 
 ---
 
-# 20. Duration includes every segment
+# 15. Unknown statuses are invalid
 
-For v1 structural duration, include segments regardless of status:
+The domain must reject:
+
+```text
+unknown segment status
+```
+
+rather than silently ignoring it.
+
+---
+
+# 16. Default occurrence creation
+
+Every new occurrence materialized through PlanItem creation must receive:
+
+```text
+exactly one default segment
+```
+
+with:
+
+```text
+segment.start_time = occurrence.start_time
+
+segment.end_time = occurrence.end_time
+
+segment.status = initial occurrence status
+```
+
+For normal generated occurrences today:
+
+```text
+initial segment status = pending
+```
+
+---
+
+# 17. Runtime segment IDs
+
+New runtime segments must receive:
+
+```text
+independent UUID identities
+```
+
+generated by the backend.
+
+Do NOT derive IDs from:
+
+```text
+occurrence ID
+PlanItem ID
+date
+time
+GenerationSlot ID
+ordinal
+array index
+```
+
+Do not ask PostgreSQL to invent the runtime identity if the application
+normally owns entity identity.
+
+Follow the approved architecture and existing backend UUID conventions.
+
+---
+
+# 18. Parent aggregate on creation
+
+The parent status must be created from the segment state.
+
+Conceptually:
+
+```text
+Segment 1
+status = pending
+
+deriveOccurrenceStatus(...)
+→ pending
+
+Occurrence.status = pending
+```
+
+Do not create an independent parent status that could disagree with its
+segment.
+
+---
+
+# 19. Creation candidate graph
+
+The creation pipeline should conceptually produce:
+
+```text
+PlanItem
+
+GenerationConfig
+
+GenerationSlots
+
+Occurrences
+    └── OccurrenceSegments
+```
+
+before persistence.
+
+The exact internal representation may adapt existing draft structures.
+
+Avoid duplicating the occurrence graph in unrelated layers.
+
+---
+
+# 20. Preserve GenerationSlot semantics
+
+GenerationSlot remains:
+
+```text
+planning interval
+```
+
+It does NOT gain runtime segments.
+
+A generated occurrence from:
+
+```text
+GenerationSlot 13:00–17:00
+```
+
+creates:
+
+```text
+Occurrence 13:00–17:00
+
+Segment 1 13:00–17:00 pending
+```
+
+Do not create recurring segment templates.
+
+---
+
+# 21. `source_generation_slot_id`
+
+Continue assigning:
+
+```text
+source_generation_slot_id
+```
+
+exactly as the current materialization rules require.
+
+Adding OccurrenceSegment must not change slot provenance.
+
+---
+
+# 22. Atomic persistence
+
+PlanItem creation must persist:
+
+```text
+parent occurrence
++
+default segment
+```
+
+in the same database transaction.
+
+Never allow:
+
+```text
+Occurrence committed
+with 0 segments
+```
+
+because segment insertion failed later.
+
+Any failure must produce:
+
+```text
+full rollback
+```
+
+of the creation transaction.
+
+---
+
+# 23. Parent and child consistency
+
+For every created occurrence verify before persistence:
+
+```text
+segment.occurrence_id = occurrence.id
+
+segment.start_time = occurrence.start_time
+
+segment.end_time = occurrence.end_time
+
+segment.status participates in the derived aggregate
+
+occurrence.status = derived aggregate
+```
+
+---
+
+# 24. Repository responsibility
+
+Repository code may:
+
+```text
+insert parent rows
+insert segment rows
+read persistence data
+```
+
+but should NOT become the authority for:
+
+```text
+aggregate precedence
+temporal phase semantics
+conflict policy
+```
+
+Those remain domain/service responsibilities.
+
+---
+
+# 25. Creation service responsibility
+
+The creation service should orchestrate:
+
+```text
+validation
+
+materialization
+
+segment identity creation
+
+aggregate derivation
+
+conflict checks
+
+transaction
+
+repository persistence
+```
+
+while preserving existing separation from `app.py`.
+
+Do not move business logic into Flask routes.
+
+---
+
+# 26. Schema-004 column names
+
+All new schema-004-compatible write SQL added or modified during this task
+must use:
+
+```text
+conflict_reason
+```
+
+not:
+
+```text
+status_reason
+```
+
+However, do not expand this task into rewriting every unrelated write path.
+
+---
+
+# 27. Existing priority override path is NOT segment-aware
+
+Current PlanItem creation can detect conflicts and currently has a
+priority-override mutation path.
+
+That old path modifies:
+
+```text
+Occurrence.status
+```
+
+directly and therefore is NOT valid for OccurrenceSegment v1.
+
+Do NOT reinterpret it as valid merely because blockers currently have one
+segment.
+
+---
+
+# 28. Conflict detection may remain legacy temporarily
+
+This phase does NOT implement the new segment-aware conflict engine.
+
+Existing conflict detection may continue to identify that:
+
+```text
+a creation conflicts
+```
+
+for purposes of guarding the operation.
+
+But it must NOT perform an old parent-level override against schema 004.
+
+---
+
+# 29. Conflicting creation safety
+
+For schema-004-compatible creation:
+
+```text
+NON-CONFLICTING creation
+→ supported in this phase
+```
+
+A creation requiring mutation of another occurrence:
+
+```text
+priority override
+user-forced override
+split
+trim
+cancel blocker
+not_finished transition
+```
+
+is NOT implemented yet.
+
+The backend must fail safely rather than applying legacy parent-level conflict
+writes.
+
+---
+
+# 30. Existing conflict handshake
+
+The first conflict-detection response may remain useful for identifying a
+conflict.
+
+However, a confirmed legacy request must NOT proceed into the old
+parent-level override mutation.
+
+If necessary, introduce a controlled backend/domain error indicating that the
+conflicting write requires the future segment-aware conflict phase.
+
+Use the existing error architecture where possible.
+
+Do not invent the final segment confirmation contract in this phase.
+
+---
+
+# 31. No partial conflict engine
+
+Do NOT implement a special shortcut such as:
+
+```text
+if blocker has one segment,
+modify it using old rules
+```
+
+That would create two conflict architectures.
+
+Wait for the dedicated segment-aware conflict phase.
+
+---
+
+# 32. Existing priority metadata
+
+This task may read/preserve existing:
+
+```text
+conflict_reason
+source_occurrence_id
+origin_reason
+last_conflict_action
+```
+
+but normal non-conflicting creation should create:
+
+```text
+conflict_reason = NULL
+
+source_occurrence_id = NULL
+
+origin_reason = NULL
+
+last_conflict_action = NULL
+```
+
+unless an already-approved rule demonstrably applies.
+
+Do not invent conflict metadata.
+
+---
+
+# 33. `not_finished` occupies schedule
+
+Correct the known backend divergence.
+
+Canonical blocking statuses are:
 
 ```text
 pending
 in_progress
 completed
+not_finished
+```
+
+Non-blocking:
+
+```text
 not_completed
-not_finished
 cancelled
 ```
 
-Example:
-
-```text
-13:00–14:00
-14:30–15:30
-16:00–17:00
-
-duration = 3h
-```
-
-This is not yet a productivity metric.
+Update the authoritative backend scheduling policy accordingly.
 
 ---
 
-# 21. Parent start/final columns
+# 34. Scope of the `not_finished` correction
 
-The main occurrence row continues to show:
+The correction should apply to the existing backend policy definition used by
+current conflict checks.
 
-```text
-Inicio = occurrence.startTime
+Do NOT use this as permission to rewrite the entire conflict engine.
 
-Final = occurrence.endTime
-```
-
-These remain the general envelope.
-
-Child segment rows show their own:
+Add/update focused tests proving:
 
 ```text
-Inicio
-Final
-Duración
-Status
-```
-
----
-
-# 22. Segment row label
-
-Segment numbering is derived only for display.
-
-Conceptually:
-
-```text
-Seg 1
-Seg 2
-Seg 3
-```
-
-based on chronological order.
-
-Do not store or mutate segment identity through this number.
-
----
-
-# 23. Chronological placement
-
-When expanded, segment rows should preserve understandable temporal ordering.
-
-If another occurrence exists temporally between two segments of an expanded
-occurrence, do not design the renderer in a way that falsely implies the
-parent occupies that gap continuously.
-
-Prefer the existing planner chronology where possible.
-
-If the current row architecture makes exact interleaving impossible without a
-large redesign:
-
-```text
-document the limitation
-```
-
-rather than expanding scope silently.
-
----
-
-# 24. Selection state
-
-Frontend state must evolve conceptually toward:
-
-```text
-selectedOccurrenceId
-
-selectedSegmentId
-```
-
-Do not use only:
-
-```text
-selectedPlanItemId
-```
-
-to represent planner row selection.
-
----
-
-# 25. Selecting an occurrence
-
-Selecting a parent occurrence should set:
-
-```text
-selectedOccurrenceId = occurrence.id
-```
-
-and may use:
-
-```text
-selectedSegmentId = null
-```
-
-when no specific child is selected.
-
----
-
-# 26. Selecting a segment
-
-Selecting a segment should produce:
-
-```text
-selectedOccurrenceId = parent occurrence.id
-
-selectedSegmentId = segment.id
-```
-
-Visual result:
-
-```text
-whole occurrence group is selected
-
-specific segment receives stronger emphasis
-```
-
-Do not treat a segment as a separate PlanItem or separate Occurrence.
-
----
-
-# 27. Selection stability
-
-Selection must use stable IDs.
-
-Do not store:
-
-```text
-selected segment index
-```
-
-because chronological edits in later phases may change the displayed ordinal.
-
----
-
-# 28. `conflictContext`
-
-Frontend must migrate read consumers toward:
-
-```text
-conflictContext
-```
-
-as the canonical API field.
-
-Recognized reasons:
-
-```text
-priority_override
-user_forced_override
-```
-
-Do not apply the old assumption that conflict metadata only exists for:
-
-```text
-cancelled
 not_finished
+→ blocks schedule
+```
+
+and:
+
+```text
+not_completed
+cancelled
+→ do not block
 ```
 
 ---
 
-# 29. `statusContext`
+# 35. Frontend blocking policy
 
-The backend currently emits a temporary:
+Do NOT modify the frontend blocking policy in this task.
+
+Frontend conflict-engine alignment belongs to a later conflict phase unless a
+test demonstrates that a tiny parity change is unavoidable.
+
+If parity remains temporarily divergent:
 
 ```text
-statusContext
+document it explicitly
 ```
 
-alias for legacy `priority_override` consumers.
+Do not silently expand scope.
 
-This frontend phase should migrate relevant frontend reads/tests to:
+---
+
+# 36. Existing planner-state read path
+
+Preserve the completed schema-004 read behavior:
 
 ```text
+parents + segments
+
 conflictContext
-```
 
-Do not create new dependencies on `statusContext`.
-
-If removing all current frontend use is possible within this read/display
-scope:
-
-```text
-remove the frontend dependency
-```
-
-The backend alias itself may remain until a later cleanup phase.
-
-Do not modify backend merely to remove the alias in this task.
-
----
-
-# 30. `originReason`
-
-Hydrate and preserve:
-
-```text
 originReason
-```
 
-when supplied.
-
-Current known value:
-
-```text
-conflict_insertion
-```
-
-This phase does not need to add prominent UI for it unless existing UI has a
-natural metadata location.
-
-Primary requirement:
-
-```text
-do not discard it during hydration/cloning
-```
-
----
-
-# 31. `lastConflictAction`
-
-Hydrate and preserve:
-
-```text
 lastConflictAction
-```
 
-Known values:
-
-```text
-conflict_insertion
-conflict_move
-```
-
-Do not derive or invent values.
-
-Prominent UI is not required in this phase unless naturally justified.
-
----
-
-# 32. `sourceGenerationSlotId`
-
-Continue preserving:
-
-```text
 sourceGenerationSlotId
 ```
 
-with no behavioral change.
+Do not regress it while changing creation.
 
 ---
 
-# 33. Status controls — critical restriction
+# 37. Creation round trip
 
-This phase does NOT implement segment status writes.
-
-For a multi-segment occurrence, do NOT allow an existing parent-level status
-control to silently execute:
+A successful non-conflicting PlanItem creation against schema 004 should be
+verifiable through:
 
 ```text
-occurrence.status = ...
+POST create
+↓
+COMMIT
+↓
+GET planner-state
 ```
 
-as if the parent were still the editable status unit.
-
-That would violate the new domain.
-
----
-
-# 34. Single-segment legacy status control
-
-Do not expand this phase into backend write compatibility merely to preserve
-status controls.
-
-If the existing status control can remain present without exercising new
-schema-004 writes during tests, preserve its visual behavior where reasonable.
-
-If necessary for correctness:
+and return each created occurrence with:
 
 ```text
-disable or guard ambiguous write actions
+exactly one persisted segment
 ```
 
-in the schema-004/multi-segment presentation.
+having:
 
-Document any temporary disabled behavior.
+```text
+same startTime
+same endTime
+same status
+```
 
-Do NOT invent segment mutation behavior.
+as the newly created parent.
 
 ---
 
-# 35. Structural editing is out of scope
+# 38. No rematerialization on GET
 
-Do NOT implement UI actions for:
+The returned default segment must be:
 
 ```text
-Add segment
+the same persisted segment created during POST
+```
 
-Delete segment
+GET must not create/recreate it.
 
-Split
+Segment ID should remain stable across repeated reads.
 
-Trim
+---
 
-Resize
+# 39. Multiple generated occurrences
 
-Reset segmentation
+If one PlanItem creation materializes multiple occurrences:
 
-Pause
+```text
+each occurrence gets its own independent default segment
+```
 
-Resume
+Do not reuse one segment ID.
+
+Do not associate a segment with multiple parents.
+
+---
+
+# 40. Multi-slot creation
+
+If current PlanItem creation produces multiple occurrences from multiple
+GenerationSlots:
+
+```text
+each occurrence
+→ own default segment
+```
+
+Preserve:
+
+```text
+source_generation_slot_id
+```
+
+per occurrence.
+
+No GenerationSlot segment template is created.
+
+---
+
+# 41. Manual-date creation
+
+Manual-date generation should follow the same invariant:
+
+```text
+each materialized occurrence
+→ one equivalent default segment
+```
+
+No special second architecture.
+
+---
+
+# 42. Interval/weekly creation
+
+Weekly and interval materialization also follow:
+
+```text
+parent occurrence
++
+one default pending segment
+```
+
+Preserve existing recurrence calculations.
+
+Do not rewrite recurrence logic merely to add children.
+
+---
+
+# 43. No occurrence structural edits
+
+Do NOT implement:
+
+```text
+translate existing occurrence
+
+resize existing occurrence
+
+split existing segment
+
+trim existing segment
+
+delete segment
+
+reset segmentation
 ```
 
 in this phase.
 
 ---
 
-# 36. Conflict resolution UI is out of scope
+# 44. No segment status endpoint
 
-Do NOT implement yet:
+Do NOT create an HTTP endpoint that changes:
 
 ```text
-Ajustar
-
-Segmentar y continuar
-
-Finalizar y continuar
-
-Cancelar y continuar
-
-Confirmar corrección
-
-user_forced_override confirmation
+OccurrenceSegment.status
 ```
 
-This phase only understands and displays already persisted data.
-
----
-
-# 37. Reconciliation remains out of scope
-
-Do NOT modify frontend reconciliation logic into the new final architecture
 yet.
 
-Do NOT create the backend reconciliation endpoint.
-
-If existing frontend reconciliation conflicts with the new read-only display
-tests:
-
-```text
-isolate/guard it minimally
-```
-
-and document the limitation.
-
-Do not redesign reconciliation in this task.
+That belongs to the later mutation/reconciliation phase.
 
 ---
 
-# 38. Existing monthly aggregate
+# 45. No persistent reconciliation
 
-Preserve:
-
-```text
-deriveAggregateOccurrenceDisplay(...)
-```
-
-which aggregates multiple occurrences of the same PlanItem/day.
-
-Do NOT replace it with the internal segment aggregate concept.
-
-These are different operations:
+Do NOT implement:
 
 ```text
-Occurrence.status
-→ aggregate of one occurrence's segments
+pending → not_completed
 
-monthly aggregate display
-→ aggregate across multiple occurrences
+in_progress → not_finished
 ```
 
-Keep names/tests conceptually distinct.
+in persistence yet.
+
+Do not add:
+
+```text
+POST /planner/reconcile
+```
+
+during this task.
 
 ---
 
-# 39. Planner matrix impact
+# 46. No Apply Week changes
 
-Inspect and adapt at least the actual code paths around:
+Do NOT make:
 
 ```text
-js/views/planner-matrix.js
-
-js/state/planner-store.js
-
-js/api/planner-api.js
-
-js/app.js
+Apply Week
 ```
 
-and any related rendering/selection modules.
+segment-aware yet.
 
-Do not assume these are the only files.
-
-Follow actual dependencies.
+Its incompatibility with schema 004 should remain explicitly documented.
 
 ---
 
-# 40. Existing styling
+# 47. No Apply Future changes
 
-Preserve VCS visual identity:
+Do NOT make:
 
 ```text
-dark
-gold accents
-current responsive behavior
+Apply Future
 ```
 
-Do not perform unrelated CSS redesign.
+segment-aware yet.
 
-Add only the styling necessary for:
+Do not change custom-segmentation behavior here.
+
+---
+
+# 48. No frontend changes
+
+Do NOT modify frontend runtime behavior in this phase.
+
+The previous frontend read/display phase is complete.
+
+Do not add:
 
 ```text
-expanded parent grouping
-segment indentation
-selection distinction
-expand/collapse affordance
+segment editor
+status writes
+new conflict UI
 ```
 
 ---
 
-# 41. Accessibility
+# 49. Testing — pure aggregate domain
 
-Expand/collapse controls should expose understandable state where practical,
-for example:
+Add focused unit tests covering at minimum:
 
 ```text
-aria-expanded
-button semantics
+empty segments rejected
+
+unknown status rejected
+
+single pending
+single in_progress
+single completed
+single not_completed
+single not_finished
+single cancelled
 ```
 
-Do not make segment interaction depend only on color.
-
----
-
-# 42. Mobile behavior
-
-The expanded multi-segment representation must not destroy existing mobile
-layout.
-
-Segments may stack naturally using the existing responsive system.
-
-Do not implement future fullscreen activity tracking.
-
----
-
-# 43. Frontend tests
-
-Add/update focused tests for at least:
+And mixed CURRENT_DAY cases:
 
 ```text
-API validation with segments[]
+completed + pending → in_progress
 
-single-segment hydrate
+completed + cancelled → in_progress
 
-multi-segment hydrate
+not_finished + pending → in_progress
 
-deep clone independence
+in_progress + cancelled → in_progress
 
-stable segment IDs
+pending + cancelled → pending
 
-deterministic segment ordering
+not_completed + cancelled → not_completed
 
-segment bounds rejection
+all cancelled → cancelled
+```
 
-single-segment rendering
+And historical cases:
 
-multi-segment collapsed rendering
+```text
+completed + not_finished → not_finished
 
-multi-segment expanded rendering
+completed + not_completed → not_finished
 
-expand/collapse
+completed + cancelled → not_finished
 
-duration = sum of segments
+not_completed + cancelled → not_completed
 
-parent general start/end preserved
+all cancelled → cancelled
+```
 
-derived Seg 1 / Seg 2 labels
+Also verify the function does not mutate input data.
 
-selectedOccurrenceId
+---
 
-selectedSegmentId
+# 50. Testing — creation graph
 
-segment selection highlights parent group
+Add/update tests proving that materialization/creation creates:
 
-conflictContext priority_override
+```text
+one default segment per occurrence
+```
 
-conflictContext user_forced_override
+with:
 
-originReason preservation
+```text
+new UUID
 
-lastConflictAction preservation
+correct occurrence_id
 
-sourceGenerationSlotId preservation
+correct start/end
 
-monthly aggregate behavior remains conceptually separate
+correct status
 ```
 
 ---
 
-# 44. Invalid input tests
+# 51. Testing — atomicity
 
-Verify frontend rejects or safely handles:
+Use isolated PostgreSQL 16 to verify:
 
 ```text
-segments missing
-
-segments empty
-
-duplicate segment IDs
-
-invalid segment status
-
-start >= end
-
-segment outside parent envelope
+parent + segment commit together
 ```
 
-Do not fabricate recovery data.
+and that a forced failure during child persistence results in:
+
+```text
+no partial PlanItem graph
+```
+
+remaining after rollback.
+
+Do not test this against `vcs_dev`.
 
 ---
 
-# 45. Existing frontend tests
+# 52. Testing — real schema 004 round trip
 
-Run existing frontend suites relevant to:
+At least one actual PostgreSQL 16 test must perform a real creation against:
 
 ```text
-planner store
-
-planner bootstrap
-
-planner matrix
-
-occurrence-aware rendering
-
-monthly aggregate
-
-API validation
-
-selection
-
-priority/conflict display
+001
+→ 002
+→ 003
+→ 004
 ```
 
-Update expectations only when the approved contract changed.
+and then verify persisted:
+
+```text
+PlanItem
+
+Occurrence
+
+OccurrenceSegment
+```
+
+through the real backend read path.
+
+Mocks alone are insufficient.
+
+---
+
+# 53. Testing — stable segment ID
+
+Verify:
+
+```text
+POST create
+GET planner-state
+GET planner-state again
+```
+
+returns the same persisted:
+
+```text
+segment.id
+```
+
+for the created occurrence.
+
+---
+
+# 54. Testing — several occurrences
+
+Include at least one creation that materializes more than one occurrence and
+verify:
+
+```text
+N occurrences
+→ N distinct default segments
+```
+
+with the correct parent relationships.
+
+---
+
+# 55. Testing — `not_finished`
+
+Verify backend conflict policy treats:
+
+```text
+not_finished
+```
+
+as blocking.
+
+Also preserve tests showing:
+
+```text
+not_completed
+cancelled
+```
+
+are non-blocking.
+
+---
+
+# 56. Testing — conflict write guard
+
+Add a focused test demonstrating that schema-004 creation does NOT use the
+legacy parent-level priority override mutation.
+
+A request requiring such a write must:
+
+```text
+fail safely / remain unresolved
+```
+
+according to the chosen controlled error behavior.
+
+No blocker parent/segment should be partially changed.
+
+---
+
+# 57. Existing tests
+
+Run the existing backend suites.
+
+Update expectations only where the approved schema-004 write contract changes.
 
 Do not rewrite unrelated tests.
 
 ---
 
-# 46. Backend tests
+# 58. PostgreSQL integration
 
-Because backend runtime is not the implementation target:
+Use the existing ephemeral PostgreSQL 16 harness where possible.
 
-```text
-do not modify backend merely to satisfy frontend tests
-```
-
-Still run the existing backend suite as a regression check if practical.
-
-Report skips honestly.
+Do not create another unrelated integration framework if the migration test
+infrastructure can be reused cleanly.
 
 ---
 
-# 47. No real schema rollout yet
+# 59. No fake compatibility
 
-At completion:
+Do not claim:
 
 ```text
-vcs_dev remains schema 003
+schema 004 is now fully runtime-ready
 ```
 
-unless explicitly changed by the user outside this task.
+after this task.
 
-Do NOT apply 004.
+Only these writes become supported:
 
-Do not claim end-to-end local runtime against real `vcs_dev` is ready yet.
+```text
+non-conflicting initial PlanItem creation
++
+default segment persistence
+```
+
+Other write paths remain intentionally incompatible.
 
 ---
 
-# 48. Known transitional architecture
+# 60. `vcs_dev` remains untouched
 
-At the end of this phase the expected state is:
+Even if creation tests pass against schema 004:
+
+```text
+DO NOT apply migration 004 to vcs_dev
+```
+
+The application still lacks several required write paths.
+
+---
+
+# 61. Expected transitional state after this phase
+
+Expected architecture:
 
 ```text
 schema 004
-→ designed and tested
+✅
 
-backend schema-004 reads
-→ implemented and tested
+backend read
+✅
 
-frontend schema-004 reads/display
-→ implemented and tested
+frontend read/display
+✅
 
-schema-004 runtime writes
-→ NOT implemented yet
+backend aggregate domain
+✅
+
+non-conflicting PlanItem create + default segments
+✅
+
+segment status mutation
+❌
+
+persistent reconciliation
+❌
+
+structural segment mutations
+❌
+
+Apply Week / Future segment-aware
+❌
+
+segment-aware conflict engine
+❌
 ```
 
-This is intentional.
+This transitional state is intentional.
 
 ---
 
-# 49. Git rules
+# 62. Documentation
+
+Update documentation only if needed to explain:
+
+```text
+schema-004 creation support
+
+temporary conflict-write guard
+
+aggregate domain responsibility
+
+remaining incompatible writes
+```
+
+Do not create speculative future docs.
+
+---
+
+# 63. Git rules
 
 The user controls Git.
 
@@ -1182,11 +1660,42 @@ switch branch
 create branch
 ```
 
-Do not revert existing user work.
+Do not revert existing work.
 
 ---
 
-# 50. Completion report
+# 64. Test commands
+
+Run all focused tests introduced/modified during this phase.
+
+Also run the complete backend suite:
+
+```text
+.venv/bin/python -m unittest discover \
+  -s modules/gestor_de_habitos/backend \
+  -p 'test_*.py'
+```
+
+Run the PostgreSQL 004 migration/integration tests relevant to creation.
+
+Run:
+
+```text
+.venv/bin/python -m compileall -q \
+  modules/gestor_de_habitos/backend
+```
+
+and:
+
+```text
+git diff --check
+```
+
+If frontend files remain untouched, verify that explicitly through Git diff.
+
+---
+
+# 65. Completion report
 
 At completion provide:
 
@@ -1194,101 +1703,96 @@ At completion provide:
 
 List every created/modified file.
 
-## Frontend model
+## Domain
 
 Explain:
 
 ```text
-how segments are validated
-how they are hydrated
-how they are cloned
-how they are ordered
+where deriveOccurrenceStatus lives
+
+accepted temporal phases
+
+aggregate precedence
+
+validation behavior
 ```
 
-## Rendering
+## Creation
 
 Explain:
 
 ```text
-single-segment behavior
+how default segments are created
 
-multi-segment parent row
+where UUIDs come from
 
-expanded child rows
+how parent aggregate is produced
 
-duration calculation
-
-expand/collapse
+how parent + child atomicity is maintained
 ```
 
-## Selection
+## Conflict safety
 
 Explain:
 
 ```text
-selectedOccurrenceId
+what happens if creation encounters a conflict
 
-selectedSegmentId
-
-visual grouping
+how legacy parent-level overrides are prevented
 ```
 
-## Conflict metadata
+## Blocking policy
 
-Confirm frontend canonical usage of:
+Confirm:
 
 ```text
-conflictContext
+not_finished is blocking
 ```
 
-and state whether any frontend dependency on:
+and list all canonical blocking/non-blocking statuses.
+
+## PostgreSQL verification
+
+Explain the actual:
 
 ```text
-statusContext
+001 → 004
+POST
+GET
 ```
 
-remains.
-
-## Write safety
-
-Explain what controls were:
-
-```text
-preserved
-guarded
-disabled
-```
-
-to avoid parent-level writes against multi-segment occurrences.
+round trip tested.
 
 ## Tests
 
-Show exact commands and results.
+Give exact commands and results.
 
 ## Safety
 
 Confirm:
 
 ```text
-vcs_dev not modified
+vcs_dev was not queried or modified
 
-migrations unchanged
+migrations were not modified
 
-backend write behavior unchanged
+frontend was not modified
 
-no segment mutations implemented
+segment status endpoint was not added
 
-no reconciliation implemented
+reconciliation was not implemented
 
-no conflict engine implemented
+split/trim/resize/reset were not implemented
 
-Apply Week/Future not made segment-aware
+Apply Week/Future were not made segment-aware
+
+new conflict engine was not implemented
 ```
 
 ## Remaining incompatibilities
 
-List what still prevents schema 004 from becoming the active real runtime
-database.
+List exactly what still prevents schema 004 from becoming the active real
+runtime database.
 
 ## Git
 
@@ -1306,78 +1810,68 @@ No push.
 
 ---
 
-# 51. Definition of done
+# 66. Definition of done
 
 This task is complete when:
 
 ```text
-frontend understands persisted segments[]
+a pure backend aggregate function exists
 
-single-segment occurrences remain visually simple
+aggregate rules match approved OccurrenceSegment semantics
 
-multi-segment occurrences can be expanded/collapsed
+empty/unknown segment sets are rejected
 
-segments render as temporal child rows
+new occurrences receive exactly one persisted default segment
 
-parent envelope remains visible
+segment IDs are backend-generated and stable
 
-display duration sums segment durations
+parent status is derived coherently from its segment
 
-selection distinguishes occurrence and segment
+parent + child creation is atomic
 
-segment IDs remain stable/persisted
+non-conflicting PlanItem creation works against schema 004
 
-conflictContext is the canonical frontend read field
+created data round-trips through planner-state
 
-originReason and lastConflictAction survive hydration
+not_finished blocks schedule in backend
 
-monthly aggregate remains a separate concept
+legacy parent-level conflict override is not executed on schema 004
 
-multi-segment parent-level writes are not silently allowed
-
-frontend tests pass
+PostgreSQL 16 verifies the write path
 
 vcs_dev remains untouched
 
-no write-side OccurrenceSegment implementation was added
+no unrelated OccurrenceSegment write behavior is implemented
 ```
 
 ---
 
 # Final principle
 
-This phase teaches the frontend to:
+This phase establishes the first valid write into the new model.
+
+The invariant is:
 
 ```text
-understand
-select
-and display
+Occurrence
+cannot be born alone.
+
+Occurrence
+must be born together with
+at least one persisted OccurrenceSegment.
 ```
 
-OccurrenceSegments.
-
-It does NOT yet teach the application to:
+For normal creation in this phase:
 
 ```text
-create
-edit
-split
-trim
-delete
-reconcile
-or resolve conflicts
+Occurrence
+└── Segment 1
+    same start
+    same end
+    pending
 ```
 
-between them.
+The parent status is the aggregate of its children.
 
-Desired transition:
-
-```text
-schema 004
-        ↓
-backend reads segments
-        ↓
-frontend understands + displays segments
-        ↓
-STOP
-```
+Do not continue from this foundation into structural editing, reconciliation
+or conflict resolution until those phases are explicitly authorized.

@@ -4,7 +4,9 @@ from datetime import timedelta
 
 
 HISTORY_EDIT_WINDOW_DAYS = 1
-BLOCKING_STATUSES = frozenset({"pending", "in_progress", "completed"})
+BLOCKING_STATUSES = frozenset(
+    {"pending", "in_progress", "completed", "not_finished"}
+)
 
 
 def time_ranges_overlap(first_start, first_end, second_start, second_end):

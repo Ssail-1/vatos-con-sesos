@@ -351,6 +351,25 @@ class MaterializationTests(unittest.TestCase):
                 self.assertTrue(
                     all(item["status"] == "pending" for item in result["occurrences"])
                 )
+                for occurrence in result["occurrences"]:
+                    self.assertEqual(len(occurrence["segments"]), 1)
+                    segment = occurrence["segments"][0]
+                    self.assertEqual(segment["occurrenceId"], occurrence["id"])
+                    self.assertEqual(segment["startTime"], occurrence["startTime"])
+                    self.assertEqual(segment["endTime"], occurrence["endTime"])
+                    self.assertEqual(segment["status"], occurrence["status"])
+                    self.assertEqual(
+                        occurrence["sourceGenerationSlotId"],
+                        next(
+                            item["id"]
+                            for item in (
+                                payload["generationConfig"].get("slots")
+                                or payload["generationConfig"].get("entries")
+                            )
+                            if item["startTime"] == occurrence["startTime"]
+                            and item["endTime"] == occurrence["endTime"]
+                        ),
+                    )
 
     def test_exclusions_and_stopped_from_date_filter_occurrences(self):
         result, _, _ = create_without_database(
@@ -381,6 +400,18 @@ class MaterializationTests(unittest.TestCase):
             len({(item["sourceGenerationSlotId"], item["date"]) for item in result["occurrences"]}),
             2,
         )
+        segment_ids = set()
+        for occurrence in result["occurrences"]:
+            self.assertEqual(len(occurrence["segments"]), 1)
+            segment = occurrence["segments"][0]
+            self.assertEqual(segment["occurrenceId"], occurrence["id"])
+            self.assertEqual(segment["startTime"], occurrence["startTime"])
+            self.assertEqual(segment["endTime"], occurrence["endTime"])
+            self.assertEqual(segment["status"], occurrence["status"])
+            self.assertEqual(UUID(segment["id"]).version, 4)
+            self.assertNotEqual(segment["id"], occurrence["id"])
+            segment_ids.add(segment["id"])
+        self.assertEqual(len(segment_ids), len(result["occurrences"]))
 
     def test_uber_week_materializes_seventeen_occurrences(self):
         slots = []
@@ -621,7 +652,7 @@ class ConflictTests(unittest.TestCase):
                     )
                 insert.assert_not_called()
 
-    def test_confirmed_current_conflicts_are_applied(self):
+    def test_confirmed_current_conflicts_are_guarded_before_legacy_override(self):
         existing = self._existing()
         payload = {
             **activity_payload(subtype="event"),
@@ -629,7 +660,7 @@ class ConflictTests(unittest.TestCase):
                 "confirmedOccurrenceIds": [str(existing["id"])],
             },
         }
-        generated_ids = iter((UUID(int=1), UUID(int=2)))
+        generated_ids = iter((UUID(int=1), UUID(int=2), UUID(int=3)))
         with patch.object(database, "get_connection") as connect, patch.object(
             plan_item_repository,
             "list_blocking_occurrences",
@@ -640,23 +671,31 @@ class ConflictTests(unittest.TestCase):
             plan_item_repository, "apply_priority_overrides"
         ) as apply:
             connection = connect.return_value.__enter__.return_value
-            result = creation_service.create_plan_item(
-                payload,
-                reference_date=REFERENCE_DATE,
-                uuid_factory=lambda: next(generated_ids),
-            )
+            with self.assertRaises(creation_service.PlanItemConflictError) as error:
+                creation_service.create_plan_item(
+                    payload,
+                    reference_date=REFERENCE_DATE,
+                    uuid_factory=lambda: next(generated_ids),
+                )
 
-        insert.assert_called_once()
-        apply.assert_called_once_with(
-            connection,
+        self.assertEqual(
+            error.exception.code, "segment_conflict_resolution_unavailable"
+        )
+        self.assertEqual(
+            error.exception.conflicts,
             [
                 {
                     "occurrenceId": str(existing["id"]),
-                    "currentStatus": "pending",
-                    "sourceOccurrenceId": result["occurrences"][0]["id"],
+                    "planItemId": str(existing["plan_item_id"]),
+                    "date": "2026-09-11",
+                    "startTime": "10:30",
+                    "endTime": "11:30",
+                    "status": "pending",
                 }
             ],
         )
+        insert.assert_not_called()
+        apply.assert_not_called()
 
     def test_new_conflict_requires_another_confirmation(self):
         confirmed = self._existing(900, start=time(10, 15))
@@ -746,6 +785,15 @@ class RepositoryWriteTests(unittest.TestCase):
             "endTime": "11:00",
             "status": "pending",
             "sourceGenerationSlotId": slot_id(5),
+            "segments": [
+                {
+                    "id": str(UUID(int=3)),
+                    "occurrenceId": str(UUID(int=2)),
+                    "startTime": "10:00",
+                    "endTime": "11:00",
+                    "status": "pending",
+                }
+            ],
         }
 
         plan_item_repository.insert_plan_item_graph(
@@ -781,6 +829,28 @@ class RepositoryWriteTests(unittest.TestCase):
             any("public.generation_excluded_dates" in query for query in batches)
         )
         self.assertTrue(any("public.occurrences" in query for query in batches))
+        occurrence_query = next(
+            query
+            for query in batches
+            if "INSERT INTO public.occurrences" in query
+        )
+        self.assertIn("conflict_reason", occurrence_query)
+        self.assertNotIn("status_reason", occurrence_query)
+        segment_query = next(
+            query for query in batches if "public.occurrence_segments" in query
+        )
+        self.assertEqual(
+            batches[segment_query],
+            [
+                (
+                    str(UUID(int=3)),
+                    str(UUID(int=2)),
+                    "10:00",
+                    "11:00",
+                    "pending",
+                )
+            ],
+        )
 
     def test_recurring_graph_persists_slot_exclusions(self):
         connection = MagicMock()
@@ -908,6 +978,7 @@ class TransactionTests(unittest.TestCase):
                 ),
             ),
             ("occurrences", activity_payload()),
+            ("occurrence_segments", activity_payload()),
         )
         for table_name, payload in cases:
             with self.subTest(table=table_name):
@@ -940,7 +1011,7 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(plan_item, result["planItem"])
         self.assertEqual(occurrences, result["occurrences"])
 
-    def test_override_failure_rolls_back_the_complete_creation(self):
+    def test_confirmed_conflict_never_starts_legacy_override_or_insert(self):
         existing = ConflictTests._existing()
         payload = {
             **activity_payload(subtype="event"),
@@ -960,17 +1031,17 @@ class TransactionTests(unittest.TestCase):
         ), patch.object(
             plan_item_repository, "insert_plan_item_graph"
         ) as insert, patch.object(
-            plan_item_repository,
-            "apply_priority_overrides",
-            side_effect=psycopg.IntegrityError("PRIVATE_DATABASE_DETAIL"),
-        ):
-            with self.assertRaises(
-                creation_service.PlanItemCreationUnavailableError
-            ):
+            plan_item_repository, "apply_priority_overrides"
+        ) as apply:
+            with self.assertRaises(creation_service.PlanItemConflictError) as error:
                 creation_service.create_plan_item(
                     payload, reference_date=REFERENCE_DATE
                 )
-        insert.assert_called_once()
+        self.assertEqual(
+            error.exception.code, "segment_conflict_resolution_unavailable"
+        )
+        insert.assert_not_called()
+        apply.assert_not_called()
         self.assertIsNotNone(transaction.__exit__.call_args.args[0])
 
 

@@ -8,6 +8,10 @@ import psycopg
 from psycopg import IsolationLevel
 
 import database
+from occurrence_segment_domain import (
+    derive_occurrence_status,
+    temporal_phase_for_date,
+)
 from plan_item_materializer import (
     get_materialization_range,
     materialize_occurrence_drafts,
@@ -536,29 +540,54 @@ def _validate_existing_conflicts(
             "La creación requiere confirmar un desplazamiento por prioridad.",
             _public_conflicts(conflicts),
         )
-    return [
-        {
-            "occurrenceId": existing["id"],
-            "currentStatus": row["status"],
-            "sourceOccurrenceId": source["id"],
-        }
-        for row, existing, source in conflicts
-    ]
+    raise PlanItemConflictError(
+        "segment_conflict_resolution_unavailable",
+        "El conflicto requiere la futura resolución basada en segmentos.",
+        _public_conflicts(conflicts),
+    )
 
 
-def _assign_ids(plan_item, drafts, uuid_factory):
+def _assign_ids(plan_item, drafts, current_date, uuid_factory):
     plan_item_id = str(uuid_factory())
     persisted_plan_item = {"id": plan_item_id, **plan_item}
-    occurrences = [
-        {"id": str(uuid_factory()), **draft, "planItemId": plan_item_id}
-        for draft in drafts
-    ]
+    occurrences = []
+    for draft in drafts:
+        occurrence_id = str(uuid_factory())
+        segment = {
+            "id": str(uuid_factory()),
+            "occurrenceId": occurrence_id,
+            "startTime": draft["startTime"],
+            "endTime": draft["endTime"],
+            "status": draft["status"],
+        }
+        temporal_phase = temporal_phase_for_date(
+            date.fromisoformat(draft["date"]),
+            current_date,
+            HISTORY_EDIT_WINDOW_DAYS,
+        )
+        occurrences.append(
+            {
+                "id": occurrence_id,
+                **draft,
+                "status": derive_occurrence_status([segment], temporal_phase),
+                "planItemId": plan_item_id,
+                "segments": [segment],
+            }
+        )
     return persisted_plan_item, occurrences
 
 
 def _validate_generated_ids(plan_item, occurrences):
     # Defensa local para factories inyectadas en pruebas; PostgreSQL recibe UUID reales.
-    ids = [plan_item["id"], *(item["id"] for item in occurrences)]
+    ids = [
+        plan_item["id"],
+        *(item["id"] for item in occurrences),
+        *(
+            segment["id"]
+            for occurrence in occurrences
+            for segment in occurrence["segments"]
+        ),
+    ]
     try:
         parsed = [UUID(value) for value in ids]
     except (ValueError, TypeError, AttributeError):
@@ -588,7 +617,9 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
             "No se pueden crear occurrences dentro del historial congelado.",
         )
     _validate_internal_conflicts(drafts)
-    plan_item, occurrences = _assign_ids(normalized, drafts, uuid_factory)
+    plan_item, occurrences = _assign_ids(
+        normalized, drafts, current_date, uuid_factory
+    )
     _validate_generated_ids(plan_item, occurrences)
 
     try:
@@ -599,7 +630,7 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
                     connection,
                     sorted({draft["date"] for draft in drafts}),
                 )
-                overrides = _validate_existing_conflicts(
+                _validate_existing_conflicts(
                     plan_item,
                     drafts,
                     occurrences,
@@ -608,9 +639,6 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
                 )
                 plan_item_repository.insert_plan_item_graph(
                     connection, plan_item, occurrences
-                )
-                plan_item_repository.apply_priority_overrides(
-                    connection, overrides
                 )
     except PlanItemConflictError:
         raise

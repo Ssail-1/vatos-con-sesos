@@ -4,6 +4,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 import database
+from scheduling_policy import BLOCKING_STATUSES
 
 
 class PlanItemRepositoryError(RuntimeError):
@@ -50,7 +51,7 @@ def list_blocking_occurrences(connection, occurrence_dates):
             INNER JOIN public.plan_items AS plan_item
                 ON plan_item.id = occurrence.plan_item_id
             WHERE occurrence.occurrence_date = ANY(%s::date[])
-              AND occurrence.status IN ('pending', 'in_progress', 'completed')
+              AND occurrence.status = ANY(%s)
             ORDER BY
                 occurrence.occurrence_date,
                 occurrence.start_time,
@@ -58,7 +59,7 @@ def list_blocking_occurrences(connection, occurrence_dates):
                 occurrence.id
             FOR UPDATE OF occurrence
             """,
-            (occurrence_dates,),
+            (occurrence_dates, sorted(BLOCKING_STATUSES)),
         )
         return cursor.fetchall()
 
@@ -204,11 +205,16 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
                     start_time,
                     end_time,
                     status,
-                    status_reason,
+                    conflict_reason,
                     source_occurrence_id,
+                    origin_reason,
+                    last_conflict_action,
                     source_generation_slot_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, %s)
+                VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    NULL, NULL, NULL, NULL, %s
+                )
                 """,
                 [
                     (
@@ -221,6 +227,29 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
                         occurrence["sourceGenerationSlotId"],
                     )
                     for occurrence in occurrences
+                ],
+            )
+            cursor.executemany(
+                """
+                INSERT INTO public.occurrence_segments (
+                    id,
+                    occurrence_id,
+                    start_time,
+                    end_time,
+                    status
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        segment["id"],
+                        segment["occurrenceId"],
+                        segment["startTime"],
+                        segment["endTime"],
+                        segment["status"],
+                    )
+                    for occurrence in occurrences
+                    for segment in occurrence["segments"]
                 ],
             )
 
