@@ -8,6 +8,7 @@ from uuid import UUID
 
 from app import app
 import database
+import recurring_segment_service as segment_service
 from repositories import occurrence_repository
 import week_mutation_service as service
 
@@ -277,6 +278,15 @@ class FinalStateTests(unittest.TestCase):
 class ApplyWeekOrchestrationTests(unittest.TestCase):
     def test_main_batch_uses_one_transaction_and_preserves_slots(self):
         persisted_rows = week_rows()
+        persisted_graphs = {
+            row["id"]: [{
+                "id": slot_id(100 + index),
+                "startTime": row["start_time"],
+                "endTime": row["end_time"],
+                "status": row["status"],
+            }]
+            for index, row in enumerate(persisted_rows)
+        }
         recorded_exclusions = []
         connection = MagicMock()
         connection.__enter__.return_value = connection
@@ -294,6 +304,14 @@ class ApplyWeekOrchestrationTests(unittest.TestCase):
 
         def insert_rows(_connection, rows):
             persisted_rows.extend(dict(row) for row in rows)
+
+        def save_updated_segments(_connection, updates, graphs, _previous):
+            for _old, updated in updates:
+                persisted_graphs[updated["id"]] = graphs[updated["id"]]
+
+        def save_created_segments(_connection, creates, graphs):
+            for row in creates:
+                persisted_graphs[row["id"]] = graphs[row["id"]]
 
         generated_id = UUID("00000000-0000-4000-8000-000000000099")
         payload = {
@@ -317,7 +335,12 @@ class ApplyWeekOrchestrationTests(unittest.TestCase):
                 patch.object(occurrence_repository, "lock_plan_item_slots", return_value=slots()) as slot_lock, \
                 patch.object(occurrence_repository, "lock_plan_item_week_occurrences", side_effect=lambda *_args: [dict(row) for row in persisted_rows]), \
                 patch.object(occurrence_repository, "lock_status_context_dependents_for_sources", return_value=[]) as context_lock, \
-                patch.object(occurrence_repository, "lock_external_blocking_occurrences", return_value=[]), \
+                patch.object(segment_service, "load_segment_graphs", side_effect=lambda _connection, rows, _now: {
+                    row["id"]: persisted_graphs[row["id"]] for row in rows
+                }), \
+                patch.object(segment_service, "validate_batch_conflicts"), \
+                patch.object(segment_service, "persist_segments_for_updates", side_effect=save_updated_segments), \
+                patch.object(segment_service, "persist_segments_for_creates", side_effect=save_created_segments), \
                 patch.object(occurrence_repository, "lock_occurrences_for_slots", return_value=[]), \
                 patch.object(occurrence_repository, "stage_occurrence_dates", return_value=True), \
                 patch.object(occurrence_repository, "insert_slot_exclusions", side_effect=lambda _connection, values: recorded_exclusions.extend(values)), \
@@ -340,7 +363,7 @@ class ApplyWeekOrchestrationTests(unittest.TestCase):
         isolation.assert_called_once_with(connection)
         slot_lock.assert_called_once()
         context_lock.assert_called_once_with(
-            connection, [occurrence_id(4), occurrence_id(2)]
+            connection, [occurrence_id(4)]
         )
         connection.transaction.assert_called_once_with()
 

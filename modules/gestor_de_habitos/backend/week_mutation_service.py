@@ -8,6 +8,7 @@ import psycopg
 
 import database
 import occurrence_mutation_service as occurrence_service
+import recurring_segment_service as segment_service
 from repositories import occurrence_repository
 from scheduling_policy import (
     BLOCKING_STATUSES,
@@ -41,9 +42,11 @@ class WeekOccurrenceNotFoundError(WeekMutationError):
 
 
 class WeekConflictError(WeekMutationError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, occurrences=None, blockers=None):
         super().__init__(message)
         self.code = code
+        self.occurrences = occurrences
+        self.blockers = blockers
 
 
 class WeekConsistencyError(WeekMutationError):
@@ -159,10 +162,10 @@ def _db_time(value, field_name):
     return value.strftime("%H:%M")
 
 
-def _serialize_occurrence(row):
+def _serialize_occurrence(row, segments):
     try:
-        return occurrence_service._serialize_occurrence(row)
-    except occurrence_service.OccurrenceConsistencyError as error:
+        return segment_service.serialize_occurrence(row, segments)
+    except segment_service.OccurrenceSegmentConsistencyError as error:
         raise WeekConsistencyError(str(error)) from None
 
 
@@ -246,7 +249,7 @@ def _validate_week_rows(rows, plan_item_id, slot_ids):
                 raise WeekConsistencyError(
                     "Una occurrence referencia un GenerationSlot inválido."
                 )
-        _serialize_occurrence(row)
+        segment_service._validated_occurrence(row)
 
 
 def _require_in_week(value, week_start, week_end):
@@ -300,9 +303,11 @@ def _candidate_state(
                 "start_time": time.fromisoformat(operation["startTime"]),
                 "end_time": time.fromisoformat(operation["endTime"]),
                 "status": "pending",
-                "status_reason": None,
+                "conflict_reason": None,
                 "source_occurrence_id": None,
                 "source_generation_slot_id": None,
+                "origin_reason": None,
+                "last_conflict_action": None,
             }
             creates.append(occurrence)
             continue
@@ -353,7 +358,7 @@ def _candidate_state(
     return final_rows, updates, deletes, creates, sorted(exclusions)
 
 
-def _validate_final_internal_state(rows):
+def _validate_final_internal_state(rows, graphs=None):
     occurrence_ids = set()
     source_dates = set()
     blocking_rows = []
@@ -371,7 +376,7 @@ def _validate_final_internal_state(rows):
                     "Un GenerationSlot tendría dos occurrences en la misma fecha.",
                 )
             source_dates.add(key)
-        if row["status"] in BLOCKING_STATUSES:
+        if graphs is None and row["status"] in BLOCKING_STATUSES:
             blocking_rows.append(row)
 
     accepted = []
@@ -479,8 +484,8 @@ def _temporary_dates(locked_rows, updates):
     return staged
 
 
-def _serialize_sorted(rows):
-    result = [_serialize_occurrence(row) for row in rows]
+def _serialize_sorted(rows, graphs):
+    result = [_serialize_occurrence(row, graphs[row["id"]]) for row in rows]
     result.sort(
         key=lambda item: (
             item["date"], item["startTime"], item["endTime"], item["id"]
@@ -494,7 +499,7 @@ def _raise_database_error(error):
         error, (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected)
     ):
         raise WeekConflictError(
-            "concurrent_modification",
+            "concurrent_conflict",
             "La semana cambió durante la operación; vuelve a intentarlo.",
         ) from None
     if isinstance(error, psycopg.errors.UniqueViolation) and (
@@ -511,7 +516,11 @@ def _raise_database_error(error):
 def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
     parsed_plan_item_id = _identifier(plan_item_id, "plan_item_id")
     anchor_date, operations = validate_apply_week_payload(payload)
-    current_date = reference_date or _today()
+    authoritative_now = (
+        datetime.combine(reference_date, time.max)
+        if reference_date is not None else datetime.now()
+    )
+    current_date = authoritative_now.date()
     if isinstance(current_date, datetime) or not isinstance(current_date, date):
         raise TypeError("reference_date debe ser date.")
     week_start = anchor_date - timedelta(days=anchor_date.isoweekday() - 1)
@@ -546,6 +555,7 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
                     connection, parsed_plan_item_id, week_start, week_end
                 )
                 _validate_week_rows(rows, parsed_plan_item_id, slot_ids)
+                persisted_graphs = segment_service.load_segment_graphs(connection, rows, authoritative_now)
 
                 final_rows, updates, deletes, creates, exclusions = _candidate_state(
                     rows,
@@ -558,28 +568,28 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
                     uuid_factory,
                 )
                 delete_ids = [row["id"] for row in deletes]
-                update_ids = [original["id"] for original, _updated in updates]
                 if occurrence_repository.lock_status_context_dependents_for_sources(
-                    connection, [*delete_ids, *update_ids]
+                    connection, delete_ids
                 ):
                     raise WeekConflictError(
                         "status_context_locked",
-                        "Una occurrence que cambiaría conserva contexto de prioridad dependiente.",
+                        "No se puede borrar una occurrence referenciada por otra.",
                     )
 
-                _validate_final_internal_state(final_rows)
-                external_rows = occurrence_repository.lock_external_blocking_occurrences(
-                    connection,
-                    parsed_plan_item_id,
-                    sorted(
-                        {
-                            row["occurrence_date"]
-                            for row in final_rows
-                            if row["status"] in BLOCKING_STATUSES
-                        }
-                    ),
-                )
-                _validate_external_conflicts(plan_item, final_rows, external_rows)
+                try:
+                    graphs = segment_service.build_candidate_graphs(
+                        rows, final_rows, persisted_graphs, authoritative_now,
+                    )
+                    _validate_final_internal_state(final_rows, graphs)
+                    segment_service.validate_batch_conflicts(
+                        connection, rows, final_rows, graphs
+                    )
+                except segment_service.RecurringGraphError as error:
+                    raise WeekConflictError(
+                        error.code, str(error), error.occurrences, error.blockers
+                    ) from None
+                except segment_service.OccurrenceSegmentConsistencyError as error:
+                    raise WeekConsistencyError(str(error)) from None
 
                 moved_slot_ids = sorted(
                     {
@@ -620,13 +630,18 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
                         raise WeekConsistencyError(
                             "No se pudo actualizar una occurrence bloqueada."
                         )
+                segment_service.persist_segments_for_updates(
+                    connection, updates, graphs, persisted_graphs
+                )
                 occurrence_repository.insert_ad_hoc_occurrences(connection, creates)
+                segment_service.persist_segments_for_creates(connection, creates, graphs)
 
                 persisted_rows = occurrence_repository.list_plan_item_week_occurrences(
                     connection, parsed_plan_item_id, week_start, week_end
                 )
-                persisted = _serialize_sorted(persisted_rows)
-                if persisted != _serialize_sorted(final_rows):
+                final_graphs = segment_service.load_segment_graphs(connection, persisted_rows, authoritative_now)
+                persisted = _serialize_sorted(persisted_rows, final_graphs)
+                if persisted != _serialize_sorted(final_rows, graphs):
                     raise WeekConsistencyError(
                         "El estado persistido final no coincide con el batch validado."
                     )
@@ -645,6 +660,12 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
         raise
     except database.DatabaseConnectionError as error:
         _raise_database_error(error)
+    except segment_service.RecurringGraphError as error:
+        raise WeekConflictError(
+            error.code, str(error), error.occurrences, error.blockers,
+        ) from None
+    except segment_service.OccurrenceSegmentConsistencyError as error:
+        raise WeekConsistencyError(str(error)) from None
     except psycopg.Error as error:
         _raise_database_error(error)
     return result

@@ -437,6 +437,7 @@ function createPlanItemRow(rowData, position, context) {
 
         const actions = document.createElement("span");
         const editButton = document.createElement("button");
+        const scheduleButton = document.createElement("button");
         const deleteButton = document.createElement("button");
         actions.className = "row-actions";
         editButton.type = "button";
@@ -464,6 +465,21 @@ function createPlanItemRow(rowData, position, context) {
                 );
             }
         });
+        scheduleButton.type = "button";
+        scheduleButton.className = "row-action-button edit-schedule-button";
+        scheduleButton.textContent = "↻";
+        scheduleButton.setAttribute(
+            "aria-label",
+            `Editar planificación recurrente de ${planItem.name} desde ${selectedDateKey}`,
+        );
+        scheduleButton.title = scheduleButton.getAttribute("aria-label");
+        scheduleButton.disabled = selectedDateFrozen;
+        scheduleButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (!scheduleButton.disabled) {
+                context.onEdit(planItem, null, scheduleButton, selectedDateKey, true);
+            }
+        });
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
         deleteButton.textContent = "🗑";
@@ -485,7 +501,11 @@ function createPlanItemRow(rowData, position, context) {
                 context.onDelete(planItem, selectedOccurrence, deleteButton, selectedDateKey);
             }
         });
-        actions.append(editButton, deleteButton);
+        actions.append(editButton);
+        if (selectedOccurrence && ["weekly", "interval_days"].includes(planItem.generationConfig?.mode)) {
+            actions.append(scheduleButton);
+        }
+        actions.append(deleteButton);
         nameContent.prepend(insertButton);
         nameContent.append(actions);
     }

@@ -9,10 +9,11 @@ import database
 import occurrence_mutation_service as occurrence_service
 import plan_item_creation_service as creation_service
 import planner_state_service
+import recurring_segment_service as segment_service
 import week_mutation_service as week_service
 from plan_item_materializer import get_materialization_range, materialize_occurrence_drafts
 from repositories import future_schedule_repository, occurrence_repository
-from scheduling_policy import BLOCKING_STATUSES, can_delete_occurrence, is_frozen_date
+from scheduling_policy import can_delete_occurrence, is_frozen_date
 
 
 SUPPORTED_MODES = frozenset({"weekly", "interval_days"})
@@ -33,9 +34,11 @@ class FuturePlanItemNotFoundError(FutureScheduleError):
 
 
 class FutureConflictError(FutureScheduleError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, occurrences=None, blockers=None):
         super().__init__(message)
         self.code = code
+        self.occurrences = occurrences
+        self.blockers = blockers
 
 
 class FutureConsistencyError(FutureScheduleError):
@@ -213,8 +216,8 @@ def _validate_snapshot_occurrences(rows, old_config):
     source_dates = set()
     for row in rows:
         try:
-            occurrence_service._serialize_occurrence(row)
-        except occurrence_service.OccurrenceConsistencyError as error:
+            segment_service._validated_occurrence(row)
+        except segment_service.OccurrenceSegmentConsistencyError as error:
             raise FutureConsistencyError(str(error)) from None
         if row["id"] in occurrence_ids:
             raise FutureConsistencyError("Existen IDs de occurrence duplicados.")
@@ -287,9 +290,11 @@ def _draft_row(draft, occurrence_id):
         "start_time": time.fromisoformat(draft["startTime"]),
         "end_time": time.fromisoformat(draft["endTime"]),
         "status": "pending",
-        "status_reason": None,
+        "conflict_reason": None,
         "source_occurrence_id": None,
         "source_generation_slot_id": UUID(draft["sourceGenerationSlotId"]),
+        "origin_reason": None,
+        "last_conflict_action": None,
     }
 
 
@@ -424,23 +429,25 @@ def _candidate_state(
     }
 
 
-def _validate_final_state(plan_item_context, candidate, external_rows):
+def _validate_final_state(connection, snapshot_rows, candidate, graphs):
     try:
-        week_service._validate_final_internal_state(candidate["final_rows"])
-        week_service._validate_external_conflicts(
-            plan_item_context,
-            candidate["changed_for_conflicts"],
-            external_rows,
+        week_service._validate_final_internal_state(candidate["final_rows"], graphs)
+        segment_service.validate_batch_conflicts(
+            connection, snapshot_rows, candidate["final_rows"], graphs,
         )
+    except segment_service.RecurringGraphError as error:
+        raise FutureConflictError(
+            error.code, str(error), error.occurrences, error.blockers,
+        ) from None
     except week_service.WeekConflictError as error:
         raise FutureConflictError(error.code, str(error)) from None
     except week_service.WeekConsistencyError as error:
         raise FutureConsistencyError(str(error)) from None
 
 
-def _serialize_sorted(rows):
+def _serialize_sorted(rows, graphs):
     try:
-        return week_service._serialize_sorted(rows)
+        return week_service._serialize_sorted(rows, graphs)
     except week_service.WeekConsistencyError as error:
         raise FutureConsistencyError(str(error)) from None
 
@@ -450,7 +457,7 @@ def _raise_database_error(error):
         error, (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected)
     ):
         raise FutureConflictError(
-            "concurrent_modification",
+            "concurrent_conflict",
             "La planificación cambió durante Apply Future; vuelve a intentarlo.",
         ) from None
     if isinstance(error, psycopg.errors.UniqueViolation):
@@ -472,7 +479,11 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
     parsed_plan_item_id = _identifier(plan_item_id)
     future_config = validate_apply_future_payload(payload)
     effective_date = date.fromisoformat(future_config["startDate"])
-    current_date = reference_date or _today()
+    authoritative_now = (
+        datetime.combine(reference_date, time.max)
+        if reference_date is not None else datetime.now()
+    )
+    current_date = authoritative_now.date()
     if isinstance(current_date, datetime) or not isinstance(current_date, date):
         raise TypeError("reference_date debe ser date.")
     if is_frozen_date(effective_date, current_date):
@@ -498,6 +509,9 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
                         "Apply Future no está disponible para manual_dates.",
                     )
                 _validate_snapshot_occurrences(snapshot["occurrences"], old_config)
+                persisted_graphs = segment_service.load_segment_graphs(
+                    connection, snapshot["occurrences"], authoritative_now
+                )
                 if future_config["mode"] != old_config["mode"]:
                     raise FutureConflictError(
                         "mode_change_not_supported",
@@ -537,26 +551,33 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
                     uuid_factory,
                 )
                 delete_ids = [row["id"] for row in candidate["deletes"]]
-                update_ids = [row["id"] for row in candidate["updates"]]
                 if occurrence_repository.lock_status_context_dependents_for_sources(
-                    connection, [*delete_ids, *update_ids]
+                    connection, delete_ids
                 ):
                     raise FutureConflictError(
                         "status_context_locked",
-                        "Una occurrence que cambiaría conserva contexto de prioridad dependiente.",
+                        "No se puede borrar una occurrence referenciada por otra.",
                     )
 
-                changed_dates = sorted(
-                    {
-                        row["occurrence_date"]
-                        for row in candidate["changed_for_conflicts"]
-                        if row["status"] in BLOCKING_STATUSES
-                    }
-                )
-                external_rows = occurrence_repository.lock_external_blocking_occurrences(
-                    connection, parsed_plan_item_id, changed_dates
-                )
-                _validate_final_state(snapshot["schedule"], candidate, external_rows)
+                try:
+                    graphs = segment_service.build_candidate_graphs(
+                        snapshot["occurrences"], candidate["final_rows"],
+                        persisted_graphs, authoritative_now,
+                    )
+                    _validate_final_state(
+                        connection, snapshot["occurrences"], candidate, graphs
+                    )
+                except segment_service.RecurringGraphError as error:
+                    raise FutureConflictError(
+                        error.code, str(error), error.occurrences, error.blockers,
+                    ) from None
+                original_by_id = {
+                    row["id"]: row for row in snapshot["occurrences"]
+                }
+                update_pairs = [
+                    (original_by_id[row["id"]], row)
+                    for row in candidate["updates"]
+                ]
 
                 if future_schedule_repository.delete_occurrences(
                     connection, delete_ids
@@ -616,15 +637,22 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
                     )
                 except RuntimeError as error:
                     raise FutureConsistencyError(str(error)) from None
+                segment_service.persist_segments_for_updates(
+                    connection, update_pairs, graphs, persisted_graphs,
+                )
                 future_schedule_repository.insert_occurrences(
                     connection, candidate["creates"]
+                )
+                segment_service.persist_segments_for_creates(
+                    connection, candidate["creates"], graphs
                 )
 
                 persisted_rows = future_schedule_repository.list_occurrences_from(
                     connection, parsed_plan_item_id, effective_date
                 )
-                persisted = _serialize_sorted(persisted_rows)
-                expected = _serialize_sorted(candidate["final_rows"])
+                final_graphs = segment_service.load_segment_graphs(connection, persisted_rows, authoritative_now)
+                persisted = _serialize_sorted(persisted_rows, final_graphs)
+                expected = _serialize_sorted(candidate["final_rows"], graphs)
                 if persisted != expected:
                     raise FutureConsistencyError(
                         "El estado persistido no coincide con la reconciliación validada."
@@ -642,6 +670,12 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
         raise
     except database.DatabaseConnectionError as error:
         _raise_database_error(error)
+    except segment_service.RecurringGraphError as error:
+        raise FutureConflictError(
+            error.code, str(error), error.occurrences, error.blockers,
+        ) from None
+    except segment_service.OccurrenceSegmentConsistencyError as error:
+        raise FutureConsistencyError(str(error)) from None
     except psycopg.Error as error:
         _raise_database_error(error)
     return result

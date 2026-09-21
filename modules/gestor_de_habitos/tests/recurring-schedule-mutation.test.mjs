@@ -301,3 +301,49 @@ test("network, 400, 404 y 409 conservan códigos y feedback controlado", async (
         assert.notEqual(getRecurringScheduleMutationErrorMessage({ code }, "future"), "");
     }
 });
+
+test("resize y conflicto recurrente conservan detalles seguros para el formulario", async () => {
+    const affected = {
+        occurrenceId: PLAN_ITEM_ID, planItemId: PLAN_ITEM_ID, date: "2026-09-21",
+        startTime: "08:00", endTime: "10:00",
+        requestedStartTime: "09:00", requestedEndTime: "12:00",
+    };
+    await assert.rejects(
+        applyWeek(PLAN_ITEM_ID, {}, {
+            fetchImpl: async () => response(409, {
+                code: "segmented_recurring_resize_requires_resolution", occurrences: [affected],
+            }),
+        }),
+        (error) => error.details.occurrences[0].occurrenceId === PLAN_ITEM_ID
+            && getRecurringScheduleMutationErrorMessage(error, "week").includes("08:00–10:00 → 09:00–12:00"),
+    );
+    const blocker = {
+        occurrenceId: PLAN_ITEM_ID, segmentId: SLOT_1, planItemId: PLAN_ITEM_ID,
+        date: "2026-09-21", startTime: "09:00", endTime: "09:30", status: "pending",
+    };
+    await assert.rejects(
+        applyFuture(PLAN_ITEM_ID, {}, {
+            fetchImpl: async () => response(409, {
+                code: "recurring_schedule_conflict", blockers: [blocker],
+            }),
+        }),
+        (error) => error.details.blockers[0].segmentId === SLOT_1
+            && getRecurringScheduleMutationErrorMessage(error, "future").includes("09:00–09:30"),
+    );
+});
+
+test("concurrent_conflict refresca authoritative GET sin replay del POST", async () => {
+    let posts = 0;
+    let gets = 0;
+    const coordinator = createRecurringScheduleMutationCoordinator({
+        applyWeek: async () => { posts += 1; throw new PlannerApiError("concurrent_conflict", "Concurrente"); },
+        applyFuture: async () => { posts += 1; throw new PlannerApiError("concurrent_conflict", "Concurrente"); },
+        loadPlannerState: async () => { gets += 1; return { planItems: [], occurrences: [] }; },
+        hydratePlannerState: (state) => state,
+    });
+    const result = await coordinator.submit("week", PLAN_ITEM_ID, {});
+    assert.equal(result.status, "review_required");
+    assert.equal(posts, 1);
+    assert.equal(gets, 1);
+    assert.equal(coordinator.hasPendingRefresh(), false);
+});

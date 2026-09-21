@@ -427,7 +427,7 @@ function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) 
 
 function settlePersistentRecurringMutation(outcome, { scope, planItemId }) {
     if (outcome.status === "synced") {
-        selectPlanItemSummary(planItemId);
+        if (selectedPlanItemId !== planItemId) selectPlanItemSummary(planItemId);
         render();
         showFeedback(
             scope === "week"
@@ -445,6 +445,15 @@ function settlePersistentRecurringMutation(outcome, { scope, planItemId }) {
             message: scope === "week"
                 ? "La semana se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a aplicar."
                 : "La planificación futura se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a aplicar.",
+        };
+    }
+    if (outcome.status === "review_required") {
+        render();
+        return {
+            status: "review_required",
+            keepOpen: true,
+            retryRefresh: false,
+            message: getRecurringScheduleMutationErrorMessage(outcome.error, scope),
         };
     }
     if (outcome.status === "mutation_error") {

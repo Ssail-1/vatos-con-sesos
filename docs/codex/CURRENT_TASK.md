@@ -1,51 +1,75 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Frontend Structural Segment Editor
+## OccurrenceSegment v1 — Segment-Aware Apply Week / Apply Future
 
 ### Objective
 
-Connect the completed backend structural OccurrenceSegment APIs to the planner
-frontend through a local draft editor.
-
-The frontend must allow the user to manually edit the temporal structure of
-one persisted occurrence without persisting intermediate states.
-
-The authoritative workflow is:
+Make the existing recurring schedule mutation flows:
 
 ```text
-persisted occurrence
-        ↓
-open structural editor
-        ↓
-create LOCAL DRAFT
-        ↓
-user edits envelope / segments
-        ↓
-draft may temporarily be invalid
-        ↓
-Save
-        ↓
-one explicit backend structural command
-        ↓
-backend validates complete final state
-        ↓
-GET planner-state
-        ↓
-hydrate authoritative graph
+Apply Week
+
+Apply Future
 ```
 
-This phase integrates:
+fully compatible with the persisted OccurrenceSegment model.
+
+The goal is NOT to make runtime segmentation recurring.
+
+The goal is to preserve the structural meaning of each already-persisted
+Occurrence while the recurring schedule itself changes.
+
+The core rules are:
 
 ```text
-translate
-
-complete structure replacement
-
-reset segmentation
+SIMPLE OCCURRENCE
+one segment == complete parent envelope
+        ↓
+may follow the recurring envelope change
+        ↓
+same segment identity/status
+        ↓
+segment becomes equal to new envelope
 ```
 
-It does NOT implement recurring structural propagation or automatic conflict
-resolution.
+```text
+CUSTOM SEGMENTED OCCURRENCE
+same-duration pure move
+        ↓
+translate every segment by one delta
+        ↓
+preserve IDs / statuses / gaps / durations
+```
+
+```text
+CUSTOM SEGMENTED OCCURRENCE
+duration-changing recurring resize
+        ↓
+DO NOT scale
+DO NOT trim
+DO NOT reset
+DO NOT guess
+        ↓
+reject and require explicit structural resolution
+```
+
+And critically:
+
+```text
+runtime OccurrenceSegments
+ARE NOT recurring templates
+```
+
+A GenerationSlot continues to describe only the general recurring schedule.
+
+This phase may update existing persisted occurrences and create new generated
+occurrences, but newly generated occurrences still begin with:
+
+```text
+one default segment == occurrence envelope
+```
+
+unless a future explicit segment-template feature is approved.
 
 ---
 
@@ -69,39 +93,59 @@ docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
 modules/gestor_de_habitos/docs/valores.md
 ```
 
-Also inspect the completed backend structural implementation:
+Also inspect all existing implementation and tests for:
+
+```text
+Apply Week
+
+Apply Future
+
+generation configs
+
+generation slots
+
+generation slot weekdays/dates/exclusions
+
+source_generation_slot_id
+
+recurring schedule mutations
+
+occurrence structural mutation
+
+occurrence segment status
+
+PlanItem creation
+
+planner-state hydration
+
+frontend mutation coordinators
+
+legacy conflict preparation
+```
+
+Particularly inspect:
 
 ```text
 occurrence_structure_domain.py
 
 occurrence_structure_service.py
 
-repositories/occurrence_segment_repository.py
+occurrence_segment_service.py
 
-app.py
-```
+occurrence_segment_repository.py
 
-and the existing frontend architecture:
+plan_item_creation_service.py
 
-```text
 planner-api.js
-
-planner-bootstrap.js
-
-app.js
-
-planner-store.js
-
-planner-matrix.js
 
 occurrence-mutation.js
 
-occurrence-segments.js
+occurrence-structure-mutation.js
 
-occurrence-status.js
+app.js
 ```
 
-Read the relevant frontend tests before implementation.
+Do not edit until the current recurring flows and their tests are understood.
 
 ---
 
@@ -114,13 +158,13 @@ CURRENT_TASK.md
 → current implementation scope
 
 OCCURRENCE_SEGMENT_DECISIONS.md
-→ approved technical decisions
+→ approved technical architecture
 
 OCCURRENCE_SEGMENT_V1.md
-→ approved model
+→ approved segment model
 
 STATUS_CONFLICT_RULES.md
-→ approved product/domain rules
+→ approved product/domain behavior
 
 TECHNICAL_AUDIT
 → evidence/history
@@ -132,68 +176,62 @@ Do not silently reinterpret approved behavior.
 
 # Scope
 
-This task is limited to:
+This phase is limited to:
 
 ```text
-frontend structural draft model
+audit existing Apply Week behavior
 
-frontend structural editor UI
+audit existing Apply Future behavior
 
-manual occurrence envelope editing
+make their backend writes segment-aware
 
-manual segment start/end editing
+make their active frontend flows consume authoritative backend behavior
 
-manual segment add
+preserve existing recurring semantics where compatible
 
-manual segment remove
+transform simple occurrences safely
 
-manual split representation through draft editing
+translate custom segmentation on pure same-duration moves
 
-manual trim representation through draft editing
+reject custom segmented recurring resize
 
-manual resize through complete final-state save
+create default segments for newly generated occurrences
 
-explicit pure translate integration
+segment-aware batch conflict detection for rejection only
 
-reset segmentation UI
+atomic recurring schedule + occurrence + segment persistence
 
-structural API client integration
+authoritative GET-after-success
 
-authoritative GET-after-write refresh
+tests
 
-selection / expansion preservation
-
-minimal CORS for structural routes
-
-frontend tests
-
-browser verification
+safe browser verification
 ```
 
 Do NOT implement:
 
 ```text
-occurrence date movement
+runtime segment templates in GenerationSlot
 
-Apply Week segment propagation
-
-Apply Future segment propagation
-
-recurring segment templates
+segment inheritance across recurrence
 
 priority conflict resolution
 
 user-forced conflict resolution
 
-automatic conflict split/trim
+automatic split/trim because of conflicts
 
 conflict confirmation handshake
 
-planner global chronology redesign
+planner chronology redesign
 
 pause/resume
 
 live tracking
+
+production timezone/jobs
+
+new recurrence semantics unrelated to segments
 ```
 
 ---
@@ -227,18 +265,15 @@ Do NOT query, clean or modify real development data.
 
 Do NOT delete legacy PlanItems.
 
-Frontend verification should use:
+Use:
 
 ```text
-frontend mocks
-
-isolated API fixtures
-
-existing browser test strategy
+isolated PostgreSQL 16
 ```
 
-If backend/database verification becomes necessary, use isolated PostgreSQL 16
-only.
+for actual schema-004 recurring-write verification.
+
+Frontend/browser verification must use mocks or isolated data.
 
 ---
 
@@ -253,1173 +288,1033 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
----
-
-# 4. Existing backend structural API is authoritative
-
-Consume the routes implemented in the previous phase.
-
-Expected routes:
+If a genuine migration defect is discovered:
 
 ```text
-POST /api/occurrences/<occurrence_id>/translate
-
-PUT /api/occurrences/<occurrence_id>/structure
-
-POST /api/occurrences/<occurrence_id>/reset-segmentation
+STOP before changing it
 ```
 
-Inspect the actual implementation and use its exact contract.
-
-Do NOT redesign backend structural semantics in this phase unless a genuine
-integration defect is discovered.
+and report the finding.
 
 ---
 
-# 5. Core frontend principle
+# 4. First audit the existing recurring semantics
 
-The frontend editor owns:
+Before implementation, determine exactly what the current code means by:
 
 ```text
-a temporary draft
+Apply Week
+
+Apply Future
 ```
 
-It does NOT own:
+Document internally:
 
 ```text
-persistent structural truth
+which occurrences each command targets
+
+which generation config/slot rows change
+
+whether missing occurrences are created
+
+whether occurrences are removed/excluded
+
+whether dates change
+
+how source_generation_slot_id is preserved
+
+which endpoint/service currently owns each operation
+
+what conflict logic currently runs
+
+what frontend coordinator invokes it
 ```
 
-The draft may temporarily contain:
+Do NOT redesign those semantics merely because this phase touches them.
+
+The purpose is:
 
 ```text
-overlap
-
-out-of-bounds values
-
-unfinished times
-
-temporary invalid ordering
+make approved existing recurring behavior segment-aware
 ```
 
-while the user is editing.
-
-Do not persist until the user explicitly saves.
-
----
-
-# 6. Never persist intermediate edits
-
-Do NOT perform requests such as:
+not:
 
 ```text
-PATCH segment time
-
-DELETE segment
-
-POST segment
-
-PATCH parent
-```
-
-while the user is editing individual fields.
-
-Editing must remain local until:
-
-```text
-Guardar
+invent a new recurrence system
 ```
 
 ---
 
-# 7. Draft source
+# 5. Existing target selection semantics remain authoritative
 
-Opening the structural editor creates a draft from the currently persisted
-occurrence.
-
-Conceptually:
+Preserve the already-approved meaning of:
 
 ```text
-draft = clone(
-  occurrence.id,
-  occurrence.date,
-  occurrence.startTime,
-  occurrence.endTime,
-  occurrence.segments
-)
+this week
+
+future
 ```
 
-Do NOT mutate planner-store persisted objects directly while editing.
+including:
+
+```text
+date boundaries
+
+GenerationSlot targeting
+
+specific-date behavior
+
+existing exclusions
+
+sourceGenerationSlot relationships
+```
+
+Only change what is necessary for OccurrenceSegment compatibility.
+
+If current implementation contains a genuine ambiguity or contradiction with
+normative docs:
+
+```text
+stop in that area
+report it
+do not guess
+```
 
 ---
 
-# 8. Draft identity
+# 6. No runtime segment templates
 
-Persisted segments keep:
-
-```text
-segment.id
-```
-
-inside the draft.
-
-New unsaved segments must NOT receive a fake persisted segment ID.
-
-Use a separate transient frontend identity such as:
+Do NOT add fields such as:
 
 ```text
-draftKey
+generation_slot_segments
+
+segment_template
+
+segment_pattern
+
+recurring_segments
 ```
 
-if rendering requires stable local keys.
+GenerationSlot continues to store the recurring schedule envelope.
 
-Never send:
+Runtime segmentation belongs to:
 
 ```text
-draftKey
+Occurrence
 ```
 
-to the backend.
+only.
 
 ---
 
-# 9. New segment identity
+# 7. New generated occurrences remain simple
 
-For a new draft segment:
-
-```text
-persisted id = absent
-```
-
-On save:
+Any new occurrence created by Apply Week / Apply Future must start as:
 
 ```text
-omit id
+Occurrence envelope
+
+└── exactly one OccurrenceSegment
+    start = occurrence.start
+    end   = occurrence.end
+    status = valid initial status
 ```
 
-The backend generates the real UUID.
+Use the existing creation/domain behavior.
 
-Do NOT generate a fake persisted UUID in frontend.
+Do NOT copy the segment structure of another occurrence.
 
 ---
 
-# 10. Editor ownership
-
-The structural editor operates on:
-
-```text
-one occurrence at a time
-```
-
-It does not edit:
-
-```text
-PlanItem recurrence config
-
-GenerationSlot
-
-other occurrences
-
-future instances
-```
-
-This phase is occurrence-local only.
-
----
-
-# 11. Recurring PlanItems
-
-An occurrence generated by a recurring schedule may still be structurally
-edited locally.
-
-That edit applies to:
-
-```text
-this persisted occurrence only
-```
-
-Do NOT modify its GenerationSlot.
-
-Do NOT propagate its segmentation to Week/Future.
-
----
-
-# 12. Editor entry point
-
-Add a clear structural edit action for an editable occurrence.
-
-Use wording consistent with the existing Spanish UI.
-
-A concept such as:
-
-```text
-Editar horario
-```
-
-or:
-
-```text
-Editar estructura
-```
-
-is acceptable.
-
-Prefer the wording that best fits the current planner UI after inspecting it.
-
-Do not redesign unrelated controls.
-
----
-
-# 13. Frozen history
-
-For:
-
-```text
-FROZEN_HISTORY
-```
-
-do not expose an active structural editor action.
-
-Structural information remains visible but read-only.
-
-Backend protection remains authoritative.
-
----
-
-# 14. Previous editable day
-
-Yesterday remains structurally editable.
-
-Do not locally reconcile transient statuses.
-
-If backend requires:
-
-```text
-temporal_reconciliation_required
-```
-
-handle it explicitly as described later.
-
----
-
-# 15. Parent envelope fields
-
-The editor must expose:
-
-```text
-Inicio general
-
-Final general
-```
-
-corresponding to:
-
-```text
-Occurrence.startTime
-
-Occurrence.endTime
-```
-
-Do NOT expose:
-
-```text
-occurrence_date
-```
-
-for editing in this phase.
-
----
-
-# 16. Segment rows
-
-Show each draft segment with at minimum:
-
-```text
-segment label
-
-start time
-
-end time
-
-status
-
-duration
-
-remove action
-```
-
-For persisted segments:
-
-```text
-status is read-only in the structural editor
-```
-
-Existing status changes continue to use the dedicated segment-status UI/API.
-
----
-
-# 17. Existing segment status must not be editable here
-
-The structural editor must NOT become another path for changing:
-
-```text
-persisted Segment.status
-```
-
-For existing segments:
-
-```text
-show status
-do not send status as a mutation choice
-```
-
-Follow the backend contract exactly.
-
----
-
-# 18. New segment status
-
-A new segment has no previous persisted status.
-
-Therefore the draft must collect an explicit canonical status for it.
-
-Allowed values come from the existing canonical status model:
-
-```text
-pending
-in_progress
-completed
-not_completed
-not_finished
-cancelled
-```
-
-Use existing temporal display/status-option helpers where appropriate.
-
-The backend remains authoritative.
-
----
-
-# 19. New status must be visible
-
-Do NOT secretly assign a new segment status that the user cannot see.
-
-If a default is used for UX:
-
-```text
-it must be visible in the draft control
-```
-
-and changeable before save.
-
----
-
-# 20. Suggested new-segment default
-
-If a simple default is needed:
-
-```text
-pending
-```
-
-may be selected only when it is a valid obvious default for the current
-temporal context.
-
-Do not force `pending` for yesterday where it would be invalid.
-
-For historical editable dates, require or visibly choose a stable historical
-status.
-
-Do not create a second complex temporal engine solely for defaults.
-
----
-
-# 21. Add segment
-
-Provide:
-
-```text
-Agregar segmento
-```
-
-This creates only:
-
-```text
-a draft child
-```
-
-No API request occurs.
-
-The user then provides:
-
-```text
-startTime
-
-endTime
-
-status
-```
-
-before save.
-
----
-
-# 22. Remove segment
-
-Removing a segment inside the editor means:
-
-```text
-remove it from the draft final set
-```
-
-Do NOT immediately call a DELETE endpoint.
-
-On successful final save, an omitted persisted segment will be deleted by the
-backend atomically.
-
----
-
-# 23. Last-segment protection
-
-The final persisted occurrence must have:
-
-```text
-at least one segment
-```
-
-The UI should avoid making the common path confusing.
-
-It may:
-
-```text
-disable remove when only one segment remains
-```
-
-or show a clear draft validation message.
-
-Backend validation remains authoritative.
-
----
-
-# 24. Manual trim
-
-A trim is simply:
-
-```text
-edit start/end of an existing segment
-```
+# 8. No segmentation inheritance
 
 Example:
 
 ```text
-08:00–10:00
-→
-08:00–09:15
+Monday occurrence
+
+Occurrence 13:00–17:00
+
+Seg 1 13:00–14:00
+Seg 2 16:00–17:00
 ```
 
-Keep its persisted ID.
-
-No dedicated `/trim` request exists.
-
----
-
-# 25. Manual split
-
-A manual split is represented in the draft as:
+Changing the recurring schedule must NOT cause future generated Mondays to
+inherit:
 
 ```text
-existing segment adjusted
-+
-new draft segment
-```
-
-Example:
-
-```text
-S1
-13:00–17:00
-```
-
-becomes:
-
-```text
-S1
 13:00–14:00
-
-NEW
-14:30–17:00
+16:00–17:00
 ```
 
-The persisted segment keeps its ID.
+unless a future explicit recurring-segment-template feature is implemented.
 
-The new segment has no persisted ID.
+This phase explicitly forbids that behavior.
 
 ---
 
-# 26. Dedicated Split button is optional
+# 9. Classify every targeted persisted occurrence
 
-A dedicated UI control such as:
-
-```text
-Dividir
-```
-
-is NOT required for definition of done.
-
-If the existing UI makes it simple and clear, it may be added.
-
-Otherwise:
+Before transforming an occurrence, classify its current structure as:
 
 ```text
-Agregar segmento
-+
-editar límites
+SIMPLE
+
+or
+
+CUSTOM
 ```
-
-is sufficient to represent a manual split.
-
-Do not build complex split UX in this phase.
 
 ---
 
-# 27. Manual resize
+# 10. Definition of SIMPLE
 
-Changing the parent envelope duration is allowed only as part of a complete
-draft.
+An occurrence is structurally simple only when:
 
-Example:
+```text
+exactly one persisted segment exists
+```
+
+AND:
+
+```text
+segment.start_time == occurrence.start_time
+```
+
+AND:
+
+```text
+segment.end_time == occurrence.end_time
+```
+
+A one-segment occurrence whose child is trimmed inside the parent envelope is:
+
+```text
+CUSTOM
+```
+
+not simple.
+
+---
+
+# 11. Definition of CUSTOM
+
+An occurrence is custom when ANY of these apply:
+
+```text
+more than one segment
+
+one segment does not equal full parent envelope
+
+runtime gaps exist
+
+runtime trim exists
+
+manual custom structure exists
+```
+
+Do not infer customness from number of segments alone.
+
+---
+
+# 12. Recurring candidate envelope
+
+For every targeted occurrence, determine the envelope the existing recurring
+operation wants to produce:
+
+```text
+old parent start/end
+
+→
+
+candidate parent start/end
+```
+
+Then transform segments according to the rules below.
+
+---
+
+# 13. SIMPLE occurrence transformation
+
+For a SIMPLE target occurrence:
+
+```text
+old parent
+08:00–09:00
+
+S1
+08:00–09:00
+```
+
+Recurring change to:
+
+```text
+10:00–11:30
+```
+
+may produce:
+
+```text
+parent
+10:00–11:30
+
+S1
+10:00–11:30
+```
+
+Preserve:
+
+```text
+S1.id
+
+S1.status
+
+source_generation_slot_id
+
+conflict metadata
+```
+
+The simple segment follows the new envelope.
+
+---
+
+# 14. SIMPLE resize is allowed
+
+Because the simple child represents the entire parent envelope:
+
+```text
+08:00–09:00
+→
+10:00–11:30
+```
+
+may resize that one segment to the new envelope.
+
+This is NOT considered scaling custom segmentation.
+
+---
+
+# 15. SIMPLE status remains preserved
+
+Do NOT silently reset an existing simple occurrence status merely because its
+schedule changes.
+
+Preserve its current segment status and revalidate it against:
+
+```text
+temporal phase
+
+completed-time integrity
+
+other approved status rules
+```
+
+If the preserved status becomes invalid:
+
+```text
+reject the batch safely
+```
+
+Do not silently rewrite status.
+
+---
+
+# 16. CUSTOM same-duration move
+
+For a CUSTOM occurrence, compare:
+
+```text
+old parent duration
+
+candidate parent duration
+```
+
+If duration is unchanged and the requested modification is a pure envelope
+translation:
+
+```text
+delta = newStart - oldStart
+```
+
+translate every child by the same delta.
+
+---
+
+# 17. CUSTOM move example
+
+Before:
 
 ```text
 parent
 08:00–12:00
-→
-08:00–11:00
+
+S1 08:00–09:00
+S2 10:30–12:00
 ```
 
-The frontend must NOT automatically scale:
+Recurring schedule moves to:
 
 ```text
-segments
+13:00–17:00
+```
+
+Result:
+
+```text
+parent
+13:00–17:00
+
+S1 13:00–14:00
+S2 15:30–17:00
+```
+
+Preserve:
+
+```text
+segment IDs
+
+segment statuses
+
+individual durations
+
 gaps
-durations
+
+relative positions
 ```
 
 ---
 
-# 28. Resize means user resolves children
+# 18. CUSTOM no-op
 
-When parent duration changes:
-
-```text
-children remain exactly as the user edits them
-```
-
-If they no longer fit:
+If the candidate envelope equals the old envelope:
 
 ```text
-draft may temporarily be invalid
+do not rewrite segment identities or structure unnecessarily
 ```
 
-The user must manually correct them before or during save attempts.
-
-Do NOT auto-compress or auto-trim.
+Preserve the graph.
 
 ---
 
-# 29. No implicit child scaling
+# 19. CUSTOM duration-changing recurring resize
 
-Forbidden frontend behavior:
+If:
 
 ```text
-parent reduced 25%
-→ each child reduced 25%
+CUSTOM occurrence
 ```
 
-or:
+and:
 
 ```text
-parent moved/resized
-→ silently squeeze every child into it
+candidate duration != old parent duration
 ```
 
-No such logic.
+the recurring mutation must NOT automatically modify its children.
 
----
-
-# 30. Pure movement
-
-The backend provides an explicit:
+Forbidden:
 
 ```text
-translate
-```
+scale
 
-command for pure movement.
+compress
 
-A pure move means:
-
-```text
-same parent duration
-+
-all existing segments moved by same delta
-+
-no add/remove
-+
-no gap change
-+
-no child-duration change
-```
-
----
-
-# 31. Translate must be tied to explicit intent
-
-Do NOT infer arbitrary structural changes as translation merely because they
-look similar after several edits.
-
-Use translate only when the frontend interaction clearly represents:
-
-```text
-move the whole occurrence
-```
-
-If the existing UI already has a clear whole-occurrence move/edit-time action,
-wire that action to:
-
-```text
-POST translate
-```
-
-when duration remains unchanged.
-
-Otherwise provide the smallest clear movement affordance inside the structural
-editor.
-
----
-
-# 32. Translation UX
-
-A pure movement may allow the user to edit:
-
-```text
-new parent start
-new parent end
-```
-
-while preserving duration.
-
-The backend will move all children by one delta.
-
-Do not locally persist translated children before backend confirmation.
-
----
-
-# 33. Structure save
-
-All non-pure-translation structural edits use:
-
-```text
-PUT /api/occurrences/<id>/structure
-```
-
-This includes:
-
-```text
-add
-
-remove
+stretch
 
 trim
 
-manual split
+merge
 
-manual child movement
+reset segmentation
 
-gap changes
+replace with one segment
 
-parent resize
+delete children
+
+invent new gaps
 ```
 
 ---
 
-# 34. Structure payload
+# 20. Custom resize requires explicit resolution
 
-Build the payload from the complete draft final state.
+Reject the recurring operation with a controlled error.
+
+Preferred code:
+
+```text
+segmented_recurring_resize_requires_resolution
+```
+
+The response should identify every affected occurrence that requires manual
+structural resolution.
 
 Conceptually:
 
 ```json
 {
-  "startTime": "13:00",
-  "endTime": "17:00",
-  "segments": [
+  "status": "error",
+  "code": "segmented_recurring_resize_requires_resolution",
+  "occurrences": [
     {
-      "id": "<persisted-id>",
-      "startTime": "13:00",
-      "endTime": "14:00"
-    },
-    {
-      "startTime": "14:30",
-      "endTime": "17:00",
-      "status": "pending"
+      "occurrenceId": "...",
+      "planItemId": "...",
+      "date": "2026-09-21",
+      "startTime": "08:00",
+      "endTime": "12:00",
+      "requestedStartTime": "08:00",
+      "requestedEndTime": "11:00"
     }
   ]
 }
 ```
 
-Use the exact backend contract.
+Exact naming may follow existing API conventions.
 
 ---
 
-# 35. Persisted child payload
+# 21. Return all incompatible custom occurrences
 
-For an existing segment:
+Do not stop after finding the first custom resize incompatibility.
 
-```text
-send its persisted ID
-send structural fields required by backend
-do not use the structure endpoint to change status
-```
+Return all relevant targeted occurrences requiring explicit structural
+resolution in deterministic order.
 
-Do not accidentally send stale status as a requested mutation if backend
-forbids it.
+This allows future UX to explain the complete problem.
 
 ---
 
-# 36. New child payload
+# 22. Reject the whole recurring command atomically
 
-For a new segment:
-
-```text
-omit id
-
-send startTime
-
-send endTime
-
-send explicit status
-```
-
-Never send:
+If even one targeted occurrence requires explicit resolution:
 
 ```text
-draftKey
+DO NOT partially apply the recurring mutation
 ```
+
+No:
+
+```text
+GenerationSlot update
+
+occurrence update
+
+segment update
+
+creation
+
+deletion/exclusion side effect
+```
+
+from that command may commit.
+
+The user must resolve the incompatible structure first.
 
 ---
 
-# 37. Reset segmentation control
+# 23. Why whole-command rejection
 
-Expose an explicit action:
-
-```text
-Restablecer segmentación
-```
-
-This is destructive to the current child structure.
-
-It must NOT happen accidentally.
-
----
-
-# 38. Reset confirmation
-
-Before sending reset:
+Do not leave a state where:
 
 ```text
-ask for explicit confirmation
-```
-
-Reuse the existing confirmation pattern if one exists.
-
-Do not invent a large modal system solely for this action.
-
----
-
-# 39. Reset payload
-
-Call the existing backend:
-
-```text
-POST /api/occurrences/<id>/reset-segmentation
-```
-
-with the desired parent:
-
-```text
-startTime
-
-endTime
-```
-
-Use the exact backend contract.
-
----
-
-# 40. Reset status authority
-
-Frontend does NOT choose the reset segment status.
-
-Backend behavior is:
-
-```text
-previous parent aggregate
-→ new Segment status
-→ validation
-```
-
-Do not duplicate that logic client-side.
-
----
-
-# 41. Reset success
-
-After successful reset:
-
-```text
-GET planner-state
-→ hydrate
-```
-
-The old selected segment ID will no longer exist.
-
-Expected UI state:
-
-```text
-selectedOccurrenceId preserved if parent exists
-
-selectedSegmentId cleared unless authoritative state deliberately selects the new one
-```
-
-Do not pretend the new segment has the old identity.
-
----
-
-# 42. Structural save success
-
-After any successful:
-
-```text
-translate
-
-structure replacement
-
-reset
-```
-
-always perform:
-
-```text
-GET planner-state
-→ hydrate authoritative result
-```
-
-Do not build the final persisted graph solely from the mutation response.
-
----
-
-# 43. No optimistic persisted structure
-
-The draft can update visually while the editor is open.
-
-The planner's authoritative occurrence graph must not be permanently replaced
-until backend success + GET.
-
-Keep:
-
-```text
-draft state
-```
-
-separate from:
-
-```text
-planner persisted state
-```
-
----
-
-# 44. Mutation coordinator
-
-Follow the existing frontend mutation architecture.
-
-Prefer a structural coordinator flow such as:
-
-```text
-guard pending
-
-send command
-
-mark command confirmed
-
-GET planner-state
-
-hydrate
-
-restore valid UI state
-
-clear draft
-
-release pending
-```
-
-Do not put network orchestration directly in the matrix view.
-
----
-
-# 45. Confirmed command + failed GET
-
-Reuse the safety pattern established by segment status mutation.
-
-If:
-
-```text
-structural command succeeds
+recurring config says one schedule
 ```
 
 but:
 
 ```text
-GET planner-state fails
+some targeted occurrences were updated
+and others were silently left behind
 ```
 
-do NOT send the structural command again on retry.
+unless that partial behavior is already an explicit approved semantic of the
+existing recurrence system.
 
-The next retry must:
-
-```text
-perform only authoritative GET
-```
-
-until the result is recovered.
-
-This protects against duplicate structural writes.
-
----
-
-# 46. Pending/double-submit protection
-
-While a structural command is in flight:
+For segment incompatibility introduced by this phase:
 
 ```text
-disable duplicate Save
-
-disable duplicate Reset
-
-prevent rapid repeated submission
-```
-
-Do not send the same command twice.
-
----
-
-# 47. Cancel editor
-
-`Cancelar` must:
-
-```text
-discard local draft
-
-make zero API requests
-
-leave persisted planner state unchanged
+default to atomic rejection
 ```
 
 ---
 
-# 48. Draft dirty state
+# 24. No silent reset
 
-Track whether the structural draft differs from its source where useful.
-
-Do not introduce a large global unsaved-document framework.
-
-A small editor-local dirty flag is sufficient.
-
----
-
-# 49. Close with unsaved changes
-
-If the current UI already has a confirmation pattern for discarding edits,
-reuse it.
-
-Otherwise keep the behavior simple and deterministic.
-
-Do not expand this task into navigation lifecycle management.
-
----
-
-# 50. Lightweight draft validation
-
-Frontend may perform lightweight validation to improve UX.
-
-Examples:
+Especially forbidden:
 
 ```text
-required HH:MM values
+custom occurrence
+→ recurring resize
+→ reset to one segment
+```
 
-parent start < parent end
+even if doing so would make persistence easier.
 
+Reset is an explicit user action only.
+
+---
+
+# 25. No silent segment-template creation
+
+Likewise forbidden:
+
+```text
+custom occurrence
+→ extract runtime segments
+→ save them into GenerationSlot
+```
+
+No segment templates in this phase.
+
+---
+
+# 26. Existing segment identity
+
+When transforming an already-persisted occurrence:
+
+```text
+preserve every surviving segment ID
+```
+
+Simple resize:
+
+```text
+same one segment ID
+```
+
+Custom pure move:
+
+```text
+same N segment IDs
+```
+
+Do not replace children merely because times changed.
+
+---
+
+# 27. Existing segment statuses
+
+Recurring schedule changes are structural/scheduling operations.
+
+Do NOT reinterpret existing segment statuses.
+
+Preserve them and revalidate.
+
+Do not call:
+
+```text
+setOccurrenceStatus
+
+advanceOccurrenceStatus
+```
+
+to compensate for schedule changes.
+
+---
+
+# 28. Aggregate recalculation
+
+After constructing each candidate occurrence segment graph:
+
+```text
+derive_occurrence_status(final segment statuses, temporal phase)
+```
+
+Persist the resulting:
+
+```text
+Occurrence.status
+```
+
+with the segment/envelope changes.
+
+Do not independently choose the parent aggregate.
+
+---
+
+# 29. Temporal validation
+
+Reuse existing temporal-domain behavior.
+
+Do not duplicate another matrix for:
+
+```text
+future
+
+current_day
+
+previous_editable_day
+
+frozen_history
+```
+
+---
+
+# 30. Frozen history
+
+Apply Week / Apply Future must not structurally mutate:
+
+```text
+FROZEN_HISTORY
+```
+
+If the existing target-selection semantics already exclude frozen history,
+preserve that behavior.
+
+If a command unexpectedly includes frozen persisted occurrences:
+
+```text
+reject rather than modify them
+```
+
+Do not silently alter historical structure.
+
+---
+
+# 31. Yesterday transient state
+
+If a targeted editable historical occurrence contains:
+
+```text
+pending
+
+in_progress
+```
+
+when a structural recurring transformation requires stable history:
+
+```text
+temporal_reconciliation_required
+```
+
+Do not reconcile statuses inside the recurring mutation.
+
+---
+
+# 32. Completed-time integrity
+
+If an existing segment status is:
+
+```text
+completed
+```
+
+and a recurring move/resize would place:
+
+```text
+segment.endDateTime > now
+```
+
+reject the command.
+
+Do not silently change:
+
+```text
+completed → pending
+```
+
+---
+
+# 33. One authoritative now
+
+Capture one backend `now` per recurring operation.
+
+Reuse the existing injected clock/time architecture.
+
+Do not accept:
+
+```text
+now
+
+today
+
+temporalPhase
+```
+
+from public payloads.
+
+---
+
+# 34. Occurrence date semantics
+
+Do NOT invent new occurrence-date movement in this phase.
+
+Preserve whatever date-targeting behavior Apply Week / Apply Future already
+have.
+
+If the existing recurring mutation changes `occurrence_date` for persisted
+occurrences:
+
+```text
+audit it explicitly
+```
+
+before adapting it.
+
+For CUSTOM segmented occurrences, do NOT translate a runtime segmented graph
+across dates unless that behavior is already explicitly supported by the
+approved model.
+
+If a custom segmented occurrence would require date movement and the model is
+ambiguous:
+
+```text
+reject/report instead of guessing
+```
+
+---
+
+# 35. Single-date invariant
+
+No transformed segment may wrap across midnight.
+
+Continue respecting:
+
+```text
+OccurrenceSegment v1 = one local occurrence date
+```
+
+Reject transformations that cannot fit that model.
+
+---
+
+# 36. Candidate graph validation
+
+For every transformed occurrence validate:
+
+```text
 at least one segment
 
-segment start < segment end
+positive segment duration
 
-obvious out-of-bounds segment
+segment bounds inside parent
 
-obvious sibling overlap
+sibling non-overlap
+
+canonical ordering
+
+status temporal validity
+
+completed-time rule
 ```
 
-This is:
+Reuse:
 
 ```text
-draft readiness UX
+occurrence_structure_domain
 ```
 
-not authoritative domain validation.
+where appropriate.
+
+Do not create duplicate structural validation logic.
 
 ---
 
-# 51. Backend remains authoritative
+# 37. Reuse structural transformation helpers
 
-Do NOT duplicate in frontend the entire backend logic for:
+Prefer reusing existing tested behavior for:
 
 ```text
-conflicts
+translate segment set
 
-completed-time
+validate candidate segment set
 
-historical reconciliation
+bounds
 
-locking
-
-concurrency
+sibling overlap
 
 aggregate derivation
 ```
 
-The frontend may anticipate simple errors but must accept backend decisions as
-final.
+Do not implement one translation algorithm for structural editor and another
+unrelated translation algorithm for recurrence.
 
 ---
 
-# 52. Temporarily invalid drafts are allowed
+# 38. Recurring batch candidate set
 
-Do not make time inputs impossible to edit because each keystroke must satisfy
-the final graph.
+Build the full batch candidate state before writes where practical.
+
+Conceptually:
+
+```text
+resolve targets
+
+lock relevant schedule rows
+
+lock target parents
+
+lock target segments
+
+classify simple/custom
+
+build all candidate structures
+
+validate temporal rules
+
+validate custom resize compatibility
+
+validate conflicts
+
+only then write
+```
+
+---
+
+# 39. Conflict detection uses actual segments
+
+Recurring mutations must no longer detect occupancy solely from:
+
+```text
+Occurrence.start_time
+
+Occurrence.end_time
+```
+
+Use candidate:
+
+```text
+OccurrenceSegments
+```
+
+---
+
+# 40. Canonical blocking statuses
+
+Reuse the existing shared backend definition:
+
+```text
+pending
+
+in_progress
+
+completed
+
+not_finished
+```
+
+Non-blocking:
+
+```text
+not_completed
+
+cancelled
+```
+
+Do not duplicate another list.
+
+---
+
+# 41. Gap-aware recurring conflicts
+
+Example candidate target:
+
+```text
+parent
+08:00–12:00
+
+segments
+08:00–09:00 pending
+11:00–12:00 pending
+```
+
+External blocker:
+
+```text
+09:30–10:30 pending
+```
+
+Result:
+
+```text
+NO conflict
+```
+
+The parent envelope gap is free.
+
+---
+
+# 42. Exclude all batch targets from persisted blocker query
+
+When validating a recurring batch:
+
+```text
+old persisted segments of every occurrence being replaced
+```
+
+must not block their own candidate state.
+
+Do not exclude only one target at a time if that causes another old batch
+member to be seen incorrectly as an external blocker.
+
+---
+
+# 43. Candidate-vs-candidate conflicts
+
+After excluding the old persisted target graphs, validate:
+
+```text
+candidate blocking segments
+against
+other candidate blocking segments
+```
+
+within the same recurring batch.
+
+The batch itself must not create unresolved overlaps.
+
+---
+
+# 44. Candidate-vs-external conflicts
+
+Also validate all candidate blocking segments against:
+
+```text
+persisted blocking segments
+belonging to occurrences outside the batch
+```
+
+on the relevant dates.
+
+---
+
+# 45. Half-open interval semantics
+
+Use:
+
+```text
+[start, end)
+```
+
+Adjacency is allowed.
 
 Example:
 
 ```text
-changing 13:00 to 15:00
+08:00–09:00
+
+09:00–10:00
 ```
 
-may temporarily pass through an incomplete value.
-
-The draft may be invalid while editing.
-
-Only persistence requires a valid final state.
+is not conflict.
 
 ---
 
-# 53. Save readiness
+# 46. Conflict resolution remains out of scope
 
-It is acceptable to disable Save for clearly malformed draft data such as:
+If Apply Week / Apply Future would create a segment conflict:
 
 ```text
-empty time
-
-invalid HH:MM
-
-zero segments
+REJECT
 ```
 
-Do not block Save solely because the frontend predicts a complex domain rule
-that the backend should decide.
-
----
-
-# 54. Structural conflict response
-
-Backend may return:
+Do NOT:
 
 ```text
-409 occurrence_structure_conflict
-```
+cancel blocker
 
-with:
-
-```text
-blockers[]
-```
-
-Frontend must:
-
-```text
-show a clear conflict message
-
-keep the structural draft available
-
-not modify blockers
-
-not automatically retry
-
-not invoke priority resolution
-```
-
----
-
-# 55. Keep draft after conflict
-
-A structural conflict rejection is especially useful because the user can
-manually adjust the draft.
-
-Therefore:
-
-```text
-409 structure conflict
-→ preserve draft
-→ show blocker context
-→ allow user to edit and Save again
-```
-
-Do not discard their work.
-
----
-
-# 56. Blocker display
-
-When practical, show concise blocker information such as:
-
-```text
-hora
-
-status
-
-possibly PlanItem context if already available
-```
-
-Do not build the final conflict-resolution modal yet.
-
-No actions such as:
-
-```text
-Ajustar blocker
-
-Segmentar blocker
-
-Finalizar blocker
-
-Cancelar blocker
-```
-
-in this phase.
-
----
-
-# 57. Conflict resolution remains forbidden
-
-From a structural conflict response, frontend must NOT:
-
-```text
 change blocker status
 
 move blocker
@@ -1433,544 +1328,1059 @@ priority override
 user-forced override
 ```
 
-Manual editing of the TARGET draft is allowed.
+The segment-aware conflict engine is the next dedicated phase.
 
 ---
 
-# 58. Duration mismatch
+# 47. Do not call legacy priority override
 
-If translate returns:
+No schema-004 recurring path may invoke the old parent-level:
 
 ```text
-occurrence_translate_duration_mismatch
+apply_priority_overrides()
 ```
 
-do not silently fall back to structure replacement behind the user's back.
+or equivalent behavior.
 
-The interaction should remain explicit.
+Guard/remove it from active Apply Week/Future execution.
 
-If the user intended resize:
+---
+
+# 48. Recurring conflict error
+
+Use a controlled segment-aware recurring conflict response.
+
+Preferred code:
 
 ```text
-use structural editing flow
+recurring_schedule_conflict
+```
+
+Return blockers including:
+
+```text
+occurrenceId
+
+segmentId
+
+planItemId
+
+date
+
+startTime
+
+endTime
+
+status
+```
+
+If multiple blockers exist:
+
+```text
+return all relevant blockers
+```
+
+in deterministic order.
+
+---
+
+# 49. Conflict metadata
+
+Because this phase only rejects unresolved conflicts, successful Apply Week /
+Apply Future operations do NOT represent conflict-resolution events.
+
+Therefore preserve:
+
+```text
+conflict_reason
+
+source_occurrence_id
+
+origin_reason
+
+last_conflict_action
+```
+
+on existing occurrences.
+
+Do not set:
+
+```text
+last_conflict_action = conflict_move
+```
+
+merely because a recurring schedule moved normally.
+
+---
+
+# 50. `source_generation_slot_id`
+
+Existing occurrences must preserve valid generation provenance.
+
+If the existing recurring rewrite deliberately replaces/rebinds GenerationSlot
+identity according to already-approved semantics:
+
+```text
+preserve that existing behavior
+```
+
+but keep every occurrence correctly linked to its resulting slot.
+
+Do not clear provenance accidentally.
+
+---
+
+# 51. New occurrence creation
+
+If the existing Apply Week / Apply Future command creates an occurrence:
+
+```text
+create parent + default segment atomically
+```
+
+Use:
+
+```text
+backend-generated UUID v4
+```
+
+for the segment.
+
+Do not create parent-only occurrences.
+
+---
+
+# 52. New occurrence status
+
+Use the same initial-status rules already approved for occurrence creation.
+
+Do not invent recurring-specific status semantics.
+
+The parent aggregate must be derived from the created segment.
+
+---
+
+# 53. Missing-occurrence generation
+
+If the existing recurring implementation fills missing occurrences:
+
+```text
+continue doing so
+```
+
+but every newly created occurrence must satisfy schema 004 immediately.
+
+Do not depend on migration backfill for runtime writes.
+
+---
+
+# 54. GenerationSlot remains envelope-only
+
+Updating a slot may change:
+
+```text
+recurring start time
+
+recurring end time
+
+weekday/date configuration
+```
+
+according to existing behavior.
+
+It must NOT store:
+
+```text
+runtime segment IDs
+
+runtime gaps
+
+runtime child statuses
+
+runtime segment count
 ```
 
 ---
 
-# 59. History frozen error
+# 55. Runtime customization remains local
 
-If backend returns:
-
-```text
-history_frozen
-```
-
-or equivalent:
+After successful recurring mutation:
 
 ```text
-show read-only message
-
-do not retry mutation automatically
+custom segmentation of a translated occurrence remains custom
 ```
 
-Refresh authoritative state if appropriate.
+It must not disappear.
+
+Example:
+
+```text
+before
+08:00–12:00
+08:00–09:00
+10:30–12:00
+
+after schedule pure move
+13:00–17:00
+13:00–14:00
+15:30–17:00
+```
+
+The gaps survive.
 
 ---
 
-# 60. Temporal reconciliation required
+# 56. Future newly generated instances remain simple
 
-If structural mutation returns:
+Even if one existing occurrence retains translated custom segmentation:
+
+```text
+future instances generated later from GenerationSlot
+```
+
+still begin with:
+
+```text
+one segment equal envelope
+```
+
+This distinction must have explicit test coverage.
+
+---
+
+# 57. Transactional unit
+
+Recurring mutation must atomically coordinate, as applicable:
+
+```text
+generation config
+
+generation slots
+
+slot weekdays/dates/exclusions
+
+affected occurrences
+
+affected occurrence segments
+
+parent aggregates
+```
+
+Do not commit recurrence configuration separately from required occurrence
+segment updates.
+
+---
+
+# 58. Isolation level
+
+Use:
+
+```text
+SERIALIZABLE
+```
+
+consistent with the existing recurring mutation architecture.
+
+---
+
+# 59. Deterministic locks
+
+Preserve/establish deterministic ordering for:
+
+```text
+generation rows
+
+target occurrences
+
+target segments
+
+external blockers
+```
+
+Avoid deadlock-prone lock-order divergence from:
+
+```text
+segment status mutation
+
+structure mutation
+```
+
+---
+
+# 60. Concurrency
+
+If the schedule or target occurrence graph changes between:
+
+```text
+read
+
+validation
+
+commit
+```
+
+do not overwrite blindly.
+
+Use existing serialization/concurrency handling.
+
+Preferred controlled error may remain:
+
+```text
+concurrent_conflict
+```
+
+if already standardized.
+
+Do not auto-retry an ambiguous batch mutation internally unless existing
+transaction infrastructure already safely does so.
+
+---
+
+# 61. All-or-nothing segment compatibility
+
+Before applying a recurring batch, confirm every affected persisted occurrence
+can be transformed under these rules.
+
+If one cannot:
+
+```text
+reject before commit
+```
+
+Do not transform the easy ones and leave custom incompatible ones behind
+silently.
+
+---
+
+# 62. Apply Week backend
+
+Make the existing Apply Week service/repository path segment-aware.
+
+Preserve its existing definition of:
+
+```text
+week scope
+```
+
+and its recurrence configuration semantics.
+
+For each targeted persisted occurrence:
+
+```text
+simple
+→ follow new envelope
+
+custom + same-duration pure move
+→ translate segments
+
+custom + duration resize
+→ resolution required
+```
+
+New occurrences:
+
+```text
+one default segment
+```
+
+---
+
+# 63. Apply Future backend
+
+Make the existing Apply Future service/repository path segment-aware.
+
+Preserve its existing definition of:
+
+```text
+future scope
+```
+
+and GenerationSlot rewrite semantics.
+
+Use the same structural classification rules as Apply Week.
+
+Do NOT create separate incompatible transformation behavior.
+
+---
+
+# 64. Shared recurring structural policy
+
+Apply Week and Apply Future should reuse one shared policy/helper for deciding:
+
+```text
+simple follow-envelope
+
+custom translate
+
+custom resize reject
+```
+
+Do not duplicate the rules in two independent services.
+
+---
+
+# 65. No client-side structural authority
+
+Frontend must NOT decide how every affected occurrence segment graph should
+change.
+
+Frontend expresses:
+
+```text
+Apply Week
+
+or
+
+Apply Future
+```
+
+Backend determines the candidate graphs.
+
+---
+
+# 66. Existing frontend interaction
+
+Preserve the existing user-facing distinction between:
+
+```text
+this occurrence
+
+Apply Week
+
+Apply Future
+```
+
+where already present.
+
+Do not redesign the entire recurring editor.
+
+---
+
+# 67. Frontend success flow
+
+After successful Apply Week / Apply Future:
+
+```text
+command
+→ GET planner-state
+→ hydrate authoritative state
+```
+
+Do not reconstruct all affected segment graphs locally.
+
+---
+
+# 68. Confirmed command + failed GET
+
+Use the established mutation safety pattern.
+
+If:
+
+```text
+Apply Week/Future command succeeded
+```
+
+but:
+
+```text
+GET planner-state failed
+```
+
+retry/recovery must perform:
+
+```text
+GET only
+```
+
+Do NOT resend the recurring mutation.
+
+---
+
+# 69. Double-submit protection
+
+While Apply Week / Apply Future is pending:
+
+```text
+prevent duplicate submission
+```
+
+Do not send the same batch command twice from rapid clicking.
+
+---
+
+# 70. Custom resize frontend error
+
+Handle:
+
+```text
+segmented_recurring_resize_requires_resolution
+```
+
+without modifying planner state.
+
+Explain clearly that one or more customized occurrences cannot be resized
+automatically.
+
+Do not silently reset them.
+
+---
+
+# 71. Resolution-required occurrence information
+
+If the backend returns affected occurrences, display enough context for the
+user to understand:
+
+```text
+which date
+
+current range
+
+requested range
+```
+
+A concise message/list is sufficient.
+
+Do NOT build the final guided conflict/resolution wizard in this phase.
+
+---
+
+# 72. Structural resolution remains explicit
+
+The user may later manually edit those occurrences using the structural editor
+already implemented.
+
+Do NOT automatically open/edit/save every incompatible occurrence as part of
+Apply Week/Future.
+
+Keep this first implementation simple.
+
+---
+
+# 73. Recurring conflict frontend behavior
+
+For:
+
+```text
+recurring_schedule_conflict
+```
+
+frontend should:
+
+```text
+show blocker information
+
+leave authoritative planner unchanged
+
+not modify blockers
+
+not invoke legacy override
+
+not automatically retry
+```
+
+---
+
+# 74. `temporal_reconciliation_required`
+
+Do NOT locally reconcile statuses.
+
+Do NOT automatically resend Apply Week / Apply Future afterward.
+
+Use the established reconciliation/reload recovery pattern.
+
+---
+
+# 75. Concurrency frontend behavior
+
+For:
+
+```text
+concurrent_conflict
+```
+
+do not automatically replay the batch.
+
+Refresh authoritative state according to existing mutation recovery behavior.
+
+The user must review/retry.
+
+---
+
+# 76. Preserve structural editor
+
+This phase must not regress:
+
+```text
+single-occurrence structural draft editor
+
+translate
+
+PUT structure
+
+reset segmentation
+```
+
+Apply Week/Future should not route through the local structural draft for every
+target occurrence.
+
+---
+
+# 77. Preserve segment status mutation
+
+Do not regress:
+
+```text
+PATCH /api/occurrence-segments/<id>/status
+```
+
+Recurring schedule mutation does not replace segment status mutation.
+
+---
+
+# 78. Preserve reconciliation bootstrap
+
+Startup remains:
+
+```text
+POST reconcile
+→ GET planner-state
+→ hydrate
+```
+
+Do not change that order.
+
+---
+
+# 79. Legacy recurring local writes must retire
+
+After this phase, active Apply Week and Apply Future frontend paths must NOT
+perform local persisted-domain writes such as:
+
+```text
+Occurrence.status = ...
+
+Occurrence.startTime = ...
+
+Occurrence.endTime = ...
+
+blocker.status = ...
+```
+
+as authoritative state.
+
+Mutation success is followed by authoritative GET.
+
+---
+
+# 80. `edit_without_occurrence`
+
+Audit how this legacy path interacts with Apply Week/Future.
+
+If its recurring branches are the active old mechanism:
+
+```text
+remove/bypass those recurring branches
+```
+
+in favor of the segment-aware backend flow.
+
+Do NOT necessarily remove the entire helper if another legacy conflict path
+still uses it.
+
+At completion classify what remains.
+
+---
+
+# 81. `commitPreparedScheduleChange`
+
+No Apply Week/Future path may use it to perform incompatible parent-only
+segment-unaware writes after this phase.
+
+If the helper remains for the future conflict-engine migration:
+
+```text
+leave it isolated/dormant/limited
+```
+
+and report its remaining callers.
+
+---
+
+# 82. Legacy conflict resolution
+
+Do NOT migrate the entire conflict engine in this phase.
+
+If an Apply Week/Future operation encounters a conflict:
+
+```text
+new segment-aware backend detection
+→ reject
+```
+
+Do not fall back to the legacy resolution mechanism.
+
+---
+
+# 83. Deletion/exclusion semantics
+
+Preserve existing recurring deletion/exclusion semantics if Apply Week/Future
+uses them.
+
+Any surviving or newly created occurrence must maintain valid segments.
+
+Do not create:
+
+```text
+zero-segment surviving occurrence
+```
+
+---
+
+# 84. Occurrence deletion
+
+If existing approved recurring behavior deletes an occurrence entirely:
+
+```text
+ON DELETE CASCADE
+```
+
+may remove its segments as already defined by schema 004.
+
+Do not manually orphan/delete children outside the parent transaction.
+
+---
+
+# 85. Historical provenance references
+
+Remember:
+
+```text
+source_occurrence_id
+ON DELETE NO ACTION
+```
+
+If existing recurring mutation attempts to delete a referenced occurrence:
+
+```text
+preserve the current deletion restriction
+```
+
+Do not weaken historical provenance to make the batch succeed.
+
+---
+
+# 86. No movement lock
+
+Conversely, a referenced source occurrence may still move when allowed.
+
+Do not restore the old:
+
+```text
+referenced source cannot move
+```
+
+rule.
+
+---
+
+# 87. Pure domain tests
+
+Add focused tests for recurring transformation classification:
+
+```text
+simple full-envelope detection
+
+one trimmed child classified custom
+
+multi-segment classified custom
+
+simple resize follows envelope
+
+simple move follows envelope
+
+custom same-duration move translates
+
+custom move preserves IDs
+
+custom move preserves statuses
+
+custom move preserves gaps
+
+custom resize rejected
+```
+
+---
+
+# 88. No segment inheritance test
+
+Explicitly verify:
+
+```text
+existing occurrence has custom segmentation
+```
+
+then Apply Future changes recurring schedule / produces a new generated
+occurrence.
+
+Expected new occurrence:
+
+```text
+exactly one default segment
+```
+
+NOT the custom runtime segment set.
+
+---
+
+# 89. Simple recurring resize test
+
+Persist:
+
+```text
+parent 08:00–09:00
+
+S1 08:00–09:00 pending
+```
+
+Recurring candidate:
+
+```text
+10:00–11:30
+```
+
+Expected:
+
+```text
+same S1 ID
+
+S1 10:00–11:30
+
+same status
+```
+
+assuming temporal/conflict validation passes.
+
+---
+
+# 90. Custom pure move test
+
+Persist:
+
+```text
+parent 08:00–12:00
+
+S1 08:00–09:00
+
+S2 10:30–12:00
+```
+
+Candidate:
+
+```text
+13:00–17:00
+```
+
+Verify:
+
+```text
+S1/S2 IDs unchanged
+
+statuses unchanged
+
+gaps unchanged
+
+durations unchanged
+```
+
+---
+
+# 91. Custom resize rejection test
+
+Same custom occurrence:
+
+```text
+08:00–12:00
+```
+
+candidate:
+
+```text
+08:00–11:00
+```
+
+Expected:
+
+```text
+segmented_recurring_resize_requires_resolution
+```
+
+and:
+
+```text
+zero writes
+```
+
+to schedule/occurrences/segments.
+
+---
+
+# 92. Multiple custom resize test
+
+If several targeted occurrences are incompatible:
+
+```text
+return all of them
+```
+
+deterministically.
+
+Still:
+
+```text
+zero writes
+```
+
+---
+
+# 93. Completed-time recurring test
+
+Current-day completed segment translated so its end becomes future:
+
+```text
+reject
+```
+
+No status rewrite.
+
+---
+
+# 94. Frozen recurring test
+
+Prove frozen occurrences are not structurally rewritten.
+
+Follow existing target semantics:
+
+```text
+excluded if they should never be targets
+```
+
+or:
+
+```text
+controlled rejection if unexpectedly targeted
+```
+
+but never mutate them.
+
+---
+
+# 95. Yesterday reconciliation test
+
+Historical editable target with transient segment:
+
+```text
+pending
+or
+in_progress
+```
+
+Expected:
 
 ```text
 temporal_reconciliation_required
 ```
 
-do NOT mutate sibling statuses locally.
-
-Do NOT automatically resend the structural mutation after reconciliation.
-
-A safe recovery is:
-
-```text
-POST reconcile
-→ GET planner-state
-→ invalidate/rebuild stale structural draft
-→ tell user to review/retry
-```
-
-If implementing automatic reconciliation would complicate the current
-architecture, a clear reload/retry message is acceptable.
-
-Document the chosen behavior.
+No silent normalization.
 
 ---
 
-# 61. Concurrency conflict
+# 96. Gap-aware recurring conflict test
 
-If backend reports a concurrency/serialization conflict:
+Candidate parent envelopes may overlap another occurrence.
 
-```text
-do not auto-resubmit the structural command
-```
-
-Refresh authoritative state according to the existing recovery architecture.
-
-A stale draft must not be silently replayed against a changed graph.
-
----
-
-# 62. Occurrence not found
-
-If the target occurrence disappeared:
+If actual candidate segments do not overlap:
 
 ```text
-close/invalidate editor
-
-refresh planner-state
-
-clear dangling selectedOccurrenceId / selectedSegmentId as required
-```
-
-Do not retain an editor attached to a nonexistent entity.
-
----
-
-# 63. Persisted-state invalid
-
-If backend reports persisted corruption/inconsistent state:
-
-```text
-surface a controlled error
-
-do not attempt client repair
+allow
 ```
 
 ---
 
-# 64. Database unavailable
+# 97. Batch self-conflict test
 
-Preserve the draft where safe so the user does not immediately lose manual
-work.
+Two candidate occurrences in the same recurring batch become blocking and
+overlap.
 
-Do not claim the change was saved.
+Expected:
+
+```text
+recurring_schedule_conflict
+```
+
+No partial writes.
 
 ---
 
-# 65. API client
+# 98. External conflict test
 
-Extend the centralized planner API layer with focused functions equivalent to:
+Candidate segment overlaps an unaffected external blocker.
+
+Expected:
 
 ```text
-translateOccurrence(occurrenceId, startTime, endTime)
-
-replaceOccurrenceStructure(occurrenceId, payload)
-
-resetOccurrenceSegmentation(occurrenceId, startTime, endTime)
+recurring_schedule_conflict
 ```
 
-Use existing request/error conventions.
+with actual blocker segment data.
 
-Views must not call `fetch()` directly.
+No blocker mutation.
 
 ---
 
-# 66. CORS
+# 99. Multiple blocker test
 
-Add only the minimum backend CORS support required for browser consumption of:
-
-```text
-POST /api/occurrences/<id>/translate
-
-PUT /api/occurrences/<id>/structure
-
-POST /api/occurrences/<id>/reset-segmentation
-```
-
-Preserve the existing:
-
-```text
-VCS_ALLOWED_ORIGINS
-```
-
-architecture.
-
-Do NOT allow:
-
-```text
-*
-```
-
-Do not redesign CORS globally.
+Return all relevant blockers deterministically.
 
 ---
 
-# 67. CORS preflight
+# 100. Non-blocking candidate test
 
-Ensure an allowed frontend origin can perform:
+Segments with:
 
 ```text
-PUT structure
+cancelled
+
+not_completed
 ```
 
-including browser preflight.
+must not block other schedules.
 
-Also preserve rejection behavior for unapproved origins.
+Use shared blocking policy.
 
 ---
 
-# 68. Selection preservation
+# 101. Metadata preservation test
 
-After successful command + GET:
+Recurring transformations preserve:
 
 ```text
-selectedOccurrenceId
+conflict_reason
+
+source_occurrence_id
+
+origin_reason
+
+last_conflict_action
 ```
 
-should remain when the occurrence still exists.
-
-Use persisted IDs.
+on existing occurrences.
 
 ---
 
-# 69. Selected segment after normal structural save
+# 102. `source_generation_slot_id` test
 
-If:
-
-```text
-selectedSegmentId
-```
-
-refers to a persisted segment that survived the final structure:
-
-```text
-preserve selection
-```
-
-If that segment was omitted/deleted:
-
-```text
-clear selectedSegmentId
-```
-
-Do not select another segment by index automatically.
-
----
-
-# 70. Selected segment after reset
-
-Reset deletes all old segments and creates a new ID.
-
-Therefore:
-
-```text
-old selectedSegmentId
-→ clear
-```
-
-Do not assume:
-
-```text
-Segment 1 before reset
-==
-Segment 1 after reset
-```
-
----
-
-# 71. Expanded occurrence preservation
-
-If the occurrence was expanded before structural save:
-
-```text
-keep it expanded
-```
-
-when the same parent still exists after hydration.
-
-Expansion remains transient UI state.
-
----
-
-# 72. New segments after authoritative GET
-
-A newly created draft segment receives its real backend UUID only after:
-
-```text
-command
-→ GET planner-state
-```
-
-Do not attempt to map the transient draft key into a permanent identity by
-array position.
-
----
-
-# 73. Editor after successful save
-
-After authoritative GET succeeds:
-
-```text
-close draft editor
-```
-
-or rebuild it from the authoritative state only if the current UX clearly
-expects it to remain open.
-
-Prefer:
-
-```text
-save → close → refreshed planner
-```
-
-for this first implementation.
-
----
-
-# 74. Editor after failed save
-
-For a rejected command:
-
-```text
-keep editor open
-keep draft
-show error
-```
-
-unless the error proves the target no longer exists or the draft is stale due
-to concurrency.
-
----
-
-# 75. Single-segment occurrence
-
-The structural editor must work for:
-
-```text
-1 segment
-```
-
-The user may:
-
-```text
-trim it
-
-resize parent + adjust it
-
-add another segment
-
-move the entire occurrence
-
-reset segmentation
-```
-
----
-
-# 76. Multi-segment occurrence
-
-The editor must work for:
-
-```text
-N segments
-```
-
-without relying on parent status controls.
-
-Each persisted child remains independently identified.
-
----
-
-# 77. Status controls remain separate
-
-The segment status UI implemented in the previous phase remains active outside
-the structural editor.
-
-Do not merge:
-
-```text
-status mutation
-
-structural mutation
-```
-
-into one generic endpoint or one ambiguous action.
-
----
-
-# 78. Monthly aggregate
-
-Preserve monthly aggregate semantics.
-
-Structural edits may change parent aggregate only when the backend determines
-that the final child set requires it.
-
-Frontend reads the refreshed:
-
-```text
-Occurrence.status
-```
-
-after GET.
-
-Do not derive a replacement parent status locally.
-
----
-
-# 79. Duration display
-
-While editing, draft duration display may be computed locally from:
-
-```text
-sum of draft segment durations
-```
-
-because it is purely presentation.
-
-Recall approved semantics:
-
-```text
-structural duration
-=
-sum ALL segment durations regardless of status
-```
-
-Do not treat parent envelope length as actual active duration when gaps exist.
-
----
-
-# 80. Gap visibility
-
-The editor should make gaps understandable.
-
-It is sufficient that the user can see:
-
-```text
-Seg 1 13:00–14:00
-
-Seg 2 16:00–17:00
-```
-
-and therefore understand that:
-
-```text
-14:00–16:00
-```
-
-is free.
-
-Do not create a timeline visualization unless the existing UI makes it trivial.
-
----
-
-# 81. Segment ordering in editor
-
-Present draft segments chronologically:
-
-```text
-startTime
-
-endTime
-
-stable tie-breaker
-```
-
-Do not persist an ordinal.
-
-For new draft rows, use a transient tie-breaker if necessary.
-
----
-
-# 82. Reordering is derived
-
-Do not implement drag-and-drop ordering.
-
-Changing times may cause rows to appear in a new chronological order.
-
-Order is derived from time, not user-managed position.
-
----
-
-# 83. Ordinal labels remain derived
-
-Labels such as:
-
-```text
-Seg 1
-Seg 2
-Seg 3
-```
-
-are presentation only.
-
-Do not send/persist segment number.
-
----
-
-# 84. Existing expanded child rows
-
-Preserve the current planner read/display model:
-
-```text
-parent row
-└── child rows when expanded
-```
-
-The structural editor may be:
-
-```text
-inline
-
-panel
-
-existing edit area
-```
-
-depending on current architecture.
-
-Choose the smallest coherent integration.
-
-Do not redesign the entire planner matrix.
-
----
-
-# 85. Planner chronology limitation remains
-
-Do NOT solve the known limitation where expanded segments remain grouped under
-their parent instead of globally interleaving with other occurrences.
-
-That cleanup remains a later phase.
-
----
-
-# 86. Legacy single-occurrence time mutation paths
-
-Audit existing active frontend paths that edit:
-
-```text
-Occurrence.startTime
-
-Occurrence.endTime
-```
-
-directly or through legacy parent-level logic.
-
-Normal single-occurrence structural editing must no longer bypass the new
-segment-aware API.
-
-Route the normal editable occurrence UX through:
-
-```text
-translate
-or
-replace structure
-```
-
-as appropriate.
-
----
-
-# 87. Legacy recurring mutation paths remain out of scope
-
-Do NOT rewrite:
+Verify existing and newly generated occurrences maintain correct generation
+slot provenance after:
 
 ```text
 Apply Week
@@ -1978,613 +2388,358 @@ Apply Week
 Apply Future
 ```
 
-in this phase.
+---
 
-If existing recurring UI offers those actions from a structural editor:
+# 103. Referenced source movement test
+
+A source occurrence referenced by another occurrence may be translated through
+an allowed recurring move.
+
+Expected:
 
 ```text
-guard/disable them
+movement succeeds if all current constraints pass
+
+historical source link remains
 ```
 
-until the next dedicated phase.
-
-Do not fake propagation.
+No legacy movement lock.
 
 ---
 
-# 88. Legacy conflict write path
+# 104. New occurrence graph test
 
-The previously identified incompatible path:
+Every occurrence created by recurring mutation must immediately contain:
 
 ```text
-edit_without_occurrence
-→ commitPreparedScheduleChange
+1 parent
+
+1 default segment
 ```
 
-may still exist for the old conflict system.
-
-Do NOT route the new structural editor through it.
-
-Do NOT attempt to redesign the conflict engine here.
-
-Report whether it remains active and where.
-
----
-
-# 89. No direct parent-status write
-
-Structural editor code must not call legacy:
+with:
 
 ```text
-setOccurrenceStatus
+stable UUID
 
-advanceOccurrenceStatus
-```
+matching envelope
 
-to compensate for structural changes.
+valid initial status
 
-Backend aggregate is authoritative.
-
----
-
-# 90. No local conflict mutation
-
-Do not call existing local helpers that:
-
-```text
-cancel blocker
-
-mark blocker not_finished
-
-change parent status because of conflict
-```
-
-from the structural editor.
-
----
-
-# 91. Accessibility
-
-Structural editor controls need understandable labels.
-
-Time inputs must be associated with:
-
-```text
-general start/end
-
-segment start/end
-```
-
-Buttons such as:
-
-```text
-Agregar segmento
-
-Eliminar segmento
-
-Guardar
-
-Cancelar
-
-Restablecer segmentación
-```
-
-must be keyboard reachable.
-
-Do not rely only on color/icons.
-
----
-
-# 92. Focus
-
-When opening the editor:
-
-```text
-focus should move to a meaningful first control
-```
-
-where practical.
-
-After save/cancel:
-
-```text
-return focus sensibly
-```
-
-if existing architecture supports it.
-
-Do not create an elaborate focus-management framework.
-
----
-
-# 93. Mobile behavior
-
-Verify at the existing mobile breakpoint.
-
-The editor must not create global horizontal overflow.
-
-Segment fields may stack vertically if needed.
-
-Do not shrink controls to unusable sizes merely to keep one row.
-
----
-
-# 94. Visual identity
-
-Preserve the existing:
-
-```text
-dark
-
-gold
-
-VCS planner
-```
-
-visual language.
-
-Do not redesign the module.
-
-Use existing spacing, border, button and input patterns where possible.
-
----
-
-# 95. API unit tests
-
-Add/update tests for:
-
-```text
-translate request
-
-structure PUT request
-
-reset request
-
-request methods
-
-URLs
-
-payloads
-
-controlled backend errors
-
-blockers preservation
+derived parent aggregate
 ```
 
 ---
 
-# 96. Draft model tests
+# 105. Atomicity tests
 
-Test:
+Force failures during:
 
 ```text
-opening draft does not mutate persisted occurrence
+GenerationSlot update
 
-existing IDs preserved
+existing segment update
 
-new rows have no persisted ID
+new occurrence insert
 
-draftKey not serialized
+new segment insert
 
-remove only affects draft
-
-cancel sends no request
+parent aggregate update
 ```
+
+Verify the recurring transaction leaves no partial schedule rewrite.
 
 ---
 
-# 97. Structure payload tests
+# 106. Concurrency test
 
-Verify exact serialization for:
+Where practical, verify concurrent Apply Week/Future or structural/status
+changes cannot produce:
 
 ```text
-existing segment
+lost segment structure
 
-new segment
+stale aggregate
 
-existing + new
-
-omitted deleted child
-
-multiple segments
+partial recurrence update
 ```
+
+Reuse current SERIALIZABLE/locking infrastructure.
 
 ---
 
-# 98. Existing status serialization test
+# 107. Apply Week PostgreSQL round trip
 
-Prove the structure editor does not accidentally change an existing persisted
-segment status.
-
-Follow the backend's exact payload rule.
-
----
-
-# 99. New status serialization test
-
-Prove a new draft child sends:
+Against isolated PostgreSQL 16:
 
 ```text
-explicit status
+001 → 002 → 003 → 004
 ```
 
-and no fake ID.
-
----
-
-# 100. Add segment integration test
-
-Start:
+exercise real Apply Week behavior involving at least:
 
 ```text
-Occurrence
-└── S1
+simple occurrence
+
+custom pure-move occurrence
+
+newly generated occurrence where applicable
 ```
 
-Draft:
-
-```text
-S1
-NEW
-```
-
-Save.
-
-Mock authoritative GET:
-
-```text
-S1
-S2-real-uuid
-```
-
-Verify UI uses the backend-provided S2 ID rather than the draft key.
-
----
-
-# 101. Remove segment integration test
-
-Start:
-
-```text
-S1
-S2
-```
-
-Draft removes:
-
-```text
-S2
-```
-
-Verify:
-
-```text
-PUT final set contains S1 only
-
-no DELETE request occurs
-
-GET authoritative state contains S1
-```
-
----
-
-# 102. Manual split integration test
-
-Represent:
-
-```text
-S1 13:00–17:00
-```
-
-as:
-
-```text
-S1 13:00–14:00
-NEW 14:30–17:00
-```
-
-Verify payload identity semantics.
-
-No dedicated backend split endpoint should be called.
-
----
-
-# 103. Trim integration test
-
-Verify:
-
-```text
-S1 08:00–10:00
-→
-S1 08:00–09:15
-```
-
-sends:
-
-```text
-same S1 ID
-new times
-```
-
----
-
-# 104. Resize integration test
-
-Verify changing parent duration and adjusting children sends:
-
-```text
-one complete PUT
-```
-
-Do not send:
-
-```text
-translate
-
-multiple child PATCHes
-```
-
----
-
-# 105. No auto-scale test
-
-Change parent envelope duration without manually changing children.
-
-Verify frontend does NOT silently alter child times.
-
-Draft may become invalid.
-
----
-
-# 106. Pure translate integration test
-
-For explicit movement:
-
-```text
-same duration
-same child structure
-```
-
-verify:
-
-```text
-POST translate
-```
-
-is used.
-
-No structure PUT should be required for that explicit movement interaction.
-
----
-
-# 107. Translate success test
-
-After:
-
-```text
-POST translate success
-```
-
-verify:
+Then:
 
 ```text
 GET planner-state
-
-authoritative moved children
-
-same persisted child IDs
 ```
 
-are used for render.
-
-Do not derive final translated children only from local delta.
+and verify authoritative segment graphs.
 
 ---
 
-# 108. Reset integration test
+# 108. Apply Future PostgreSQL round trip
+
+Do the equivalent real verification for Apply Future.
 
 Verify:
 
 ```text
-explicit confirmation
+GenerationSlot state
 
-POST reset
+existing occurrence segments
 
-GET planner-state
-```
+new occurrence default segments
 
-and:
+sourceGenerationSlotId
 
-```text
-old selectedSegmentId cleared
-new backend UUID used
+parent aggregates
 ```
 
 ---
 
-# 109. Reset cancellation test
+# 109. Custom resize PostgreSQL rollback
 
-If user cancels confirmation:
+Real PostgreSQL test:
 
 ```text
-no API request
+Apply Week/Future includes custom segmented resize
+```
+
+Expected:
+
+```text
+controlled rejection
+
+GenerationSlot unchanged
+
+parents unchanged
+
+segments unchanged
 ```
 
 ---
 
-# 110. Conflict test
+# 110. Recurring conflict PostgreSQL rollback
 
-Mock:
+Real PostgreSQL test:
 
 ```text
-409 occurrence_structure_conflict
+candidate segment conflict
 ```
 
-with blockers.
-
-Verify:
+Expected:
 
 ```text
-draft preserved
+409/control error
 
-error surfaced
+no blocker modification
 
-no blocker mutation
+no target modification
 
-no automatic conflict-resolution call
-
-no authoritative planner mutation
+no recurrence configuration partial write
 ```
 
 ---
 
-# 111. Retry after manual adjustment
+# 111. Frontend API integration
 
-After a conflict rejection:
+Use the existing centralized API client.
+
+Do not introduce direct `fetch()` calls from views.
+
+If existing Apply Week/Future API functions already exist:
 
 ```text
-user edits target draft
-→ Save again
+adapt them
 ```
 
-A new structural request is allowed.
-
-This is a new user attempt, not an automatic retry.
+rather than unnecessarily duplicating them.
 
 ---
 
-# 112. Command-success / GET-failure test
+# 112. Frontend authoritative refresh
 
-Verify:
+On success:
 
 ```text
-PUT succeeds
-
-GET fails
+Apply Week/Future
+→ GET planner-state
+→ hydrate
 ```
 
-Then retry/recovery performs:
+Verify all affected segment structures come from the backend response.
+
+---
+
+# 113. Selection after recurring mutation
+
+Preserve:
+
+```text
+selectedOccurrenceId
+```
+
+if that occurrence still exists.
+
+Preserve:
+
+```text
+selectedSegmentId
+```
+
+only if that persisted segment survives.
+
+Clear dangling IDs.
+
+Do not remap by array index.
+
+---
+
+# 114. Expansion after recurring mutation
+
+Preserve expanded parent state where the same parent survives.
+
+No chronology redesign.
+
+---
+
+# 115. Command-success / GET-failure
+
+Test at least one recurring path:
+
+```text
+command success
+
+GET failure
+```
+
+Then recovery:
 
 ```text
 GET only
 ```
 
-and does NOT send PUT again.
-
-Test the same safety model for at least one structural command.
+No repeated Apply Week/Future command.
 
 ---
 
-# 113. Concurrency error test
-
-Mock the actual backend concurrent/serialization error.
-
-Verify:
-
-```text
-no automatic structural replay
-```
-
-and stale state is not silently accepted.
-
----
-
-# 114. Reconciliation-required test
+# 116. Resolution-required frontend test
 
 Mock:
 
 ```text
-temporal_reconciliation_required
+segmented_recurring_resize_requires_resolution
 ```
 
 Verify:
 
 ```text
-no local sibling status rewrite
+no local recurring write
 
-no automatic resend of structure command
+no segment reset
+
+no local scaling
+
+message identifies affected occurrence(s)
+
+no automatic retry
 ```
-
-Test the chosen recovery behavior.
 
 ---
 
-# 115. Frozen UI test
+# 117. Recurring conflict frontend test
 
-Frozen occurrence:
+Mock:
 
 ```text
-structural editor entry disabled/hidden
-
-no structural request emitted
+recurring_schedule_conflict
 ```
-
----
-
-# 116. Selection tests
 
 Verify:
 
 ```text
-parent survives
-→ selectedOccurrenceId survives
-```
+blocker context shown
 
-and:
+no blocker mutation
 
-```text
-selected existing child survives
-→ selectedSegmentId survives
-```
+no legacy conflict helper invoked
 
-and:
-
-```text
-selected removed child
-→ selectedSegmentId cleared
+no priority confirmation invented
 ```
 
 ---
 
-# 117. Expansion test
+# 118. No runtime segment-template test
 
-Expanded multi-segment parent remains expanded after:
+Frontend must not send:
 
 ```text
-structural command
-→ GET
-→ hydrate
+segments
+
+segmentIds
+
+segment templates
 ```
 
-when parent survives.
+as part of GenerationSlot recurrence configuration unless the current endpoint
+specifically needs occurrence-level data already approved.
+
+Do not extend recurrence payloads with custom segment patterns.
 
 ---
 
-# 118. Monthly aggregate regression
+# 119. Structural editor regression
 
-Verify refreshed parent aggregate continues to drive monthly display.
+Run tests proving the occurrence-local editor still supports:
 
-Do not change monthly aggregate semantics.
+```text
+draft
+
+PUT structure
+
+translate
+
+reset
+```
+
+without being redirected into Apply Week/Future.
 
 ---
 
-# 119. Segment status regression
+# 120. Status regression
 
-Verify the existing dedicated:
+Run tests proving:
 
 ```text
 PATCH segment status
 ```
 
-flow still works after structural editor integration.
-
-Structural editor must not intercept normal status actions.
+still works.
 
 ---
 
-# 120. Bootstrap regression
+# 121. Reconciliation regression
 
-Verify startup remains:
+Run tests proving bootstrap remains:
 
 ```text
 POST reconcile
@@ -2592,29 +2747,170 @@ POST reconcile
 → hydrate
 ```
 
-Structural editor integration must not change this order.
+---
+
+# 122. PlanItem creation regression
+
+Verify default segment creation still works independently from recurring
+mutation.
 
 ---
 
-# 121. CORS tests
+# 123. Legacy path audit
 
-Backend CORS tests should verify allowed origins can use:
+At completion re-audit:
 
 ```text
-POST translate
+edit_without_occurrence
 
-PUT structure
+commitPreparedScheduleChange
 
-POST reset
+Apply Week
+
+Apply Future
+
+legacy parent-level schedule mutation
 ```
 
-and that unapproved origins remain rejected.
+Expected after this phase:
 
-Do not weaken existing policy.
+```text
+Apply Week
+→ segment-aware
+
+Apply Future
+→ segment-aware
+```
+
+No active Apply Week/Future path may remain:
+
+```text
+parent-only
+
+segment-unaware
+
+local-authoritative
+```
 
 ---
 
-# 122. Frontend full suite
+# 124. Conflict path may remain for next phase
+
+It is acceptable if:
+
+```text
+edit_without_occurrence
+
+commitPreparedScheduleChange
+```
+
+still have remaining callers belonging specifically to the legacy conflict
+resolution workflow.
+
+Those callers must be clearly identified.
+
+Do not use them as fallback for recurring conflicts.
+
+---
+
+# 125. CORS
+
+If Apply Week/Future routes already have correct browser CORS support:
+
+```text
+do not change it unnecessarily
+```
+
+If integration requires a minimal method/header update:
+
+```text
+make only that change
+```
+
+Preserve:
+
+```text
+VCS_ALLOWED_ORIGINS
+```
+
+No wildcard.
+
+---
+
+# 126. Browser verification
+
+Use mocks / isolated backend only.
+
+Do NOT use `vcs_dev`.
+
+Verify existing recurring UX in:
+
+```text
+desktop 1440×900
+
+mobile approximately 390×844
+```
+
+---
+
+# 127. Browser — simple Apply Week/Future
+
+Verify a normal/simple occurrence can use recurring actions and authoritative
+refresh succeeds.
+
+---
+
+# 128. Browser — custom pure move
+
+Mock authoritative response showing translated custom segments.
+
+Verify:
+
+```text
+same child IDs
+
+same gaps
+
+new times
+```
+
+render correctly after GET.
+
+Frontend must not calculate/persist these children itself.
+
+---
+
+# 129. Browser — custom resize rejection
+
+Verify:
+
+```text
+controlled message
+
+planner unchanged
+
+no hidden reset
+
+no hidden scaling
+```
+
+---
+
+# 130. Browser — recurring conflict rejection
+
+Verify blocker message without legacy conflict resolution actions firing.
+
+---
+
+# 131. Responsive behavior
+
+Do not redesign recurring UI.
+
+Verify no new global horizontal overflow.
+
+---
+
+# 132. Full frontend suite
 
 Run:
 
@@ -2630,16 +2926,16 @@ Report:
 ```text
 number of files
 
-number of tests
+number of tests if available
 
 result
 ```
 
 ---
 
-# 123. Backend regression
+# 133. Full backend suite
 
-Because CORS/app routing may change, run:
+Run:
 
 ```text
 .venv/bin/python -m unittest discover \
@@ -2647,15 +2943,47 @@ Because CORS/app routing may change, run:
   -p 'test_*.py'
 ```
 
-Report skips honestly.
+Report skipped tests honestly.
 
 ---
 
-# 124. Syntax checks
+# 134. PostgreSQL 16 integration
 
-Run `node --check` for every modified JS file.
+Run the existing isolated schema-004 harness.
 
-Also run:
+Verify real:
+
+```text
+001 → 004
+
+Apply Week
+
+Apply Future
+
+custom translation
+
+new default segment creation
+
+custom resize rollback
+
+segment conflict rollback
+```
+
+Do not use `vcs_dev`.
+
+---
+
+# 135. Syntax and consistency
+
+Run:
+
+```text
+node --check
+```
+
+for every modified JS file.
+
+Run:
 
 ```text
 .venv/bin/python -m compileall -q \
@@ -2670,113 +2998,7 @@ git diff --check
 
 ---
 
-# 125. Browser verification
-
-Use the same safe browser strategy as the previous frontend integration phase.
-
-Do NOT use real `vcs_dev`.
-
-Verify at minimum:
-
-```text
-desktop 1440×900
-
-mobile approximately 390×844
-```
-
----
-
-# 126. Browser — single segment
-
-Verify visually:
-
-```text
-open editor
-
-edit times
-
-add segment
-
-remove draft segment
-
-cancel
-
-save
-```
-
-with no unexpected planner mutation before save.
-
----
-
-# 127. Browser — multi-segment
-
-Verify:
-
-```text
-existing IDs represented correctly
-
-rows understandable
-
-status read-only for existing children
-
-new child status input
-
-duration display
-
-save/cancel
-```
-
----
-
-# 128. Browser — reset
-
-Verify:
-
-```text
-confirmation
-
-success refresh
-
-old child selection cleared
-
-parent preserved
-```
-
----
-
-# 129. Browser — conflict
-
-Mock a structural 409.
-
-Verify:
-
-```text
-draft remains visible
-
-error is understandable
-
-user can manually adjust target times
-```
-
----
-
-# 130. Browser — responsive
-
-Verify:
-
-```text
-no global horizontal overflow
-
-controls usable
-
-time fields readable
-
-buttons reachable
-```
-
----
-
-# 131. No real schema rollout
+# 136. Still no real schema rollout
 
 Even after this phase passes:
 
@@ -2784,11 +3006,17 @@ Even after this phase passes:
 DO NOT apply migration 004 to vcs_dev
 ```
 
-Remaining incompatible paths still exist.
+The major remaining blocker is still:
+
+```text
+segment-aware conflict resolution
+```
+
+plus any legacy active write paths found by the final audit.
 
 ---
 
-# 132. Expected architecture after this phase
+# 137. Expected architecture after this phase
 
 Expected state:
 
@@ -2805,7 +3033,7 @@ frontend read/display
 PlanItem creation + default segment
 ✅
 
-segment status backend
+segment status
 ✅
 
 persistent reconciliation
@@ -2820,8 +3048,14 @@ backend structural mutations
 frontend structural editor
 ✅
 
-Apply Week/Future segment-aware
-❌
+Apply Week segment-aware
+✅
+
+Apply Future segment-aware
+✅
+
+runtime segment templates
+❌ intentionally
 
 segment conflict-resolution engine
 ❌
@@ -2831,79 +3065,34 @@ conflict UX
 
 planner chronology final cleanup
 ❌
+
+real schema rollout
+❌
 ```
 
 ---
 
-# 133. Legacy path audit
+# 138. Documentation
 
-At completion explicitly identify active frontend write paths that still use
-legacy occurrence-level schedule/conflict behavior.
-
-Especially inspect:
+Update only necessary documentation describing:
 
 ```text
-edit_without_occurrence
+segment-aware recurring mutation behavior
 
-commitPreparedScheduleChange
+simple vs custom classification
 
-Apply Week
+custom resize rejection
 
-Apply Future
+no segment-template inheritance
+
+remaining conflict-engine incompatibility
 ```
 
-Classify each as:
-
-```text
-active incompatible
-
-guarded
-
-dormant
-
-not applicable
-```
-
-Do not silently leave unknown compatibility.
+Do not create speculative recurring segment-template docs.
 
 ---
 
-# 134. Runtime readiness statement
-
-Do NOT claim schema 004 is runtime-ready unless all remaining write paths are
-compatible.
-
-This phase does not resolve:
-
-```text
-recurring propagation
-
-legacy conflict resolution
-```
-
-Therefore real migration remains blocked.
-
----
-
-# 135. Documentation
-
-Update documentation only where necessary to describe:
-
-```text
-structural editor behavior
-
-local draft model
-
-authoritative save flow
-
-remaining incompatible legacy paths
-```
-
-Do not create speculative future docs.
-
----
-
-# 136. Git rules
+# 139. Git rules
 
 The user controls Git.
 
@@ -2927,7 +3116,7 @@ Do not revert user work.
 
 ---
 
-# 137. Completion report
+# 140. Completion report
 
 At completion provide:
 
@@ -2935,154 +3124,164 @@ At completion provide:
 
 List every created/modified file.
 
-## Editor architecture
+## Existing recurring behavior audit
+
+Explain exactly what:
+
+```text
+Apply Week
+
+Apply Future
+```
+
+currently target and mutate.
+
+## Classification
 
 Explain:
 
 ```text
-where draft state lives
+SIMPLE
 
-how it is cloned
-
-how persisted state stays untouched
-
-how new draft children are identified
+CUSTOM
 ```
 
-## UI
+including why one trimmed child is custom.
+
+## Simple behavior
 
 Explain:
 
 ```text
-editor entry point
+envelope update
 
-parent envelope controls
+segment ID preservation
 
-segment controls
+status preservation
 
-add
-
-remove
-
-trim/split representation
-
-resize
-
-translate
-
-reset
+aggregate validation
 ```
 
-## API integration
-
-Report final client functions and exact payloads for:
-
-```text
-translate
-
-structure replacement
-
-reset
-```
-
-## Save behavior
+## Custom behavior
 
 Explain:
 
 ```text
-draft
-→ command
-→ GET
-→ hydrate
+same-duration translate
+
+ID/status/gap preservation
+
+duration-changing rejection
 ```
 
-and:
-
-```text
-command succeeds / GET fails
-```
-
-recovery.
-
-## Identity
+## New occurrences
 
 Explain:
 
 ```text
-existing IDs
+default single segment creation
 
-new draft keys
+UUID generation
 
-new backend IDs
+status/aggregate
 
-deleted IDs
-
-reset IDs
+sourceGenerationSlotId
 ```
 
-## Status behavior
+## No inheritance
+
+Explicitly confirm runtime custom segmentation is NOT copied into GenerationSlot
+or future generated occurrences.
+
+## Conflict guard
 
 Explain:
 
 ```text
-existing status read-only
+batch target exclusion
 
-new segment explicit status
+candidate-vs-candidate
 
-dedicated status API remains separate
+candidate-vs-external
+
+gap awareness
+
+blocking statuses
+
+rejection-only behavior
 ```
 
-## Errors
+## Transactions
 
-Explain frontend behavior for:
+Explain:
 
 ```text
-occurrence_structure_conflict
+SERIALIZABLE
 
-duration mismatch
+lock order
 
-history frozen
-
-temporal reconciliation required
-
-concurrent conflict
-
-not found
-
-database unavailable
+schedule + occurrence + segment atomicity
 ```
 
-## Selection / expansion
+## Frontend integration
 
-Explain preservation and cleanup rules.
+Explain:
 
-## CORS
+```text
+Apply Week
 
-Explain minimal structural-route changes.
+Apply Future
+
+GET-after-success
+
+GET-only recovery
+
+resolution-required UX
+
+conflict UX
+```
 
 ## Legacy paths
 
-Classify:
+Classify remaining:
 
 ```text
 edit_without_occurrence
 
 commitPreparedScheduleChange
 
-Apply Week
+other parent-only writers
+```
 
-Apply Future
+and identify exact remaining callers.
 
-other parent-level structural writers
+## PostgreSQL verification
+
+Describe actual:
+
+```text
+001 → 004
+
+Apply Week round trip
+
+Apply Future round trip
+
+custom move
+
+new occurrence
+
+custom resize rollback
+
+conflict rollback
 ```
 
 ## Tests
 
 Give exact commands and results.
 
-## Browser verification
+## Browser
 
-Report desktop/mobile behavior.
+Report desktop/mobile findings.
 
 ## Safety
 
@@ -3095,11 +3294,9 @@ legacy PlanItems preserved
 
 migrations unchanged
 
-no occurrence date mutation
+no runtime segment templates
 
-no Apply Week/Future segment support
-
-no conflict resolution
+no priority/user-forced conflict resolution
 
 no automatic conflict split/trim
 
@@ -3128,64 +3325,56 @@ No push.
 
 ---
 
-# 138. Definition of done
+# 141. Definition of done
 
 This task is complete when:
 
 ```text
-structural edits occur in a separate local draft
+Apply Week is segment-aware
 
-editing fields performs no persistence
+Apply Future is segment-aware
 
-existing segment IDs survive draft/save
+simple occurrences follow recurring envelope changes
 
-new draft rows have no fake persisted IDs
+simple segment IDs/statuses are preserved
 
-manual add works
+custom occurrences translate only on same-duration pure moves
 
-manual remove works through final-state omission
+custom segment IDs/statuses/gaps/durations are preserved
 
-manual trim works
+custom recurring resize is rejected explicitly
 
-manual split can be represented
+no custom segmentation is silently reset
 
-resize does not scale children
+no runtime segmentation is copied into GenerationSlot
 
-pure movement uses explicit translate behavior
+new generated occurrences receive one default segment
 
-structure save uses one complete PUT
+parent aggregates remain derived
 
-reset uses explicit backend reset command
+temporal rules remain enforced
 
-backend remains structural authority
+completed-time integrity remains enforced
 
-GET refreshes authoritative graph after success
+recurring conflicts use real segments
 
-confirmed mutation is not resent after GET failure
+batch self-conflicts are detected
 
-conflict rejection preserves draft
+external segment conflicts are detected
 
-blockers are not modified
+conflicts are rejected, not resolved
 
-existing statuses are not structurally rewritten
+GenerationSlot + occurrence + segment writes are atomic
 
-new segments provide explicit status
+Apply Week/Future frontend uses authoritative GET after success
 
-selection/expansion remain coherent after refresh
+confirmed batch commands are not repeated after GET failure
 
-frozen history has no active structural edit path
+legacy Apply Week/Future parent-only writes are retired
 
-CORS supports structural commands without weakening origins
+full frontend/backend tests pass
 
-segment-status flow still works
-
-bootstrap reconciliation still works
-
-frontend/backend tests pass
-
-desktop/mobile behavior is verified
-
-legacy recurring/conflict paths are identified
+real PostgreSQL 16 schema-004 recurring paths are verified
 
 vcs_dev remains untouched
 ```
@@ -3194,52 +3383,52 @@ vcs_dev remains untouched
 
 # Final principle
 
-The user may freely manipulate:
+Recurring schedule intent and runtime temporal structure are related, but they
+are not the same thing.
 
 ```text
-a draft
+GenerationSlot
+=
+general recurring schedule
 ```
-
-but VCS persists only:
 
 ```text
-a complete valid final structure
+Occurrence
+=
+one concrete generated instance
 ```
-
-The frontend does not tell PostgreSQL:
 
 ```text
-"delete this child now"
-"move this child now"
-"insert this one now"
+OccurrenceSegment
+=
+the actual structural pieces of that concrete instance
 ```
 
-while the edit is unfinished.
-
-Instead:
+Therefore:
 
 ```text
-PERSISTED GRAPH
-      ↓
-LOCAL DRAFT
-      ↓
-USER EDITS
-      ↓
-FINAL CANDIDATE
-      ↓
-ONE BACKEND COMMAND
-      ↓
-VALIDATE
-      ↓
-ATOMIC COMMIT
-      ↓
-GET AUTHORITATIVE STATE
-      ↓
-UI
+simple runtime instance
+→ can follow recurring envelope changes
 ```
 
-Existing child identity belongs to the persisted segment.
+```text
+custom runtime instance + pure move
+→ preserve customization by translation
+```
 
-New draft identity belongs only to the editor.
+```text
+custom runtime instance + resize
+→ do not guess
+→ require explicit structural resolution
+```
 
-The backend decides the final persisted graph.
+And:
+
+```text
+CUSTOM RUNTIME SEGMENTATION
+≠
+RECURRING SEGMENT TEMPLATE
+```
+
+VCS must preserve the user's concrete history and custom structure without
+silently turning it into a recurrence rule.

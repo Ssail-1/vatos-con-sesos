@@ -469,12 +469,27 @@ async function mutateRecurringSchedule(operation, planItemId, payload, {
         const serverCode = isRecord(responsePayload) && typeof responsePayload.code === "string"
             ? responsePayload.code
             : "http_error";
+        const details = { status: Number.isInteger(response?.status) ? response.status : null };
+        if (serverCode === "segmented_recurring_resize_requires_resolution" && Array.isArray(responsePayload?.occurrences)) {
+            details.occurrences = responsePayload.occurrences.filter((item) =>
+                isRecord(item) && typeof item.occurrenceId === "string"
+                && isValidDateKey(item.date)
+                && isValidTimeRange(item.startTime, item.endTime)
+                && isValidTimeRange(item.requestedStartTime, item.requestedEndTime));
+        }
+        if (serverCode === "recurring_schedule_conflict" && Array.isArray(responsePayload?.blockers)) {
+            details.blockers = responsePayload.blockers.filter((item) =>
+                isRecord(item) && typeof item.occurrenceId === "string"
+                && typeof item.segmentId === "string" && typeof item.planItemId === "string"
+                && isValidDateKey(item.date) && isValidTimeRange(item.startTime, item.endTime)
+                && isValidOccurrenceStatus(item.status));
+        }
         throw new PlannerApiError(
             serverCode,
             isRecord(responsePayload) && typeof responsePayload.message === "string"
                 ? responsePayload.message
                 : "El backend no pudo aplicar la planificación.",
-            { status: Number.isInteger(response?.status) ? response.status : null },
+            details,
         );
     }
 

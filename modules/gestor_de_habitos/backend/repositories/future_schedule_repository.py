@@ -123,9 +123,11 @@ def lock_plan_item_occurrences(connection, plan_item_id):
                 start_time,
                 end_time,
                 status,
-                status_reason,
+                conflict_reason,
                 source_occurrence_id,
-                source_generation_slot_id
+                source_generation_slot_id,
+                origin_reason,
+                last_conflict_action
             FROM public.occurrences
             WHERE plan_item_id = %s
             ORDER BY occurrence_date, start_time, end_time, id
@@ -291,7 +293,7 @@ def insert_occurrences(connection, occurrences):
                 start_time,
                 end_time,
                 status,
-                status_reason,
+                conflict_reason,
                 source_occurrence_id,
                 source_generation_slot_id
             )
@@ -322,9 +324,11 @@ def list_occurrences_from(connection, plan_item_id, effective_date):
                 start_time,
                 end_time,
                 status,
-                status_reason,
+                conflict_reason,
                 source_occurrence_id,
-                source_generation_slot_id
+                source_generation_slot_id,
+                origin_reason,
+                last_conflict_action
             FROM public.occurrences
             WHERE plan_item_id = %s
               AND occurrence_date >= %s

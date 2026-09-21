@@ -83,9 +83,11 @@ def lock_plan_item_week_occurrences(connection, plan_item_id, week_start, week_e
                 start_time,
                 end_time,
                 status,
-                status_reason,
+                conflict_reason,
                 source_occurrence_id,
-                source_generation_slot_id
+                source_generation_slot_id,
+                origin_reason,
+                last_conflict_action
             FROM public.occurrences
             WHERE plan_item_id = %s
               AND occurrence_date BETWEEN %s AND %s
@@ -477,9 +479,11 @@ def list_plan_item_week_occurrences(connection, plan_item_id, week_start, week_e
                 start_time,
                 end_time,
                 status,
-                status_reason,
+                conflict_reason,
                 source_occurrence_id,
-                source_generation_slot_id
+                source_generation_slot_id,
+                origin_reason,
+                last_conflict_action
             FROM public.occurrences
             WHERE plan_item_id = %s
               AND occurrence_date BETWEEN %s AND %s

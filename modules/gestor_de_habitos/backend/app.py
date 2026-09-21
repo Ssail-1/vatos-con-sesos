@@ -382,7 +382,12 @@ def _week_mutation_error_response(error):
             message="Una occurrence no existe en la semana solicitada.",
         ), 404
     if isinstance(error, week_mutation_service.WeekConflictError):
-        return jsonify(status="error", code=error.code, message=str(error)), 409
+        body = {"status": "error", "code": error.code, "message": str(error)}
+        if error.occurrences is not None:
+            body["occurrences"] = error.occurrences
+        if error.blockers is not None:
+            body["blockers"] = error.blockers
+        return jsonify(body), 409
     if isinstance(error, week_mutation_service.WeekConsistencyError):
         return jsonify(
             status="error",
@@ -421,7 +426,12 @@ def _future_schedule_error_response(error):
             message="El PlanItem no existe.",
         ), 404
     if isinstance(error, future_schedule_service.FutureConflictError):
-        return jsonify(status="error", code=error.code, message=str(error)), 409
+        body = {"status": "error", "code": error.code, "message": str(error)}
+        if error.occurrences is not None:
+            body["occurrences"] = error.occurrences
+        if error.blockers is not None:
+            body["blockers"] = error.blockers
+        return jsonify(body), 409
     if isinstance(error, future_schedule_service.FutureConsistencyError):
         return jsonify(
             status="error",
