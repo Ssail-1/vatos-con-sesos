@@ -313,11 +313,21 @@ h1 {
     box-shadow: inset 4px 0 var(--accent);
 }
 
+.activity-matrix tbody tr.is-selected-group {
+    background: rgba(228, 183, 76, 0.065);
+}
+
+.activity-matrix tbody tr.is-selected-segment {
+    background: rgba(228, 183, 76, 0.14);
+    box-shadow: inset 5px 0 var(--accent);
+}
+
 .position-column {
     width: 34px;
 }
 
-.time-column {
+.time-column,
+.end-time-column {
     width: 58px;
 }
 
@@ -352,6 +362,45 @@ h1 {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.occurrence-expand-button {
+    display: inline-grid;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 auto;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--accent);
+    background: #15181c;
+    cursor: pointer;
+    font-size: 0.82rem;
+    line-height: 1;
+}
+
+.occurrence-expand-button:hover,
+.occurrence-expand-button:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-muted);
+}
+
+.occurrence-segment-row {
+    background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.occurrence-segment-row .activity-position,
+.occurrence-segment-row .segment-name {
+    color: color-mix(in srgb, var(--accent) 72%, var(--text-muted));
+}
+
+.occurrence-segment-row .segment-name {
+    padding-left: 27px;
+    overflow: hidden;
+    font-size: 0.7rem;
+    font-weight: 560;
+    text-overflow: ellipsis;
 }
 
 .row-actions {
@@ -537,6 +586,22 @@ thead .selected-day-column {
 .status-button:disabled:hover {
     background: inherit;
     transform: none;
+}
+
+.status-read-only {
+    cursor: default;
+}
+
+.status-read-only:hover {
+    background: #15181c;
+    transform: none;
+}
+
+.segment-status-marker {
+    width: 21px;
+    height: 21px;
+    border-style: dashed;
+    opacity: 0.88;
 }
 
 .occurrence-controls {
@@ -1088,7 +1153,8 @@ thead .selected-day-column {
         width: 30px;
     }
 
-    .time-column {
+    .time-column,
+    .end-time-column {
         width: 54px;
     }
 
@@ -1187,8 +1253,13 @@ thead .selected-day-column {
         width: 25px;
     }
 
-    .time-column {
+    .time-column,
+    .end-time-column {
         width: 48px;
+    }
+
+    .occurrence-segment-row .segment-name {
+        padding-left: 14px;
     }
 
     .duration-column {

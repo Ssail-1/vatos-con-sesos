@@ -7,7 +7,7 @@ export const SCHEDULING_PRIORITY = Object.freeze({
 export const PRIORITY_OVERRIDE_REASON = "priority_override";
 
 export function wasDisplacedByPriorityOverride(occurrence) {
-    return occurrence?.statusContext?.reason === PRIORITY_OVERRIDE_REASON;
+    return occurrence?.conflictContext?.reason === PRIORITY_OVERRIDE_REASON;
 }
 
 export function getSchedulingPriority(planItem) {

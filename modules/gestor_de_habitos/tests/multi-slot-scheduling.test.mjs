@@ -547,7 +547,7 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
     const created = store.commitPreparedScheduleChange(prepared);
     const sourceOccurrence = created.occurrences[0];
     const dependent = store.getOccurrencesForPlanItem("future-dependent")[0];
-    assert.equal(dependent.statusContext.sourceOccurrenceId, sourceOccurrence.id);
+    assert.equal(dependent.conflictContext.sourceOccurrenceId, sourceOccurrence.id);
     const beforeItems = store.getPlanItems();
     const beforeOccurrences = store.getOccurrences();
 
@@ -582,8 +582,8 @@ const activity = (id, generationConfig, activityType = "periodic") => ({
         }),
         (error) => error instanceof PlannerStoreError && error.code === "status_context_locked",
     );
-    assert.deepEqual(store.getPlanItems(), beforeItems, "Apply Future conserva el motor si statusContext bloquea la mutación");
-    assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply Future conserva occurrences si statusContext bloquea la mutación");
+    assert.deepEqual(store.getPlanItems(), beforeItems, "Apply Future conserva el motor si conflictContext bloquea la mutación");
+    assert.deepEqual(store.getOccurrences(), beforeOccurrences, "Apply Future conserva occurrences si conflictContext bloquea la mutación");
 }
 
 console.log("multi-slot-scheduling.test.mjs: todas las pruebas pasaron");

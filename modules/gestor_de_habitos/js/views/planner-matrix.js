@@ -13,6 +13,10 @@ import {
     isSameLocalDate,
 } from "../utils/date-time.js";
 import { deriveAggregateOccurrenceDisplay } from "./aggregate-occurrence-display.js";
+import {
+    calculateSegmentDuration,
+    isMultiSegmentOccurrence,
+} from "../domain/occurrence-segments.js";
 
 function createTextCell(tagName, className, text) {
     const cell = document.createElement(tagName);
@@ -61,6 +65,48 @@ function createStatusButton(planItem, occurrence, date, currentDate, onStatusCha
     return button;
 }
 
+function createReadOnlyStatus(status, accessibleLabel, className = "status-button") {
+    const marker = document.createElement("span");
+    const definition = statusDefinitions[status];
+    marker.className = [
+        "status-button",
+        "status-read-only",
+        className === "status-button" ? "" : className,
+    ].filter(Boolean).join(" ");
+    marker.dataset.status = status;
+    marker.textContent = definition.symbol;
+    marker.setAttribute("role", "img");
+    marker.setAttribute("aria-label", accessibleLabel);
+    marker.title = accessibleLabel;
+    return marker;
+}
+
+function createOccurrenceStatusControl(
+    planItem,
+    occurrence,
+    date,
+    currentDate,
+    onStatusChange,
+    ordinal = null,
+) {
+    if (!isMultiSegmentOccurrence(occurrence)) {
+        return createStatusButton(
+            planItem,
+            occurrence,
+            date,
+            currentDate,
+            onStatusChange,
+            ordinal,
+        );
+    }
+    const definition = statusDefinitions[occurrence.status];
+    return createReadOnlyStatus(
+        occurrence.status,
+        `${planItem.name}, ${formatSelectedDate(date)}: ${definition.label}. `
+            + "Estado agregado de una occurrence con varios segments; solo lectura.",
+    );
+}
+
 function createDayHeader(date, selectedDate, onDateSelect) {
     const header = document.createElement("th");
     const heading = document.createElement("button");
@@ -89,6 +135,7 @@ function renderHeader(matrixHead, monthDates, selectedDate, onDateSelect) {
     row.append(
         createTextCell("th", "position-column", "#"),
         createTextCell("th", "time-column", "Inicio"),
+        createTextCell("th", "end-time-column", "Final"),
         createTextCell("th", "duration-column", "Duración"),
         createTextCell("th", "name-column", "Actividad"),
     );
@@ -121,7 +168,12 @@ function groupOccurrencesByDate(occurrences) {
     return byDate;
 }
 
-export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
+export function buildPlannerRows(
+    planItems,
+    occurrences,
+    selectedDateKey,
+    expandedOccurrenceIds = new Set(),
+) {
     const planItemsById = new Map(planItems.map((planItem) => [planItem.id, planItem]));
     const occurrencesByPlanItem = new Map();
     occurrences.forEach((occurrence) => {
@@ -163,13 +215,36 @@ export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
                 ...model,
                 occurrence,
                 startTime: occurrence.startTime,
-                duration: calculateDuration(occurrence.startTime, occurrence.endTime),
+                endTime: occurrence.endTime,
+                duration: calculateSegmentDuration(occurrence.segments)
+                    ?? calculateDuration(occurrence.startTime, occurrence.endTime),
                 selectedOccurrence: occurrence,
                 selectedDateAmbiguous: model.selectedOccurrences.length > 1,
                 occurrenceOrdinal: ordinalByOccurrenceId.get(occurrence.id),
                 occurrenceCount: model.selectedOccurrences.length,
                 carriesMonthlySummary,
             };
+        })
+        .flatMap((parentRow) => {
+            if (
+                !isMultiSegmentOccurrence(parentRow.occurrence)
+                || !expandedOccurrenceIds.has(parentRow.occurrence.id)
+            ) {
+                return [parentRow];
+            }
+            return [
+                parentRow,
+                ...parentRow.occurrence.segments.map((segment, index) => ({
+                    ...parentRow,
+                    rowType: "segment",
+                    segment,
+                    segmentOrdinal: index + 1,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime,
+                    duration: calculateDuration(segment.startTime, segment.endTime),
+                    carriesMonthlySummary: false,
+                })),
+            ];
         });
 
     const summaryRows = itemModels
@@ -179,6 +254,7 @@ export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
             ...model,
             occurrence: null,
             startTime: null,
+            endTime: null,
             duration: null,
             selectedOccurrence: null,
             selectedDateAmbiguous: false,
@@ -192,6 +268,13 @@ export function buildPlannerRows(planItems, occurrences, selectedDateKey) {
 
 export function getPlannerCellModel(rowData, dateKey, selectedDateKey, currentDateKey = null) {
     if (dateKey === selectedDateKey) {
+        if (rowData.rowType === "segment") {
+            return {
+                type: "segment",
+                occurrence: rowData.occurrence,
+                segment: rowData.segment,
+            };
+        }
         if (rowData.rowType === "occurrence") {
             return {
                 type: "occurrence",
@@ -202,6 +285,7 @@ export function getPlannerCellModel(rowData, dateKey, selectedDateKey, currentDa
         }
         return { type: "empty" };
     }
+    if (rowData.rowType === "segment") return { type: "duplicate-summary" };
     if (!rowData.carriesMonthlySummary) return { type: "duplicate-summary" };
     const dailyOccurrences = rowData.occurrencesByDate.get(dateKey) ?? [];
     if (dailyOccurrences.length === 0) return { type: "empty" };
@@ -216,6 +300,19 @@ export function getPlannerCellModel(rowData, dateKey, selectedDateKey, currentDa
             currentDateKey ?? selectedDateKey,
         ),
     };
+}
+
+export function getPlannerRowSelection(
+    rowData,
+    { selectedPlanItemId = null, selectedOccurrenceId = null, selectedSegmentId = null },
+) {
+    const groupSelected = rowData.occurrence
+        ? rowData.occurrence.id === selectedOccurrenceId
+        : rowData.planItem.id === selectedPlanItemId;
+    const rowSelected = rowData.rowType === "segment"
+        ? groupSelected && rowData.segment.id === selectedSegmentId
+        : groupSelected && selectedSegmentId === null;
+    return { groupSelected, rowSelected };
 }
 
 function createAggregateBadge(planItem, date, display) {
@@ -256,6 +353,10 @@ function createPlanItemRow(rowData, position, context) {
     const nameCell = document.createElement("th");
     const nameContent = document.createElement("span");
     const nameText = document.createElement("span");
+    const { groupSelected, rowSelected: parentSelected } = getPlannerRowSelection(
+        rowData,
+        context,
+    );
     nameCell.className = "name-column activity-name";
     nameCell.scope = "row";
     nameContent.className = "activity-name-content";
@@ -268,9 +369,31 @@ function createPlanItemRow(rowData, position, context) {
     row.dataset.rowType = rowData.rowType;
     if (occurrence) row.dataset.occurrenceId = occurrence.id;
     row.tabIndex = 0;
-    row.setAttribute("aria-selected", String(planItem.id === context.selectedPlanItemId));
+    row.setAttribute("aria-selected", String(groupSelected));
+    if (groupSelected) row.classList.add("is-selected-group");
 
-    if (planItem.id === context.selectedPlanItemId) {
+    if (isMultiSegmentOccurrence(occurrence)) {
+        const expanded = context.expandedOccurrenceIds.has(occurrence.id);
+        row.classList.add("has-segments");
+        if (expanded) row.classList.add("is-expanded");
+        const expandButton = document.createElement("button");
+        expandButton.type = "button";
+        expandButton.className = "occurrence-expand-button";
+        expandButton.textContent = expanded ? "▾" : "▸";
+        expandButton.setAttribute("aria-expanded", String(expanded));
+        expandButton.setAttribute(
+            "aria-label",
+            `${expanded ? "Contraer" : "Expandir"} segments de ${planItem.name}`,
+        );
+        expandButton.title = expandButton.getAttribute("aria-label");
+        expandButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            context.onToggleOccurrence(occurrence.id);
+        });
+        nameContent.prepend(expandButton);
+    }
+
+    if (parentSelected) {
         const referenceDate = formatDateKey(context.currentDate);
         const selectedDateKey = formatDateKey(context.selectedDate);
         const selectedDateFrozen = getDateTemporalZone(selectedDateKey, referenceDate) === TEMPORAL_ZONES.FROZEN;
@@ -282,10 +405,14 @@ function createPlanItemRow(rowData, position, context) {
         insertButton.type = "button";
         insertButton.className = "context-add-button";
         insertButton.textContent = "+";
-        insertButton.disabled = !selectedOccurrence || !selectedOccurrencePolicy.canEditSchedule;
+        insertButton.disabled = !selectedOccurrence
+            || !selectedOccurrencePolicy.canEditSchedule
+            || isMultiSegmentOccurrence(occurrence);
         insertButton.setAttribute(
             "aria-label",
-            selectedDateFrozen
+            isMultiSegmentOccurrence(occurrence)
+                ? `${planItem.name}: agregar junto a una occurrence con varios segments está temporalmente bloqueado`
+                : selectedDateFrozen
                 ? `${planItem.name}: historial congelado, no se puede agregar desde esta fecha`
                 : selectedOccurrence
                 ? `Agregar un registro antes de ${planItem.name}`
@@ -312,7 +439,13 @@ function createPlanItemRow(rowData, position, context) {
                 ? `Editar ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
                 : `Editar planificación de ${planItem.name} desde la fecha seleccionada`,
         );
-        editButton.disabled = selectedDateFrozen;
+        editButton.disabled = selectedDateFrozen || isMultiSegmentOccurrence(occurrence);
+        if (isMultiSegmentOccurrence(occurrence)) {
+            editButton.setAttribute(
+                "aria-label",
+                `${planItem.name}: la edición de occurrences con varios segments está temporalmente bloqueada`,
+            );
+        }
         editButton.title = editButton.getAttribute("aria-label");
         editButton.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -329,9 +462,12 @@ function createPlanItemRow(rowData, position, context) {
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
         deleteButton.textContent = "🗑";
+        deleteButton.disabled = isMultiSegmentOccurrence(occurrence);
         deleteButton.setAttribute(
             "aria-label",
-            selectedDateFrozen
+            isMultiSegmentOccurrence(occurrence)
+                ? `${planItem.name}: la eliminación de occurrences con varios segments está temporalmente bloqueada`
+                : selectedDateFrozen
                 ? `Consultar eliminación de ${planItem.name}: historial congelado`
                 : selectedOccurrence
                 ? `Gestionar eliminación de ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
@@ -340,7 +476,9 @@ function createPlanItemRow(rowData, position, context) {
         deleteButton.title = deleteButton.getAttribute("aria-label");
         deleteButton.addEventListener("click", (event) => {
             event.stopPropagation();
-            context.onDelete(planItem, selectedOccurrence, deleteButton, selectedDateKey);
+            if (!deleteButton.disabled) {
+                context.onDelete(planItem, selectedOccurrence, deleteButton, selectedDateKey);
+            }
         });
         actions.append(editButton, deleteButton);
         nameContent.prepend(insertButton);
@@ -349,12 +487,20 @@ function createPlanItemRow(rowData, position, context) {
 
     row.addEventListener("click", (event) => {
         if (event.target.closest("button, a, input, select")) return;
-        context.onRowSelect(planItem.id, false);
+        context.onRowSelect({
+            planItemId: planItem.id,
+            occurrenceId: occurrence?.id ?? null,
+            segmentId: null,
+        }, false);
     });
     row.addEventListener("keydown", (event) => {
         if (event.target !== row || !["Enter", " "].includes(event.key)) return;
         event.preventDefault();
-        context.onRowSelect(planItem.id, true);
+        context.onRowSelect({
+            planItemId: planItem.id,
+            occurrenceId: occurrence?.id ?? null,
+            segmentId: null,
+        }, true);
     });
 
     row.append(
@@ -363,6 +509,11 @@ function createPlanItemRow(rowData, position, context) {
             "td",
             "time-column activity-time",
             rowData.startTime ?? "—",
+        ),
+        createTextCell(
+            "td",
+            "end-time-column activity-time",
+            rowData.endTime ?? "—",
         ),
         createTextCell(
             "td",
@@ -400,7 +551,7 @@ function createPlanItemRow(rowData, position, context) {
             const controls = document.createElement("span");
             controls.className = "occurrence-controls";
             controls.append(
-                createStatusButton(
+                createOccurrenceStatusControl(
                     planItem,
                     cellModel.occurrence,
                     date,
@@ -417,6 +568,78 @@ function createPlanItemRow(rowData, position, context) {
                 controls.append(ordinal);
             }
             cell.append(controls);
+        }
+        row.append(cell);
+    });
+    return row;
+}
+
+function createSegmentRow(rowData, context) {
+    const { planItem, occurrence, segment, segmentOrdinal } = rowData;
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("th");
+    const { groupSelected: selectedGroup, rowSelected: selectedSegment } = getPlannerRowSelection(
+        rowData,
+        context,
+    );
+    row.dataset.planItemId = planItem.id;
+    row.dataset.occurrenceId = occurrence.id;
+    row.dataset.segmentId = segment.id;
+    row.dataset.rowType = "segment";
+    row.className = "occurrence-segment-row";
+    row.tabIndex = 0;
+    row.setAttribute("aria-selected", String(selectedSegment));
+    if (selectedGroup) row.classList.add("is-selected-group");
+    if (selectedSegment) row.classList.add("is-selected-segment");
+
+    nameCell.className = "name-column activity-name segment-name";
+    nameCell.scope = "row";
+    nameCell.textContent = `Seg ${segmentOrdinal} · ${planItem.name}`;
+    nameCell.title = `${planItem.name}, segment ${segmentOrdinal}`;
+
+    row.addEventListener("click", (event) => {
+        if (event.target.closest("button, a, input, select")) return;
+        context.onRowSelect({
+            planItemId: planItem.id,
+            occurrenceId: occurrence.id,
+            segmentId: segment.id,
+        }, false);
+    });
+    row.addEventListener("keydown", (event) => {
+        if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        context.onRowSelect({
+            planItemId: planItem.id,
+            occurrenceId: occurrence.id,
+            segmentId: segment.id,
+        }, true);
+    });
+
+    row.append(
+        createTextCell("td", "position-column activity-position", "↳"),
+        createTextCell("td", "time-column activity-time", segment.startTime),
+        createTextCell("td", "end-time-column activity-time", segment.endTime),
+        createTextCell("td", "duration-column activity-duration", rowData.duration),
+        nameCell,
+    );
+
+    const selectedDateKey = formatDateKey(context.selectedDate);
+    context.monthDates.forEach((date) => {
+        const dateKey = formatDateKey(date);
+        const cell = document.createElement("td");
+        cell.className = "day-column";
+        cell.dataset.date = dateKey;
+        if (isSameLocalDate(date, context.selectedDate)) {
+            cell.classList.add("selected-day-column");
+            const definition = statusDefinitions[segment.status];
+            cell.append(createReadOnlyStatus(
+                segment.status,
+                `${planItem.name}, Seg ${segmentOrdinal}: ${definition.label}; solo lectura.`,
+                "segment-status-marker",
+            ));
+        } else {
+            cell.classList.add("duplicate-summary-cell");
+            cell.setAttribute("aria-hidden", "true");
         }
         row.append(cell);
     });
@@ -445,25 +668,49 @@ function renderLegend(statusLegend) {
 
 export function createPlannerMatrixView(context) {
     return {
-        render({ planItems, occurrences, monthDates, currentDate, selectedDate, selectedPlanItemId, showAllMonthRecords }) {
+        render({
+            planItems,
+            occurrences,
+            monthDates,
+            currentDate,
+            selectedDate,
+            selectedPlanItemId,
+            selectedOccurrenceId = null,
+            selectedSegmentId = null,
+            expandedOccurrenceIds = new Set(),
+            showAllMonthRecords,
+        }) {
             renderHeader(context.matrixHead, monthDates, selectedDate, context.onDateSelect);
             const selectedDateKey = formatDateKey(selectedDate);
-            const displayRows = buildPlannerRows(planItems, occurrences, selectedDateKey);
+            const displayRows = buildPlannerRows(
+                planItems,
+                occurrences,
+                selectedDateKey,
+                expandedOccurrenceIds,
+            );
             const rows = showAllMonthRecords
                 ? displayRows
-                : displayRows.filter(({ rowType }) => rowType === "occurrence");
+                : displayRows.filter(({ rowType }) => rowType !== "summary");
             const fragment = document.createDocumentFragment();
-            rows.forEach((rowData, index) =>
+            let parentPosition = 0;
+            rows.forEach((rowData) => {
+                if (rowData.rowType !== "segment") parentPosition += 1;
+                const rowContext = {
+                    ...context,
+                    monthDates,
+                    currentDate,
+                    selectedDate,
+                    selectedPlanItemId,
+                    selectedOccurrenceId,
+                    selectedSegmentId,
+                    expandedOccurrenceIds,
+                };
                 fragment.append(
-                    createPlanItemRow(rowData, index + 1, {
-                        ...context,
-                        monthDates,
-                        currentDate,
-                        selectedDate,
-                        selectedPlanItemId,
-                    }),
-                ),
-            );
+                    rowData.rowType === "segment"
+                        ? createSegmentRow(rowData, rowContext)
+                        : createPlanItemRow(rowData, parentPosition, rowContext),
+                );
+            });
             context.matrixBody.replaceChildren(fragment);
             return rows.length;
         },
@@ -472,12 +719,19 @@ export function createPlannerMatrixView(context) {
             renderLegend(context.statusLegend);
         },
 
-        focusPlanItemRow(planItemId) {
-            const row = context.matrixBody.querySelector(
-                `[data-plan-item-id="${CSS.escape(planItemId)}"]`,
-            );
+        focusPlannerRow({ planItemId, occurrenceId = null, segmentId = null }) {
+            const selector = segmentId
+                ? `[data-segment-id="${CSS.escape(segmentId)}"]`
+                : occurrenceId
+                    ? `[data-occurrence-id="${CSS.escape(occurrenceId)}"]:not([data-segment-id])`
+                    : `[data-plan-item-id="${CSS.escape(planItemId)}"]`;
+            const row = context.matrixBody.querySelector(selector);
             row?.focus();
             return Boolean(row);
+        },
+
+        focusPlanItemRow(planItemId) {
+            return this.focusPlannerRow({ planItemId });
         },
     };
 }

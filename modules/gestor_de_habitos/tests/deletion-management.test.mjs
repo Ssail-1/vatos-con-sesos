@@ -336,10 +336,10 @@ for (const [id, config] of modeCases) {
     );
     const higherResult = store.commitPreparedScheduleChange(prepared);
     const interrupted = store.getOccurrenceById(lower.id);
-    const contextBefore = { ...interrupted.statusContext };
+    const contextBefore = { ...interrupted.conflictContext };
     store.stopPlanItemFromDate("lower", REFERENCE_DATE);
     assert.equal(store.getOccurrenceById(lower.id).status, "not_finished");
-    assert.deepEqual(store.getOccurrenceById(lower.id).statusContext, contextBefore);
+    assert.deepEqual(store.getOccurrenceById(lower.id).conflictContext, contextBefore);
     assert.ok(store.getOccurrenceById(higherResult.occurrences[0].id));
 }
 
@@ -356,7 +356,7 @@ for (const [id, config] of modeCases) {
     );
     const higherResult = store.commitPreparedScheduleChange(prepared);
     assert.equal(store.getOccurrenceById(lower.id).status, "cancelled");
-    assert.equal(store.getOccurrenceById(lower.id).statusContext.reason, "priority_override");
+    assert.equal(store.getOccurrenceById(lower.id).conflictContext.reason, "priority_override");
     store.stopPlanItemFromDate("future-lower", REFERENCE_DATE);
     assert.equal(store.getOccurrenceById(lower.id), null, "la cancelación futura desplazada se retira completa");
     assert.ok(store.getOccurrenceById(higherResult.occurrences[0].id), "la occurrence superior permanece intacta");

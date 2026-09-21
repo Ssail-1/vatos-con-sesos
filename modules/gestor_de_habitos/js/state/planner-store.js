@@ -17,6 +17,14 @@ import {
     isValidOccurrenceStatus,
 } from "../domain/occurrence-status.js";
 import {
+    cloneOrderedSegments,
+    CONFLICT_REASONS,
+    getSegmentValidationError,
+    isMultiSegmentOccurrence,
+    LAST_CONFLICT_ACTIONS,
+    ORIGIN_REASONS,
+} from "../domain/occurrence-segments.js";
+import {
     getDateTemporalZone,
     getHistoryCutoff,
     HISTORY_EDIT_WINDOW_DAYS,
@@ -65,9 +73,17 @@ function clonePlanItem(planItem) {
 }
 
 function cloneOccurrence(occurrence) {
+    const { statusContext: _legacyStatusContext, segments, conflictContext, ...fields } = occurrence;
     return {
-        ...occurrence,
-        ...(occurrence.statusContext ? { statusContext: { ...occurrence.statusContext } } : {}),
+        ...fields,
+        ...(segments !== undefined ? {
+            segments: Array.isArray(segments) ? cloneOrderedSegments(segments) : segments,
+        } : {}),
+        ...(conflictContext !== undefined ? {
+            conflictContext: conflictContext && typeof conflictContext === "object"
+                ? { ...conflictContext }
+                : conflictContext,
+        } : {}),
     };
 }
 
@@ -116,13 +132,29 @@ function validateOccurrenceDraft(draft) {
             draft.sourceGenerationSlotId !== null &&
             !isGenerationSlotId(draft.sourceGenerationSlotId)
         ) ||
-        draft.statusContext !== undefined && (
-            draft.statusContext?.reason !== PRIORITY_OVERRIDE_REASON ||
-            typeof draft.statusContext.sourceOccurrenceId !== "string" ||
-            !draft.statusContext.sourceOccurrenceId
-        )
+        draft.conflictContext !== undefined && (
+            !CONFLICT_REASONS.includes(draft.conflictContext?.reason) ||
+            typeof draft.conflictContext.sourceOccurrenceId !== "string" ||
+            !draft.conflictContext.sourceOccurrenceId
+        ) ||
+        draft.originReason !== undefined && !ORIGIN_REASONS.includes(draft.originReason) ||
+        draft.lastConflictAction !== undefined
+            && !LAST_CONFLICT_ACTIONS.includes(draft.lastConflictAction)
     ) {
         throw new PlannerStoreError("invalid_occurrence", "La occurrence no cumple el contrato.");
+    }
+}
+
+function validatePersistedOccurrence(occurrence) {
+    validateOccurrenceDraft(occurrence);
+    if (
+        occurrence.sourceGenerationSlotId === null
+        || getSegmentValidationError(occurrence) !== null
+    ) {
+        throw new PlannerStoreError(
+            "invalid_occurrence_segments",
+            "La occurrence no contiene segments persistidos válidos.",
+        );
     }
 }
 
@@ -199,7 +231,7 @@ function buildHydratedPlannerState(serverState) {
         if (typeof occurrence.id !== "string" || !occurrence.id) {
             throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene una identidad válida.");
         }
-        validateOccurrenceDraft(occurrence);
+        validatePersistedOccurrence(occurrence);
         if (!planItemIds.has(occurrence.planItemId)) {
             throw new PlannerStoreError(
                 "invalid_planner_state",
@@ -221,11 +253,23 @@ function buildHydratedPlannerState(serverState) {
         throw new PlannerStoreError("duplicate_occurrence_id", "Los IDs de occurrence deben ser únicos.");
     }
     if (candidateOccurrences.some(
-        ({ statusContext }) => statusContext && !occurrenceIds.has(statusContext.sourceOccurrenceId),
+        ({ id, conflictContext }) => conflictContext && (
+            conflictContext.sourceOccurrenceId === id
+            || !occurrenceIds.has(conflictContext.sourceOccurrenceId)
+        ),
     )) {
         throw new PlannerStoreError(
             "invalid_planner_state",
-            "Una occurrence contiene un statusContext sin origen válido.",
+            "Una occurrence contiene un conflictContext sin origen válido.",
+        );
+    }
+    const segmentIds = candidateOccurrences.flatMap(
+        ({ segments }) => segments.map(({ id }) => id),
+    );
+    if (new Set(segmentIds).size !== segmentIds.length) {
+        throw new PlannerStoreError(
+            "duplicate_segment_id",
+            "Los IDs de OccurrenceSegment deben ser únicos.",
         );
     }
 
@@ -359,9 +403,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return occurrences.find((candidate) => candidate.id === occurrenceId) ?? null;
     }
 
-    function requireStatusContextSourceUnlocked(occurrence) {
+    function requireConflictContextSourceUnlocked(occurrence) {
         if (occurrences.some(
-            (candidate) => candidate.statusContext?.sourceOccurrenceId === occurrence.id,
+            (candidate) => candidate.conflictContext?.sourceOccurrenceId === occurrence.id,
         )) {
             throw new PlannerStoreError(
                 "status_context_locked",
@@ -387,6 +431,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     function reconcileTemporalState(referenceDate = getCurrentReferenceDate()) {
         const reconciled = [];
         occurrences.forEach((occurrence) => {
+            // Schema-004 state remains read-only until persistent segment
+            // reconciliation becomes the backend authority in a later phase.
+            if (Array.isArray(occurrence.segments)) return;
             if (getDateTemporalZone(occurrence.date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN) return;
             const reconciledStatus = reconcileFrozenStatus(occurrence.status);
             if (reconciledStatus === occurrence.status) return;
@@ -448,6 +495,14 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             );
         }
         return temporal;
+    }
+
+    function requireLegacyParentWrite(occurrence) {
+        if (!isMultiSegmentOccurrence(occurrence)) return;
+        throw new PlannerStoreError(
+            "segment_write_required",
+            "Esta occurrence tiene varios segments y permanece en modo de solo lectura.",
+        );
     }
 
     function requireDraftsOutsideFrozenHistory(drafts, referenceDate = getCurrentReferenceDate()) {
@@ -646,6 +701,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
             throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
         }
+        requireLegacyParentWrite(occurrence);
         requireScheduleMutableDate(occurrence.date);
         if (occurrenceChanges.date !== occurrence.date) {
             throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
@@ -1067,10 +1123,10 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 throw new PlannerStoreError("stale_override", "La agenda cambió desde la confirmación. Revisa nuevamente los conflictos.");
             }
             const conflictReferences = (current.conflicts ?? []).map(({ id }) => getOccurrenceReference(id));
-            const originalStatuses = conflictReferences.map(({ id, status, statusContext }) => ({
+            const originalStatuses = conflictReferences.map(({ id, status, conflictContext }) => ({
                 id,
                 status,
-                ...(statusContext ? { statusContext: { ...statusContext } } : {}),
+                ...(conflictContext ? { conflictContext: { ...conflictContext } } : {}),
             }));
             if (current.type === "override_required") {
                 conflictReferences.forEach((occurrence) => {
@@ -1103,7 +1159,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                             candidate.date === occurrence.date &&
                             timeRangesOverlap(candidate.startTime, candidate.endTime, occurrence.startTime, occurrence.endTime)
                         ) ?? sourceOccurrences[0];
-                        occurrence.statusContext = {
+                        occurrence.conflictContext = {
                             reason: PRIORITY_OVERRIDE_REASON,
                             sourceOccurrenceId: source.id,
                         };
@@ -1111,12 +1167,12 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 }
                 return result;
             } catch (error) {
-                originalStatuses.forEach(({ id, status, statusContext }) => {
+                originalStatuses.forEach(({ id, status, conflictContext }) => {
                     const occurrence = getOccurrenceReference(id);
                     if (!occurrence) return;
                     occurrence.status = status;
-                    if (statusContext) occurrence.statusContext = { ...statusContext };
-                    else delete occurrence.statusContext;
+                    if (conflictContext) occurrence.conflictContext = { ...conflictContext };
+                    else delete occurrence.conflictContext;
                 });
                 throw error;
             }
@@ -1202,7 +1258,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!decision.allowed) {
                 throwForDeletionDecision(decision, "eliminar la occurrence");
             }
-            requireStatusContextSourceUnlocked(occurrence);
+            requireConflictContextSourceUnlocked(occurrence);
             let candidateConfig = cloneGenerationConfig(planItem.generationConfig);
             if (
                 occurrence.sourceGenerationSlotId &&
@@ -1277,7 +1333,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 occurrence.planItemId === planItemId &&
                 shouldRemoveOccurrenceWhenStopping(occurrence, stoppedFromDate, referenceDate)
             );
-            removedOccurrences.forEach(requireStatusContextSourceUnlocked);
+            removedOccurrences.forEach(requireConflictContextSourceUnlocked);
             const removedIds = new Set(removedOccurrences.map(({ id }) => id));
             const preservedOccurrences = occurrences.filter(({ id }) => !removedIds.has(id));
 
@@ -1380,7 +1436,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                         hasGenerationConfig: true,
                     });
                     if (!decision.allowed) throwForDeletionDecision(decision, "eliminar la occurrence");
-                    requireStatusContextSourceUnlocked(occurrence);
+                    requireConflictContextSourceUnlocked(occurrence);
                     deletedIds.add(occurrence.id);
                     candidateConfig = addSlotExclusion(
                         candidateConfig,
@@ -1395,7 +1451,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 }
                 requireScheduleMutableDate(operation.date);
                 if (occurrenceScheduleChanged(occurrence, operation)) {
-                    requireStatusContextSourceUnlocked(occurrence);
+                    requireConflictContextSourceUnlocked(occurrence);
                 }
                 if (operation.date !== occurrence.date) {
                     candidateConfig = addSlotExclusion(
@@ -1563,7 +1619,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                     }
                     return;
                 }
-                if (changed) requireStatusContextSourceUnlocked(existing);
+                if (changed) requireConflictContextSourceUnlocked(existing);
                 const updated = { ...existing, startTime: draft.startTime, endTime: draft.endTime };
                 reconciled.push(updated);
                 if (changed) changedForConflicts.push(updated);
@@ -1572,7 +1628,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             baselineByKey.forEach((occurrence, key) => {
                 if (desiredKeys.has(key)) return;
                 if (canReconcile(occurrence)) {
-                    requireStatusContextSourceUnlocked(occurrence);
+                    requireConflictContextSourceUnlocked(occurrence);
                     return;
                 }
                 const protectedOccurrence = cloneOccurrence(occurrence);
@@ -1718,6 +1774,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
                 throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
             }
+            requireLegacyParentWrite(occurrence);
             requireScheduleMutableDate(occurrence.date);
             if (occurrenceChanges.date !== occurrence.date) {
                 throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
@@ -1739,7 +1796,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceChanges.endTime,
             };
             if (occurrenceScheduleChanged(occurrence, candidateOccurrence)) {
-                requireStatusContextSourceUnlocked(occurrence);
+                requireConflictContextSourceUnlocked(occurrence);
             }
             validateOccurrenceDraft(candidateOccurrence);
             requireSourceSlotDateAvailable(occurrence, candidateOccurrence.date);
@@ -1764,6 +1821,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         updateOccurrence(occurrenceId, occurrenceChanges) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
             const planItem = getPlanItemReference(occurrence.planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
             requireScheduleMutableDate(occurrence.date);
@@ -1774,7 +1832,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceChanges.endTime,
             };
             if (occurrenceScheduleChanged(occurrence, candidate)) {
-                requireStatusContextSourceUnlocked(occurrence);
+                requireConflictContextSourceUnlocked(occurrence);
             }
             validateOccurrenceDraft(candidate);
             requireScheduleMutableDate(candidate.date);
@@ -1806,6 +1864,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         setOccurrenceStatus(occurrenceId, status) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
             if (!isValidOccurrenceStatus(status)) {
                 throw new PlannerStoreError("invalid_status", "El estado no es válido.");
             }
@@ -1824,6 +1883,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         advanceOccurrenceStatus(occurrenceId) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
             const temporal = requireStatusTransition(
                 occurrence,
                 occurrence.status === "pending" ? "cancelled" : occurrence.status === "cancelled" ? "pending" : getNextStatus(occurrence.status),

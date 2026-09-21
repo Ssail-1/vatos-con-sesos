@@ -143,7 +143,7 @@ test("prepareApplyWeekPayload deriva multi-slot sin mutar el store", () => {
         ["00000000-0000-4000-8000-000000000101", SLOT_1, "08:00", "11:00"],
         ["00000000-0000-4000-8000-000000000102", SLOT_2, "14:00", "17:00"],
         ["00000000-0000-4000-8000-000000000103", SLOT_3, "20:00", "22:00"],
-    ].map(([id, sourceGenerationSlotId, startTime, endTime]) => ({
+    ].map(([id, sourceGenerationSlotId, startTime, endTime], index) => ({
         id,
         planItemId: PLAN_ITEM_ID,
         date: "2026-09-21",
@@ -151,6 +151,12 @@ test("prepareApplyWeekPayload deriva multi-slot sin mutar el store", () => {
         endTime,
         status: "pending",
         sourceGenerationSlotId,
+        segments: [{
+            id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
+            startTime,
+            endTime,
+            status: "pending",
+        }],
     }));
     store.hydratePlannerState({
         planItems: [{

@@ -1,4 +1,13 @@
 import { buildApiUrl, getApiBaseUrl } from "./api-config.js";
+import {
+    CONFLICT_REASONS,
+    getSegmentValidationError,
+    LAST_CONFLICT_ACTIONS,
+    ORIGIN_REASONS,
+} from "../domain/occurrence-segments.js";
+import { isGenerationSlotId } from "../domain/generation-slots.js";
+import { isValidOccurrenceStatus } from "../domain/occurrence-status.js";
+import { isValidDateKey, isValidTimeRange } from "../utils/date-time.js";
 
 export class PlannerApiError extends Error {
     constructor(code, message, details = {}) {
@@ -23,6 +32,38 @@ function isConflict(value) {
         typeof value.status === "string";
 }
 
+function isOptionalEnum(value, allowedValues) {
+    return value === undefined || allowedValues.includes(value);
+}
+
+function isValidConflictContext(value) {
+    return value === undefined || (
+        isRecord(value)
+        && CONFLICT_REASONS.includes(value.reason)
+        && typeof value.sourceOccurrenceId === "string"
+        && Boolean(value.sourceOccurrenceId)
+    );
+}
+
+function isPersistedOccurrence(value) {
+    return isRecord(value)
+        && typeof value.id === "string"
+        && Boolean(value.id)
+        && typeof value.planItemId === "string"
+        && Boolean(value.planItemId)
+        && isValidDateKey(value.date)
+        && isValidTimeRange(value.startTime, value.endTime)
+        && isValidOccurrenceStatus(value.status)
+        && (
+            value.sourceGenerationSlotId === undefined
+            || isGenerationSlotId(value.sourceGenerationSlotId)
+        )
+        && isValidConflictContext(value.conflictContext)
+        && isOptionalEnum(value.originReason, ORIGIN_REASONS)
+        && isOptionalEnum(value.lastConflictAction, LAST_CONFLICT_ACTIONS)
+        && getSegmentValidationError(value) === null;
+}
+
 async function readJson(response) {
     try {
         return await response.json();
@@ -37,7 +78,27 @@ export function validatePlannerStateResponse(payload) {
         !Array.isArray(payload.planItems) ||
         !Array.isArray(payload.occurrences) ||
         !payload.planItems.every(isRecord) ||
-        !payload.occurrences.every(isRecord)
+        !payload.occurrences.every(isPersistedOccurrence)
+    ) {
+        throw new PlannerApiError(
+            "invalid_response",
+            "La respuesta del planner no cumple el contrato esperado.",
+        );
+    }
+    const occurrenceIds = new Set(payload.occurrences.map(({ id }) => id));
+    const segmentIds = payload.occurrences.flatMap(
+        ({ segments }) => segments.map(({ id }) => id),
+    );
+    const contextsAreResolvable = payload.occurrences.every(({ id, conflictContext }) => (
+        !conflictContext || (
+            conflictContext.sourceOccurrenceId !== id
+            && occurrenceIds.has(conflictContext.sourceOccurrenceId)
+        )
+    ));
+    if (
+        occurrenceIds.size !== payload.occurrences.length
+        || new Set(segmentIds).size !== segmentIds.length
+        || !contextsAreResolvable
     ) {
         throw new PlannerApiError(
             "invalid_response",

@@ -155,8 +155,8 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const result = store.commitPreparedScheduleChange(prepared);
     const displaced = store.getOccurrenceById(lower.id);
     assert.equal(displaced.status, "cancelled", "la geometría no inventa que pending había comenzado");
-    assert.equal(displaced.statusContext.reason, "priority_override");
-    assert.equal(displaced.statusContext.sourceOccurrenceId, result.occurrences.find(({ planItemId }) => planItemId === result.planItem.id).id);
+    assert.equal(displaced.conflictContext.reason, "priority_override");
+    assert.equal(displaced.conflictContext.sourceOccurrenceId, result.occurrences.find(({ planItemId }) => planItemId === result.planItem.id).id);
     assert.equal(wasDisplacedByPriorityOverride(displaced), true);
 }
 
@@ -188,7 +188,7 @@ assert.equal(getDateTemporalZone("2026-09-27", "2026-09-29", 3), TEMPORAL_ZONES.
     const store = createPlannerStore([activity("manual-cancel", "2026-09-29")], [], "2026-09-29");
     const occurrence = store.getOccurrencesForPlanItem("manual-cancel")[0];
     const cancelled = store.setOccurrenceStatus(occurrence.id, "cancelled");
-    assert.equal("statusContext" in cancelled, false);
+    assert.equal("conflictContext" in cancelled, false);
     assert.equal(wasDisplacedByPriorityOverride(cancelled), false);
 }
 

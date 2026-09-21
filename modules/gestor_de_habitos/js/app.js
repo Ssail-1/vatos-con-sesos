@@ -62,6 +62,21 @@ let selectedDate = new Date(initialCurrentDate);
 let visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 let showAllMonthRecords = true;
 let selectedPlanItemId = null;
+let selectedOccurrenceId = null;
+let selectedSegmentId = null;
+const expandedOccurrenceIds = new Set();
+
+function clearPlannerSelection() {
+    selectedPlanItemId = null;
+    selectedOccurrenceId = null;
+    selectedSegmentId = null;
+}
+
+function selectPlanItemSummary(planItemId) {
+    selectedPlanItemId = planItemId;
+    selectedOccurrenceId = null;
+    selectedSegmentId = null;
+}
 
 function clearFeedback() {
     elements.matrixFeedback.hidden = true;
@@ -96,9 +111,22 @@ function render() {
     elements.toggleMonthRecordsButton.textContent = showAllMonthRecords ? "👁" : "⊝";
     elements.toggleMonthRecordsButton.setAttribute("aria-pressed", String(showAllMonthRecords));
     elements.toggleMonthRecordsButton.setAttribute("aria-label", showAllMonthRecords ? "Mostrar solo el Plan del día" : "Mostrar todos los registros del mes");
+    const visibleOccurrences = plannerStore.getOccurrencesForMonth(year, month);
+    const selectedOccurrence = selectedOccurrenceId
+        ? visibleOccurrences.find(({ id }) => id === selectedOccurrenceId)
+        : null;
+    if (selectedOccurrenceId && !selectedOccurrence) clearPlannerSelection();
+    if (
+        selectedSegmentId
+        && !selectedOccurrence?.segments?.some(({ id }) => id === selectedSegmentId)
+    ) {
+        selectedSegmentId = null;
+    }
     const count = matrixView.render({
-        planItems: plannerStore.getPlanItems(), occurrences: plannerStore.getOccurrencesForMonth(year, month),
-        monthDates: getMonthDates(year, month), currentDate, selectedDate, selectedPlanItemId, showAllMonthRecords,
+        planItems: plannerStore.getPlanItems(), occurrences: visibleOccurrences,
+        monthDates: getMonthDates(year, month), currentDate, selectedDate,
+        selectedPlanItemId, selectedOccurrenceId, selectedSegmentId,
+        expandedOccurrenceIds, showAllMonthRecords,
     });
     elements.emptyState.hidden = count > 0;
 }
@@ -108,7 +136,7 @@ function selectDate(dateKey) {
     if (!date) return;
     selectedDate = date;
     visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-    selectedPlanItemId = null;
+    clearPlannerSelection();
     clearFeedback();
     render();
 }
@@ -121,7 +149,7 @@ function synchronizeMonth(year, month, preference) {
         : formatDateKey(preference === "last" ? monthEnd : new Date(year, month, 1));
     visibleMonth = new Date(year, month, 1);
     selectedDate = dateKeyToLocalDate(selectedDateKey);
-    selectedPlanItemId = null;
+    clearPlannerSelection();
     clearFeedback();
     render();
 }
@@ -146,7 +174,31 @@ const matrixView = createPlannerMatrixView({
             return null;
         }
     },
-    onRowSelect: (id, restore) => { selectedPlanItemId = selectedPlanItemId === id ? null : id; render(); if (restore && selectedPlanItemId) matrixView.focusPlanItemRow(id); },
+    onRowSelect: (selection, restore) => {
+        const sameSelection = selectedPlanItemId === selection.planItemId
+            && selectedOccurrenceId === selection.occurrenceId
+            && selectedSegmentId === selection.segmentId;
+        if (sameSelection) {
+            clearPlannerSelection();
+        } else {
+            selectedPlanItemId = selection.planItemId;
+            selectedOccurrenceId = selection.occurrenceId;
+            selectedSegmentId = selection.segmentId;
+        }
+        render();
+        if (restore && !sameSelection) matrixView.focusPlannerRow(selection);
+    },
+    onToggleOccurrence: (occurrenceId) => {
+        if (expandedOccurrenceIds.has(occurrenceId)) {
+            expandedOccurrenceIds.delete(occurrenceId);
+            if (selectedOccurrenceId === occurrenceId && selectedSegmentId !== null) {
+                selectedSegmentId = null;
+            }
+        } else {
+            expandedOccurrenceIds.add(occurrenceId);
+        }
+        render();
+    },
     onInsertBefore: (item, occurrence, opener) => {
         const daily = plannerStore.getOccurrencesForDate(occurrence.date);
         const index = daily.findIndex(({ id }) => id === occurrence.id);
@@ -171,7 +223,7 @@ const matrixView = createPlannerMatrixView({
             },
             onStopPlanning: (planItemId, date) => plannerStore.stopPlanItemFromDate(planItemId, date),
             onComplete: (result, operation) => {
-                selectedPlanItemId = result?.planItem?.id ?? item.id;
+                selectPlanItemSummary(result?.planItem?.id ?? item.id);
                 if (operation !== "deleted_occurrence") render();
                 showFeedback(
                     operation === "deleted_occurrence"
@@ -210,7 +262,7 @@ const deletionDialogView = createDeletionDialogView({
 
 function commitPreparedChange(prepared, context) {
     const result = plannerStore.commitPreparedScheduleChange(prepared);
-    selectedPlanItemId = result.planItem?.id ?? context.planItemId;
+    selectPlanItemSummary(result.planItem?.id ?? context.planItemId);
     render();
     return result;
 }
@@ -242,7 +294,7 @@ const recurringScheduleMutation = createRecurringScheduleMutationCoordinator({
 
 function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) {
     if (outcome.status === "synced") {
-        selectedPlanItemId = planItemId;
+        selectPlanItemSummary(planItemId);
         render();
         showFeedback(
             operation === "delete"
@@ -271,7 +323,7 @@ function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) 
 
 function settlePersistentRecurringMutation(outcome, { scope, planItemId }) {
     if (outcome.status === "synced") {
-        selectedPlanItemId = planItemId;
+        selectPlanItemSummary(planItemId);
         render();
         showFeedback(
             scope === "week"
@@ -310,7 +362,7 @@ async function persistRecurringSchedule(scope, planItemId, effectiveDate, genera
         )
         : buildApplyFuturePayload(generationConfig, effectiveDate);
     if (scope === "week" && payload.operations.length === 0) {
-        selectedPlanItemId = planItemId;
+        selectPlanItemSummary(planItemId);
         render();
         showFeedback("La semana ya coincide con la planificación indicada.", "notice");
         return { status: "synced" };
@@ -361,7 +413,7 @@ function buildPersistentOverrideConfirmation(payload, conflicts) {
 
 function settlePersistentCreation(outcome) {
     if (outcome.status === "synced") {
-        selectedPlanItemId = outcome.creation?.planItem?.id ?? null;
+        selectPlanItemSummary(outcome.creation?.planItem?.id ?? null);
         render();
         showFeedback("El registro se guardó correctamente.", "notice");
         return { status: "synced" };
@@ -453,10 +505,10 @@ const planItemFormView = createPlanItemFormView({
                 planItemId: context.planItemId,
             });
         } else if (context.mode === "edit_schedule") {
-            selectedPlanItemId = context.planItemId;
+            selectPlanItemSummary(context.planItemId);
         } else if (context.mode === "edit_without_occurrence") {
             prepared = plannerStore.prepareOccurrenceAddition(context.planItemId, result.occurrence);
-            selectedPlanItemId = context.planItemId;
+            selectPlanItemSummary(context.planItemId);
         } else {
             const payload = {
                 ...result.planItem,
@@ -542,7 +594,11 @@ elements.previousMonthButton.addEventListener("click", () => moveMonth(-1));
 elements.nextMonthButton.addEventListener("click", () => moveMonth(1));
 elements.compactPreviousMonthButton.addEventListener("click", () => moveMonth(-1));
 elements.compactNextMonthButton.addEventListener("click", () => moveMonth(1));
-elements.toggleMonthRecordsButton.addEventListener("click", () => { showAllMonthRecords = !showAllMonthRecords; selectedPlanItemId = null; render(); });
+elements.toggleMonthRecordsButton.addEventListener("click", () => {
+    showAllMonthRecords = !showAllMonthRecords;
+    clearPlannerSelection();
+    render();
+});
 elements.datePickerButton.addEventListener("click", () => showNativePicker(elements.datePicker));
 elements.monthPickerButton.addEventListener("click", () => showNativePicker(elements.monthPicker));
 elements.datePicker.addEventListener("change", () => selectDate(elements.datePicker.value));

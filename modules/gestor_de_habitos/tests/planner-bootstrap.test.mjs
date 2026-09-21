@@ -17,6 +17,9 @@ const SLOT_IDS = [1, 2, 3].map(
 const OCCURRENCE_IDS = [11, 12, 13].map(
     (number) => `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
 );
+const SEGMENT_IDS = [21, 22, 23].map(
+    (number) => `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+);
 
 function persistedState() {
     return {
@@ -45,8 +48,14 @@ function persistedState() {
             endTime: ["08:05", "14:05", "22:05"][index],
             status: ["pending", "completed", "cancelled"][index],
             sourceGenerationSlotId: SLOT_IDS[index],
+            segments: [{
+                id: SEGMENT_IDS[index],
+                startTime: ["08:00", "14:00", "22:00"][index],
+                endTime: ["08:05", "14:05", "22:05"][index],
+                status: ["pending", "completed", "cancelled"][index],
+            }],
             ...(index === 2 ? {
-                statusContext: {
+                conflictContext: {
                     reason: "priority_override",
                     sourceOccurrenceId: OCCURRENCE_IDS[0],
                 },
