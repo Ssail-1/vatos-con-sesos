@@ -222,34 +222,19 @@
             </form>
         </dialog>
 
-        <dialog
-            id="overrideDialog"
-            class="override-dialog"
-            aria-labelledby="overrideDialogTitle"
-            aria-describedby="overrideConsequence"
-        >
+        <dialog id="segmentConflictDialog" class="override-dialog segment-conflict-dialog"
+            aria-labelledby="segmentConflictTitle" aria-describedby="segmentConflictSummary">
             <div class="override-dialog-content">
                 <div class="dialog-heading">
-                    <p class="section-kicker">Cambio de prioridad</p>
-                    <h2 id="overrideDialogTitle">Confirmar desplazamiento</h2>
+                    <p class="section-kicker">Conflicto de horario</p>
+                    <h2 id="segmentConflictTitle"></h2>
+                    <p id="segmentConflictSummary" class="insertion-reference"></p>
                 </div>
-
-                <section class="override-candidate" aria-labelledby="overrideCandidateSummary">
-                    <h3 id="overrideCandidateSummary"></h3>
-                    <ul id="overrideCandidateOccurrences" class="override-schedule-list"></ul>
-                </section>
-
-                <section aria-labelledby="overrideConflictsTitle">
-                    <h3 id="overrideConflictsTitle">Registros que entran en conflicto</h3>
-                    <ul id="overrideConflictList" class="override-conflict-list"></ul>
-                </section>
-
-                <p id="overrideConsequence" class="override-consequence"></p>
-                <p id="overrideError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
-
+                <ul id="segmentConflictList" class="segment-conflict-list"></ul>
+                <p id="segmentConflictError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
                 <div class="dialog-actions">
-                    <button id="overrideBackButton" class="secondary-button" type="button">Volver</button>
-                    <button id="overrideContinueButton" class="primary-button" type="button">Continuar</button>
+                    <button id="segmentConflictBackButton" class="secondary-button" type="button">Volver</button>
+                    <button id="segmentConflictConfirmButton" class="primary-button" type="button">Confirmar cambios y continuar</button>
                 </div>
             </div>
         </dialog>

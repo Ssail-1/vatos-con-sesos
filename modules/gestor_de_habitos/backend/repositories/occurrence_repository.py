@@ -189,6 +189,23 @@ def lock_occurrence(connection, occurrence_id):
         return cursor.fetchone()
 
 
+def lock_occurrence_for_delete(connection, occurrence_id):
+    """Schema-004 read path for whole-graph deletion; no legacy status_reason."""
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT id, plan_item_id, occurrence_date, start_time, end_time,
+                   status, conflict_reason, source_occurrence_id,
+                   source_generation_slot_id, origin_reason, last_conflict_action
+            FROM public.occurrences
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (occurrence_id,),
+        )
+        return cursor.fetchone()
+
+
 def lock_generation_slot(connection, slot_id):
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(

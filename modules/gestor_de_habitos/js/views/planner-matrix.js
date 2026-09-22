@@ -244,18 +244,38 @@ export function buildPlannerRows(
                 return [parentRow];
             }
             return [
-                parentRow,
+                {
+                    ...parentRow,
+                    rowType: "occurrence-control",
+                    sortTime: parentRow.occurrence.segments[0].startTime,
+                    startTime: null,
+                    endTime: null,
+                },
                 ...parentRow.occurrence.segments.map((segment, index) => ({
                     ...parentRow,
                     rowType: "segment",
                     segment,
                     segmentOrdinal: index + 1,
+                    segmentCount: parentRow.occurrence.segments.length,
                     startTime: segment.startTime,
                     endTime: segment.endTime,
                     duration: calculateDuration(segment.startTime, segment.endTime),
                     carriesMonthlySummary: false,
                 })),
             ];
+        })
+        .sort((first, second) => {
+            const firstTime = first.sortTime ?? first.startTime;
+            const secondTime = second.sortTime ?? second.startTime;
+            const firstRank = first.rowType === "occurrence-control" ? 0 : 1;
+            const secondRank = second.rowType === "occurrence-control" ? 0 : 1;
+            return firstTime.localeCompare(secondTime)
+                || firstRank - secondRank
+                || (first.endTime ?? "").localeCompare(second.endTime ?? "")
+                || first.planItem.name.localeCompare(second.planItem.name)
+                || first.planItem.id.localeCompare(second.planItem.id)
+                || first.occurrence.id.localeCompare(second.occurrence.id)
+                || (first.segment?.id ?? "").localeCompare(second.segment?.id ?? "");
         });
 
     const summaryRows = itemModels
@@ -374,6 +394,10 @@ function createPlanItemRow(rowData, position, context) {
     nameText.className = "activity-name-text";
     nameText.textContent = planItem.name;
     nameText.title = `${planItem.name} — ${getClassificationLabel(planItem)}`;
+    if (rowData.rowType === "occurrence-control") {
+        row.classList.add("occurrence-control-row");
+        nameText.textContent = `${planItem.name} · ventana general ${occurrence.startTime}–${occurrence.endTime}`;
+    }
     nameContent.append(nameText);
     nameCell.append(nameContent);
     row.dataset.planItemId = planItem.id;
@@ -483,12 +507,9 @@ function createPlanItemRow(rowData, position, context) {
         deleteButton.type = "button";
         deleteButton.className = "row-action-button delete-activity-button";
         deleteButton.textContent = "🗑";
-        deleteButton.disabled = isMultiSegmentOccurrence(occurrence);
         deleteButton.setAttribute(
             "aria-label",
-            isMultiSegmentOccurrence(occurrence)
-                ? `${planItem.name}: la eliminación de occurrences con varios segments está temporalmente bloqueada`
-                : selectedDateFrozen
+            selectedDateFrozen
                 ? `Consultar eliminación de ${planItem.name}: historial congelado`
                 : selectedOccurrence
                 ? `Gestionar eliminación de ${planItem.name} de ${selectedOccurrence.startTime} a ${selectedOccurrence.endTime}`
@@ -601,7 +622,7 @@ function createPlanItemRow(rowData, position, context) {
 }
 
 function createSegmentRow(rowData, context) {
-    const { planItem, occurrence, segment, segmentOrdinal } = rowData;
+    const { planItem, occurrence, segment, segmentOrdinal, segmentCount } = rowData;
     const row = document.createElement("tr");
     const nameCell = document.createElement("th");
     const { groupSelected: selectedGroup, rowSelected: selectedSegment } = getPlannerRowSelection(
@@ -620,8 +641,8 @@ function createSegmentRow(rowData, context) {
 
     nameCell.className = "name-column activity-name segment-name";
     nameCell.scope = "row";
-    nameCell.textContent = `Seg ${segmentOrdinal} · ${planItem.name}`;
-    nameCell.title = `${planItem.name}, segment ${segmentOrdinal}`;
+    nameCell.textContent = `${planItem.name} · Seg ${segmentOrdinal}/${segmentCount}`;
+    nameCell.title = `${planItem.name}, segment ${segmentOrdinal} de ${segmentCount}`;
 
     row.addEventListener("click", (event) => {
         if (event.target.closest("button, a, input, select")) return;

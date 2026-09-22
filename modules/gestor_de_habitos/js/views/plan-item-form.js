@@ -885,6 +885,27 @@ export function createPlanItemFormView(options) {
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (submitting) return;
+        if (refreshPending) {
+            // POST may already have committed. This branch cannot rebuild or resend it.
+            setSubmitting(true);
+            try {
+                const submission = await onSubmit(null, formContext);
+                if (submission?.keepOpen) {
+                    refreshPending = Boolean(submission.retryRefresh);
+                    showErrors([{ field: "name", message: submission.message }]);
+                } else {
+                    dialog.close("saved");
+                }
+            } catch (error) {
+                showErrors([{ field: "name", message: error.message }]);
+            } finally {
+                if (dialog.open) {
+                    setSubmitting(false);
+                    updateScopeVisibility();
+                }
+            }
+            return;
+        }
         clearErrors();
         saveEditedWeekday();
         const result = validateFormValues({

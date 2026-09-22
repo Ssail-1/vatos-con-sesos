@@ -9,7 +9,6 @@ import {
     resetOccurrenceSegmentation,
     translateOccurrence,
     updateSegmentStatus,
-    updateOccurrence,
 } from "./api/planner-api.js";
 import { createPlannerBootstrap } from "./bootstrap/planner-bootstrap.js";
 import {
@@ -17,11 +16,8 @@ import {
     getOccurrenceMutationErrorMessage,
     getSegmentStatusMutationErrorMessage,
 } from "./mutations/occurrence-mutation.js";
-import { addPriorityOverride, createPlanItemMutationCoordinator } from "./mutations/plan-item-creation.js";
-import {
-    createOccurrenceStructureMutationCoordinator,
-    getOccurrenceStructureErrorMessage,
-} from "./mutations/occurrence-structure-mutation.js";
+import { getOccurrenceStructureErrorMessage } from "./mutations/occurrence-structure-mutation.js";
+import { createSegmentConflictMutationCoordinator } from "./mutations/segment-conflict-mutation.js";
 import {
     buildApplyFuturePayload,
     createRecurringScheduleMutationCoordinator,
@@ -30,7 +26,7 @@ import {
 import { createPlannerStore } from "./state/planner-store.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
-import { createOverrideConfirmationView } from "./views/override-confirmation.js";
+import { createSegmentConflictDialogView } from "./views/segment-conflict-dialog.js";
 import { createDeletionDialogView } from "./views/deletion-dialog.js";
 import { createPlanItemFormView } from "./views/plan-item-form.js";
 import { createPlannerMatrixView } from "./views/planner-matrix.js";
@@ -50,9 +46,9 @@ const elements = Object.fromEntries([
     "weekdayOverrides", "weekdayOverrideFields", "weeklyDefaultStartTime", "weeklyDefaultEndTime",
     "intervalFields", "intervalDays", "intervalAdditionalSlots", "addIntervalSlotButton", "manualDatesField",
     "manualDateEntries", "addManualDateButton", "explicitDateField",
-    "occurrenceTimeAnchor", "occurrenceTimeFields", "recurrenceScopeField", "overrideDialog", "overrideCandidateSummary",
-    "overrideCandidateOccurrences", "overrideConflictList", "overrideConsequence", "overrideError",
-    "overrideBackButton", "overrideContinueButton",
+    "occurrenceTimeAnchor", "occurrenceTimeFields", "recurrenceScopeField",
+    "segmentConflictDialog", "segmentConflictTitle", "segmentConflictSummary", "segmentConflictList",
+    "segmentConflictError", "segmentConflictBackButton", "segmentConflictConfirmButton",
     "deletionDialog", "deletionSummary", "deleteOccurrenceButton", "deleteOccurrenceDetails",
     "stopPlanningButton", "stopPlanningDetails", "deletionError", "deletionBackButton",
     "structureDialog", "structureForm", "structureDialogTitle", "structureReference",
@@ -248,15 +244,15 @@ const matrixView = createPlannerMatrixView({
     onAmbiguity: (message) => showFeedback(message),
 });
 
-const overrideConfirmationView = createOverrideConfirmationView({
-    dialog: elements.overrideDialog,
-    candidateSummary: elements.overrideCandidateSummary,
-    candidateOccurrences: elements.overrideCandidateOccurrences,
-    conflictList: elements.overrideConflictList,
-    consequence: elements.overrideConsequence,
-    errorRegion: elements.overrideError,
-    backButton: elements.overrideBackButton,
-    continueButton: elements.overrideContinueButton,
+const segmentConflictDialogView = createSegmentConflictDialogView({
+    dialog: elements.segmentConflictDialog,
+    title: elements.segmentConflictTitle,
+    summary: elements.segmentConflictSummary,
+    list: elements.segmentConflictList,
+    errorRegion: elements.segmentConflictError,
+    backButton: elements.segmentConflictBackButton,
+    confirmButton: elements.segmentConflictConfirmButton,
+    getPlanItemName: (id) => plannerStore.getPlanItemById(id)?.name ?? null,
 });
 
 const deletionDialogView = createDeletionDialogView({
@@ -271,14 +267,21 @@ const deletionDialogView = createDeletionDialogView({
     fallbackFocusElement: elements.addActivityButton,
 });
 
-const planItemCreationMutation = createPlanItemMutationCoordinator({
-    postPlanItem: createPlanItem,
-    loadPlannerState: fetchPlannerState,
-    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
-});
-
-const occurrenceUpdateMutation = createOccurrenceMutationCoordinator({
-    mutateOccurrence: updateOccurrence,
+const segmentConflictMutation = createSegmentConflictMutationCoordinator({
+    executeCommand: ({ kind, occurrenceId, payload }, conflictResolution) => {
+        const body = conflictResolution ? { ...payload, conflictResolution } : payload;
+        if (kind === "create") return createPlanItem(body);
+        if (kind === "translate") return translateOccurrence(
+            occurrenceId, payload.startTime, payload.endTime,
+            conflictResolution ? { conflictResolution } : {},
+        );
+        if (kind === "structure") return replaceOccurrenceStructure(occurrenceId, body);
+        if (kind === "reset") return resetOccurrenceSegmentation(
+            occurrenceId, payload.startTime, payload.endTime,
+            conflictResolution ? { conflictResolution } : {},
+        );
+        throw new TypeError("El comando de conflicto no está soportado.");
+    },
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
@@ -295,16 +298,28 @@ const segmentStatusMutation = createOccurrenceMutationCoordinator({
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
 
-const structureMutation = createOccurrenceStructureMutationCoordinator({
-    translateOccurrence: (id, payload) => translateOccurrence(id, payload.startTime, payload.endTime),
-    replaceOccurrenceStructure,
-    resetOccurrenceSegmentation: (id, payload) => resetOccurrenceSegmentation(id, payload.startTime, payload.endTime),
-    loadPlannerState: fetchPlannerState,
-    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
-});
+function reviewSegmentConflict(outcome, intent) {
+    if (outcome.status !== "conflict_required") return Promise.resolve(outcome);
+    return new Promise((resolve) => {
+        segmentConflictDialogView.open({
+            intent,
+            currentConflicts: outcome.conflicts,
+            focusElement: document.activeElement,
+            confirm: (acknowledgements) => segmentConflictMutation.confirm(acknowledgements),
+            cancel: () => {
+                segmentConflictMutation.cancel();
+                resolve({ status: "cancelled" });
+            },
+            complete: resolve,
+        });
+    });
+}
 
 async function submitStructureCommand(operation, occurrenceId, payload) {
-    const outcome = await structureMutation.submit(operation, occurrenceId, payload);
+    const intent = ({ translate: "Mover actividad", structure: "Modificar estructura",
+        reset: "Restablecer segmentación" })[operation];
+    const initial = await segmentConflictMutation.submit({ kind: operation, occurrenceId, payload });
+    const outcome = await reviewSegmentConflict(initial, intent);
     if (outcome.status === "synced") {
         render();
         showFeedback("La estructura se guardó y el planner quedó sincronizado.", "notice");
@@ -314,6 +329,16 @@ async function submitStructureCommand(operation, occurrenceId, payload) {
         render();
         showFeedback("El planner se actualizó. Revisa si el cambio se guardó antes de editar de nuevo.", "notice");
         return outcome;
+    }
+    if (outcome.status === "stale") {
+        render();
+        showFeedback("El segmento en conflicto cambió. Revisa el planner actualizado antes de volver a guardar.");
+        return structureEditorView.isSourceCurrent(plannerStore.getOccurrenceById(occurrenceId))
+            ? { status: "stale", error: outcome.error }
+            : { status: "invalidated" };
+    }
+    if (outcome.status === "unsupported") {
+        return { status: "mutation_error", error: outcome.error };
     }
     if (outcome.status !== "mutation_error") return outcome;
     const code = outcome.error?.code;
@@ -349,7 +374,7 @@ const structureEditorView = createOccurrenceStructureEditorView({
     saveButton: elements.structureSaveButton,
     onCommand: submitStructureCommand,
     onRetryRefresh: async () => {
-        const outcome = await structureMutation.retryRefresh();
+        const outcome = await segmentConflictMutation.retryRefresh();
         if (["synced", "review_required"].includes(outcome.status)) {
             render();
             showFeedback(outcome.status === "synced"
@@ -494,32 +519,9 @@ function persistentCreationErrorMessage(error) {
     return "No se pudo guardar el registro. Inténtalo nuevamente.";
 }
 
-function buildPersistentOverrideConfirmation(payload, conflicts) {
-    return {
-        type: "override_required",
-        operation: { kind: "create_plan_item" },
-        candidate: {
-            name: payload.name,
-            kind: payload.kind,
-            activityType: payload.activityType,
-            habitType: payload.habitType,
-            occurrences: [],
-        },
-        conflicts: conflicts.map((conflict) => ({
-            id: conflict.occurrenceId,
-            planItemId: conflict.planItemId,
-            planItemName: plannerStore.getPlanItemById(conflict.planItemId)?.name ?? "Otro registro",
-            date: conflict.date,
-            startTime: conflict.startTime,
-            endTime: conflict.endTime,
-            status: conflict.status,
-        })),
-    };
-}
-
 function settlePersistentCreation(outcome) {
     if (outcome.status === "synced") {
-        selectPlanItemSummary(outcome.creation?.planItem?.id ?? null);
+        selectPlanItemSummary(outcome.mutation?.planItem?.id ?? null);
         render();
         showFeedback("El registro se guardó correctamente.", "notice");
         return { status: "synced" };
@@ -532,44 +534,24 @@ function settlePersistentCreation(outcome) {
             message: "El registro se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a crear.",
         };
     }
-    if (outcome.status === "post_error") {
+    if (outcome.status === "stale") {
+        render();
+        return { keepOpen: true, message: "El conflicto cambió. Se actualizó el planner; revisa el formulario y vuelve a enviar para obtener conflictos nuevos." };
+    }
+    if (outcome.status === "review_required") {
+        render();
+        return { keepOpen: true, message: "No se conoce con certeza el resultado del envío. Se actualizó el planner; revisa si el registro se guardó antes de intentarlo de nuevo." };
+    }
+    if (outcome.status === "unknown_result") {
+        return { keepOpen: true, retryRefresh: true, message: "No se conoce el resultado del envío y falló la actualización. Reintenta solo la lectura; no se repetirá la creación." };
+    }
+    if (outcome.status === "cancelled") {
+        return { keepOpen: true, message: "No se confirmó el conflicto. El formulario permanece disponible." };
+    }
+    if (["mutation_error", "unsupported"].includes(outcome.status)) {
         throw new Error(persistentCreationErrorMessage(outcome.error));
     }
     throw new Error("No se pudo completar la creación persistente.");
-}
-
-function openPersistentOverride(payload, conflicts) {
-    if (!conflicts.length) {
-        throw new Error("El backend solicitó confirmación sin identificar los conflictos.");
-    }
-    overrideConfirmationView.open(
-        buildPersistentOverrideConfirmation(payload, conflicts),
-        {
-            onConfirm: async (prepared) => {
-                const outcome = await planItemCreationMutation.submit(
-                    addPriorityOverride(payload, prepared.conflicts.map((conflict) => ({
-                        occurrenceId: conflict.id,
-                    }))),
-                );
-                if (outcome.status === "override_required") {
-                    if (!outcome.conflicts.length) {
-                        throw new Error("El backend solicitó una nueva confirmación sin identificar los conflictos.");
-                    }
-                    return {
-                        nextPrepared: buildPersistentOverrideConfirmation(payload, outcome.conflicts),
-                    };
-                }
-                return settlePersistentCreation(outcome);
-            },
-            onComplete: (outcome) => {
-                if (outcome?.status === "saved_refresh_error") {
-                    planItemFormView.markSavedRefreshError(outcome.message);
-                    return;
-                }
-                planItemFormView.completePendingSubmission();
-            },
-        },
-    );
 }
 
 const planItemFormView = createPlanItemFormView({
@@ -581,6 +563,9 @@ const planItemFormView = createPlanItemFormView({
     savingStatus: elements.formSavingStatus,
     fallbackFocusElement: elements.addActivityButton, onValidate: () => [],
     onSubmit: async (result, context) => {
+        if (segmentConflictMutation.hasPendingRefresh()) {
+            return settlePersistentCreation(await segmentConflictMutation.retryRefresh());
+        }
         if (
             ["edit", "edit_schedule", "edit_without_occurrence"].includes(context.mode) &&
             result.recurrenceChanged &&
@@ -597,18 +582,7 @@ const planItemFormView = createPlanItemFormView({
             );
         }
         if (context.mode === "edit") {
-            const outcome = await occurrenceUpdateMutation.submit(
-                context.occurrenceId,
-                {
-                    date: result.occurrence.date,
-                    startTime: result.occurrence.startTime,
-                    endTime: result.occurrence.endTime,
-                },
-            );
-            return settlePersistentOccurrenceMutation(outcome, {
-                operation: "update",
-                planItemId: context.planItemId,
-            });
+            throw new Error("La edición de una aparición utiliza el editor estructural; el PATCH parent-level está retirado.");
         } else if (context.mode === "edit_schedule") {
             selectPlanItemSummary(context.planItemId);
         } else if (context.mode === "edit_without_occurrence") {
@@ -620,13 +594,8 @@ const planItemFormView = createPlanItemFormView({
                 ...result.planItem,
                 generationConfig: result.generationConfig,
             };
-            const outcome = await planItemCreationMutation.submit(payload);
-            if (outcome.status === "override_required") {
-                return {
-                    keepOpen: true,
-                    message: "Esta versión aún no confirma conflictos segmentarios desde la interfaz.",
-                };
-            }
+            const initial = await segmentConflictMutation.submit({ kind: "create", payload });
+            const outcome = await reviewSegmentConflict(initial, "Crear actividad");
             return settlePersistentCreation(outcome);
         }
 

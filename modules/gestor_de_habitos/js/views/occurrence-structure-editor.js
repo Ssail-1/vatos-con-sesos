@@ -38,6 +38,19 @@ export function createOccurrenceStructureEditorView({
     let opener = null;
     let pending = false;
     let refreshPending = false;
+    let sourceSignature = null;
+
+    function signature(occurrence) {
+        if (!occurrence) return null;
+        return JSON.stringify({
+            id: occurrence.id, date: occurrence.date,
+            startTime: occurrence.startTime, endTime: occurrence.endTime,
+            status: occurrence.status,
+            segments: occurrence.segments?.map(({ id, startTime, endTime, status }) => ({
+                id, startTime, endTime, status,
+            })),
+        });
+    }
 
     function showError(message, blockers = []) {
         const blockerText = blockers.length
@@ -153,6 +166,7 @@ export function createOccurrenceStructureEditorView({
         const target = opener;
         const occurrenceId = draft.occurrenceId;
         draft = null;
+        sourceSignature = null;
         pending = false;
         refreshPending = false;
         dialog.close();
@@ -172,6 +186,10 @@ export function createOccurrenceStructureEditorView({
             outcome = { status: "mutation_error", error };
         }
         pending = false;
+        if (outcome.status === "cancelled") {
+            updateControls();
+            return;
+        }
         if (["synced", "review_required", "invalidated"].includes(outcome.status)) {
             close();
             return;
@@ -181,6 +199,8 @@ export function createOccurrenceStructureEditorView({
             showError(outcome.status === "saved_refresh_error"
                 ? "Se guardó, pero falló la actualización. Reintenta solo la lectura; no se repetirá el cambio."
                 : "No se conoce el resultado del comando. Actualiza el planner antes de editar de nuevo; no se repetirá automáticamente.");
+        } else if (outcome.status === "stale") {
+            showError("El conflicto cambió. El borrador se conserva porque su aparición no cambió; revísalo y vuelve a guardar.");
         } else {
             showError(getOccurrenceStructureErrorMessage(outcome.error), outcome.error?.details?.blockers);
         }
@@ -245,6 +265,7 @@ export function createOccurrenceStructureEditorView({
         open(occurrence, name, focusElement) {
             if (getDateTemporalZone(occurrence.date, getCurrentDateKey()) === TEMPORAL_ZONES.FROZEN) return false;
             draft = createOccurrenceStructureDraft(occurrence);
+            sourceSignature = signature(occurrence);
             planItemName = name;
             opener = focusElement;
             pending = false;
@@ -261,6 +282,7 @@ export function createOccurrenceStructureEditorView({
         },
         close,
         isOpen: () => Boolean(draft),
+        isSourceCurrent: (occurrence) => signature(occurrence) === sourceSignature,
         getDraftSnapshot: () => draft ? structuredClone(draft) : null,
     };
 }

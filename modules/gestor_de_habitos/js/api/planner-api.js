@@ -22,14 +22,25 @@ function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isConflict(value) {
-    return isRecord(value) &&
-        typeof value.occurrenceId === "string" &&
-        typeof value.planItemId === "string" &&
-        typeof value.date === "string" &&
-        typeof value.startTime === "string" &&
-        typeof value.endTime === "string" &&
-        typeof value.status === "string";
+function isSegmentConflict(value) {
+    const blocker = value?.blocker;
+    return isRecord(value) && isRecord(blocker)
+        && ["occurrenceId", "segmentId", "planItemId"].every(
+            (key) => typeof blocker[key] === "string" && Boolean(blocker[key]),
+        )
+        && isValidDateKey(blocker.date)
+        && isValidTimeRange(blocker.startTime, blocker.endTime)
+        && isValidOccurrenceStatus(blocker.status)
+        && ["priority_override", "user_forced_override"].includes(value.requiredAuthorization)
+        && typeof value.resolutionKind === "string"
+        && typeof value.requiresRealizedTimeConfirmation === "boolean";
+}
+
+function conflictDetails(payload) {
+    return isRecord(payload) && Array.isArray(payload.conflicts)
+        && payload.conflicts.every(isSegmentConflict)
+        ? payload.conflicts.map((conflict) => ({ ...conflict, blocker: { ...conflict.blocker } }))
+        : [];
 }
 
 function isOptionalEnum(value, allowedValues) {
@@ -172,10 +183,7 @@ export async function createPlanItem(payload, {
         const serverCode = isRecord(responsePayload) && typeof responsePayload.code === "string"
             ? responsePayload.code
             : "http_error";
-        const conflicts = isRecord(responsePayload) && Array.isArray(responsePayload.conflicts)
-            && responsePayload.conflicts.every(isConflict)
-            ? responsePayload.conflicts.map((conflict) => ({ ...conflict }))
-            : [];
+        const conflicts = conflictDetails(responsePayload);
         throw new PlannerApiError(
             serverCode,
             isRecord(responsePayload) && typeof responsePayload.message === "string"
@@ -362,6 +370,7 @@ async function structuralCommand(occurrenceId, action, method, body, {
                 ? payload.message : "No se pudo guardar la estructura de la aparición.",
             {
                 status: Number.isInteger(response?.status) ? response.status : null,
+                conflicts: conflictDetails(payload),
                 blockers: isRecord(payload) && Array.isArray(payload.blockers)
                     ? payload.blockers.filter(isRecord).map((blocker) => ({ ...blocker })) : [],
             },
@@ -385,7 +394,11 @@ async function structuralCommand(occurrenceId, action, method, body, {
 }
 
 export function translateOccurrence(occurrenceId, startTime, endTime, options = {}) {
-    return structuralCommand(occurrenceId, "translate", "POST", { startTime, endTime }, options);
+    const { conflictResolution, ...requestOptions } = options;
+    return structuralCommand(occurrenceId, "translate", "POST", {
+        startTime, endTime,
+        ...(conflictResolution ? { conflictResolution } : {}),
+    }, requestOptions);
 }
 
 export function replaceOccurrenceStructure(occurrenceId, payload, options = {}) {
@@ -393,7 +406,11 @@ export function replaceOccurrenceStructure(occurrenceId, payload, options = {}) 
 }
 
 export function resetOccurrenceSegmentation(occurrenceId, startTime, endTime, options = {}) {
-    return structuralCommand(occurrenceId, "reset-segmentation", "POST", { startTime, endTime }, options);
+    const { conflictResolution, ...requestOptions } = options;
+    return structuralCommand(occurrenceId, "reset-segmentation", "POST", {
+        startTime, endTime,
+        ...(conflictResolution ? { conflictResolution } : {}),
+    }, requestOptions);
 }
 
 export async function reconcilePlanner({

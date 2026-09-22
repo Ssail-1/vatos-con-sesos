@@ -71,6 +71,16 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()["occurrences"][0]
 
+    def create_deletable(self, name="Deletable", start="08:00", end="09:00", **kwargs):
+        payload = self.payload(name, start, end, **kwargs)
+        payload["generationConfig"]["entries"].append({
+            "id": str(uuid4()), "date": (self.day + timedelta(days=1)).isoformat(),
+            "startTime": start, "endTime": end,
+        })
+        response = self.request("post", "/api/plan-items", json=payload)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        return response.get_json()["occurrences"][0]
+
     def state(self):
         response = self.request("get", "/api/planner-state")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
@@ -123,6 +133,49 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
         new_source = next(row for row in rows if row["id"] == second.get_json()["occurrences"][0]["id"])
         self.assertEqual(new_source["originReason"], "conflict_insertion")
         self.assertEqual(new_source["lastConflictAction"], "conflict_insertion")
+
+    def test_delete_single_and_multi_segment_parents_cascades_children(self):
+        single = self.create_deletable("Single", "08:00", "09:00")
+        multi = self.create_deletable("Multi", "10:00", "12:00")
+        changed = self.request("put", f"/api/occurrences/{multi['id']}/structure", json={
+            "startTime": "10:00", "endTime": "12:00",
+            "segments": [
+                {"id": multi["segments"][0]["id"], "startTime": "10:00", "endTime": "10:30"},
+                {"startTime": "11:00", "endTime": "12:00", "status": "pending"},
+            ],
+        })
+        self.assertEqual(changed.status_code, 200, changed.get_data(as_text=True))
+        for occurrence in (single, multi):
+            deleted = self.request("delete", f"/api/occurrences/{occurrence['id']}")
+            self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
+            self.assertEqual(deleted.get_json()["deletedOccurrenceId"], occurrence["id"])
+        with psycopg.connect(self.url) as connection:
+            for occurrence in (single, multi):
+                self.assertEqual(connection.execute(
+                    "SELECT count(*) FROM public.occurrence_segments WHERE occurrence_id = %s",
+                    (occurrence["id"],),
+                ).fetchone()[0], 0)
+
+    def test_delete_referenced_source_rejected_without_clearing_provenance(self):
+        target = self.create("Target", "08:00", "10:00")
+        source = self.create_deletable("Source", "11:00", "12:00", subtype="unexpected")
+        # The initial creation cannot overlap. Move after both graphs exist.
+        path = f"/api/occurrences/{source['id']}/translate"
+        first = self.request("post", path, json={"startTime": "08:30", "endTime": "09:30"})
+        self.assertEqual(first.status_code, 409)
+        confirmation = self.confirmation(first.get_json()["conflicts"][0])
+        moved = self.request("post", path, json={
+            "startTime": "08:30", "endTime": "09:30",
+            "conflictResolution": {"confirmations": [confirmation]},
+        })
+        self.assertEqual(moved.status_code, 200, moved.get_data(as_text=True))
+        before = self.state()
+        rejected = self.request("delete", f"/api/occurrences/{source['id']}")
+        self.assertEqual(rejected.status_code, 409, rejected.get_data(as_text=True))
+        self.assertEqual(rejected.get_json()["code"], "deletion_status_locked")
+        self.assertEqual(self.state(), before)
+        self.assertEqual(next(row for row in before["occurrences"] if row["id"] == target["id"])[
+            "conflictContext"]["sourceOccurrenceId"], source["id"])
 
     def test_stale_snapshot_does_not_mutate(self):
         target = self.create("Target", "08:00", "12:00")

@@ -7,13 +7,22 @@ from uuid import UUID
 import psycopg
 
 import database
+from occurrence_segment_domain import (
+    OccurrenceSegmentDomainError, derive_occurrence_status, temporal_phase_for_date,
+)
+from occurrence_segment_service import (
+    OccurrenceSegmentConsistencyError, _validated_occurrence, _validated_segments,
+)
+from occurrence_structure_domain import OccurrenceStructureDomainError, validate_final_segments
 from repositories import occurrence_repository
+from repositories import occurrence_segment_repository
 from scheduling_policy import (
     BLOCKING_STATUSES,
     can_delete_occurrence,
     is_frozen_date,
     scheduling_priority,
     time_ranges_overlap,
+    HISTORY_EDIT_WINDOW_DAYS,
 )
 
 
@@ -215,7 +224,7 @@ def _validate_manual_slots(rows, plan_item_id):
         accepted.append(candidate)
 
 
-def _load_locked_context(connection, occurrence_id):
+def _load_locked_context(connection, occurrence_id, *, schema004_delete=False, reference_date=None):
     owner = occurrence_repository.find_occurrence_owner(connection, occurrence_id)
     if owner is None:
         raise OccurrenceNotFoundError("La occurrence no existe.")
@@ -223,7 +232,10 @@ def _load_locked_context(connection, occurrence_id):
     plan_item = occurrence_repository.lock_plan_item_context(
         connection, plan_item_id
     )
-    occurrence = occurrence_repository.lock_occurrence(connection, occurrence_id)
+    occurrence = (
+        occurrence_repository.lock_occurrence_for_delete(connection, occurrence_id)
+        if schema004_delete else occurrence_repository.lock_occurrence(connection, occurrence_id)
+    )
     if occurrence is None:
         # Puede ocurrir después de esperar a un DELETE concurrente.
         raise OccurrenceNotFoundError("La occurrence no existe.")
@@ -234,7 +246,22 @@ def _load_locked_context(connection, occurrence_id):
     ):
         raise OccurrenceConsistencyError("La occurrence no tiene un PlanItem válido.")
     _validate_plan_item_context(plan_item)
-    _serialize_occurrence(occurrence)
+    if schema004_delete:
+        try:
+            parent = _validated_occurrence(occurrence)
+            segments = _validated_segments(
+                occurrence_segment_repository.lock_occurrence_segments(connection, occurrence_id),
+                parent,
+            )
+            segments = validate_final_segments(parent["startTime"], parent["endTime"], segments)
+            phase = temporal_phase_for_date(parent["date"], reference_date, HISTORY_EDIT_WINDOW_DAYS)
+            if derive_occurrence_status(segments, phase) != parent["status"]:
+                raise OccurrenceConsistencyError("El status parent no coincide con sus segments.")
+        except (OccurrenceSegmentConsistencyError, OccurrenceSegmentDomainError,
+                OccurrenceStructureDomainError) as error:
+            raise OccurrenceConsistencyError("La occurrence no contiene un grafo de segments válido.") from error
+    else:
+        _serialize_occurrence(occurrence)
 
     source_slot_id = occurrence["source_generation_slot_id"]
     slot = None
@@ -273,12 +300,14 @@ def _load_locked_context(connection, occurrence_id):
             )
             if (
                 source_manual_slot is None
-                or _db_date(manual_slot_date["entry_date"], "entry_date")
-                != _db_date(occurrence["occurrence_date"], "occurrence_date")
-                or _db_time(source_manual_slot["start_time"], "start_time")
-                != _db_time(occurrence["start_time"], "start_time")
-                or _db_time(source_manual_slot["end_time"], "end_time")
-                != _db_time(occurrence["end_time"], "end_time")
+                or (not schema004_delete and (
+                    _db_date(manual_slot_date["entry_date"], "entry_date")
+                    != _db_date(occurrence["occurrence_date"], "occurrence_date")
+                    or _db_time(source_manual_slot["start_time"], "start_time")
+                    != _db_time(occurrence["start_time"], "start_time")
+                    or _db_time(source_manual_slot["end_time"], "end_time")
+                    != _db_time(occurrence["end_time"], "end_time")
+                ))
             ):
                 raise OccurrenceConsistencyError(
                     "La entry manual y su occurrence no están sincronizadas."
@@ -426,6 +455,11 @@ def _raise_database_error(error):
             "slot_date_conflict",
             "El GenerationSlot ya tiene una occurrence en la fecha destino.",
         ) from None
+    if isinstance(error, psycopg.errors.ForeignKeyViolation):
+        raise OccurrenceConflictError(
+            "deletion_status_locked",
+            "La occurrence conserva dependientes de procedencia y no puede eliminarse.",
+        ) from None
     raise OccurrenceUnavailableError(
         "PostgreSQL no pudo completar la mutación."
     ) from None
@@ -549,7 +583,9 @@ def delete_occurrence(occurrence_id, reference_date=None):
         with database.get_connection() as connection:
             with connection.transaction():
                 occurrence_repository.set_serializable_transaction(connection)
-                context = _load_locked_context(connection, parsed_id)
+                context = _load_locked_context(
+                    connection, parsed_id, schema004_delete=True, reference_date=current_date
+                )
                 occurrence = context["occurrence"]
                 occurrence_date = _db_date(
                     occurrence["occurrence_date"], "occurrence_date"

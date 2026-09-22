@@ -272,7 +272,7 @@ test("selection usa occurrenceId y segmentId estable y resalta el grupo", () => 
         new Set([MULTI_ID]),
     );
     const parent = expanded.find(({ occurrence, rowType }) => (
-        occurrence?.id === MULTI_ID && rowType === "occurrence"
+        occurrence?.id === MULTI_ID && rowType === "occurrence-control"
     ));
     const segment = expanded.find(({ segment: candidate }) => candidate?.id === SEGMENT_IDS.late);
 
@@ -313,7 +313,7 @@ test("multi-segment bloquea escrituras legacy de status y horario", () => {
     ]) {
         assert.throws(
             operation,
-            (error) => error instanceof PlannerStoreError && error.code === "segment_write_required",
+            (error) => error instanceof PlannerStoreError && error.code === "legacy_conflict_writer_retired",
         );
     }
 });

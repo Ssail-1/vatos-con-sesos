@@ -40,7 +40,7 @@ def add_frontend_cors(response):
         and request.path == "/api/plan-items"
     )
     occurrence_mutation = (
-        request.method in {"PATCH", "DELETE", "OPTIONS"}
+        request.method in {"DELETE", "OPTIONS"}
         and request.path.startswith("/api/occurrences/")
         and request.path.count("/") == 3
     )
@@ -90,7 +90,7 @@ def add_frontend_cors(response):
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if occurrence_mutation:
-        response.headers["Access-Control-Allow-Methods"] = "PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if structural_mutation:
         response.headers["Access-Control-Allow-Methods"] = (
@@ -346,13 +346,12 @@ def reset_occurrence_segmentation(occurrence_id):
 
 @app.patch("/api/occurrences/<occurrence_id>")
 def patch_occurrence(occurrence_id):
-    try:
-        result = occurrence_mutation_service.patch_occurrence(
-            occurrence_id, request.get_json(silent=True)
-        )
-    except occurrence_mutation_service.OccurrenceMutationError as error:
-        return _occurrence_mutation_error_response(error)
-    return jsonify(result)
+    # Schema 004 makes parent.status a derived aggregate. The old PATCH is
+    # intentionally unreachable; structural and segment-status routes replace it.
+    return jsonify(
+        status="error", code="occurrence_patch_retired",
+        message="Usa el editor estructural o cambia el estado del segment.",
+    ), 410
 
 
 @app.delete("/api/occurrences/<occurrence_id>")

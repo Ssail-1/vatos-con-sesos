@@ -390,6 +390,10 @@ h1 {
     background: rgba(255, 255, 255, 0.025) !important;
 }
 
+.occurrence-control-row .activity-time,
+.occurrence-control-row .activity-duration { color: var(--text-muted); }
+.occurrence-control-row .activity-name-text { font-size: 0.86rem; }
+
 .occurrence-segment-row .activity-position,
 .occurrence-segment-row .segment-name {
     color: color-mix(in srgb, var(--accent) 72%, var(--text-muted));
@@ -887,6 +891,34 @@ thead .selected-day-column {
 .structure-dialog {
     width: min(94vw, 680px);
 }
+
+.segment-conflict-dialog { width: min(94vw, 680px); }
+.segment-conflict-list {
+    display: grid;
+    gap: 10px;
+    max-height: min(48vh, 400px);
+    overflow-y: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.segment-conflict-item {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    border-radius: 7px;
+    background: var(--surface-raised);
+    overflow-wrap: anywhere;
+}
+.segment-conflict-item strong { color: var(--accent); }
+.segment-conflict-item span,
+.segment-conflict-item p { margin: 0; color: var(--text-muted); line-height: 1.4; }
+.segment-conflict-realized { display: flex; gap: 9px; align-items: flex-start; margin-top: 5px; }
+.segment-conflict-realized input { flex: none; margin-top: 4px; }
+.segment-conflict-dialog .dialog-actions { flex-wrap: wrap; }
 
 .structure-envelope,
 .structure-segment-times {

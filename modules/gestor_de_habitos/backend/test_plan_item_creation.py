@@ -764,40 +764,6 @@ class RepositoryWriteTests(unittest.TestCase):
             [entry["id"] for entry in plan_item["generationConfig"]["entries"]],
         )
 
-    def test_priority_overrides_map_status_and_source_occurrence(self):
-        connection = MagicMock()
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.rowcount = 1
-        source_id = str(UUID(int=800))
-        pending_id = str(UUID(int=801))
-        in_progress_id = str(UUID(int=802))
-
-        plan_item_repository.apply_priority_overrides(
-            connection,
-            [
-                {
-                    "occurrenceId": pending_id,
-                    "currentStatus": "pending",
-                    "sourceOccurrenceId": source_id,
-                },
-                {
-                    "occurrenceId": in_progress_id,
-                    "currentStatus": "in_progress",
-                    "sourceOccurrenceId": source_id,
-                },
-            ],
-        )
-
-        parameters = [call.args[1] for call in cursor.execute.call_args_list]
-        self.assertEqual(
-            parameters,
-            [
-                ("cancelled", source_id, pending_id, "pending"),
-                ("not_finished", source_id, in_progress_id, "in_progress"),
-            ],
-        )
-
-
 class TransactionTests(unittest.TestCase):
     def _connection_failing_at(self, table_name):
         connection = MagicMock()

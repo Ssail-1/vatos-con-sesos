@@ -301,6 +301,16 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     let planItems = initialPlanItems.map(clonePlanItem);
     let occurrences = [];
     let idSequence = 0;
+    let hydratedFromBackend = false;
+
+    function requireLegacyMemoryMode() {
+        if (hydratedFromBackend) {
+            throw new PlannerStoreError(
+                "legacy_conflict_writer_retired",
+                "Los cambios de horario persistentes requieren el backend segmentario.",
+            );
+        }
+    }
     const materializationStart = getMonthStart(referenceDateKey);
     const minimumHorizon = getMonthEnd(referenceDateKey, 1);
     const explicitDate = getLatestExplicitDate(planItems);
@@ -645,6 +655,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function preparePlanItemCreation(planItemDraft) {
+        requireLegacyMemoryMode();
         const normalized = normalizePlanItemDraft(planItemDraft);
         validatePlanItem(normalized);
         validateGenerationSlotOwnership(normalized);
@@ -668,6 +679,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function prepareOccurrenceAddition(planItemId, occurrenceDraft) {
+        requireLegacyMemoryMode();
         const planItem = getPlanItemReference(planItemId);
         if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
         requireScheduleMutableDate(occurrenceDraft?.date);
@@ -688,6 +700,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function prepareOccurrenceUpdate(planItemId, planItemChanges, occurrenceId, occurrenceChanges) {
+        requireLegacyMemoryMode();
         const planItem = getPlanItemReference(planItemId);
         const occurrence = getOccurrenceReference(occurrenceId);
         if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
@@ -1013,6 +1026,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             // La asignación ocurre solo después de validar el grafo completo.
             planItems = candidate.planItems;
             occurrences = candidate.occurrences;
+            hydratedFromBackend = true;
             idSequence = 0;
             materializedThrough = hydratedThrough > minimumHorizon
                 ? hydratedThrough
@@ -1110,6 +1124,9 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         prepareOccurrenceUpdate,
 
         commitPreparedScheduleChange(prepared) {
+            // Conservado solo para fixtures de memoria anteriores a hydrate;
+            // la aplicación real nunca puede usar este escritor parent-level.
+            requireLegacyMemoryMode();
             const current = prepareOperation(prepared?.operation);
             if (prepared.type !== current.type || conflictSignature(prepared.conflicts ?? []) !== conflictSignature(current.conflicts ?? [])) {
                 throw new PlannerStoreError("stale_override", "La agenda cambió desde la confirmación. Revisa nuevamente los conflictos.");
@@ -1171,6 +1188,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         addOccurrenceForPlanItem(planItemId, occurrenceDraft) {
+            requireLegacyMemoryMode();
             const planItem = getPlanItemReference(planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
             requireScheduleMutableDate(occurrenceDraft?.date);
@@ -1712,6 +1730,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         addPlanItem(planItemDraft) {
+            requireLegacyMemoryMode();
             reconcileTemporalState();
             const normalized = normalizePlanItemDraft(planItemDraft);
             validatePlanItem(normalized);
@@ -1761,6 +1780,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         updatePlanItemAndOccurrence(planItemId, planItemChanges, occurrenceId, occurrenceChanges) {
+            requireLegacyMemoryMode();
             const planItem = getPlanItemReference(planItemId);
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
@@ -1811,6 +1831,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         updateOccurrence(occurrenceId, occurrenceChanges) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
             requireLegacyParentWrite(occurrence);
@@ -1854,6 +1875,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         setOccurrenceStatus(occurrenceId, status) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
             requireLegacyParentWrite(occurrence);
@@ -1873,6 +1895,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         advanceOccurrenceStatus(occurrenceId) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
             requireLegacyParentWrite(occurrence);

@@ -1,54 +1,51 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Segment-Aware Conflict Engine
+## OccurrenceSegment v1 — Conflict UX, Legacy Retirement & Planner Chronology
 
 ### Objective
 
-Replace the remaining legacy parent-level conflict-resolution model with an
-authoritative backend engine based on:
+Connect the completed backend segment-conflict engine to the real planner UI.
+
+The user must be able to:
 
 ```text
-OccurrenceSegment vs OccurrenceSegment
+attempt a source mutation
+→ receive concrete segment conflicts
+→ understand what will happen
+→ explicitly confirm
+→ retry the SAME mutation with exact blocker confirmations
+→ receive authoritative persisted state
 ```
 
-The engine must:
+without the frontend:
 
 ```text
-detect
-→ explain
-→ require explicit confirmation
-→ revalidate
-→ resolve
-→ persist atomically
+rewriting blocker status locally
+
+calculating target fragments
+
+deciding conflict authorization
+
+calling legacy parent-level override code
 ```
 
-It must never silently rewrite another occurrence because of priority.
+This phase must also retire or guard every remaining active frontend/backend
+writer that is incompatible with schema 004.
 
-The primary flow is:
+Finally, fix the known planner chronology debt:
 
 ```text
-SOURCE mutation
-        ↓
-candidate source segments
-        ↓
-segment conflict detection
-        ↓
-409 resolution required
-        ↓
-user explicitly confirms exact blocker snapshot
-        ↓
-same mutation retried with confirmation
-        ↓
-backend locks + revalidates blocker
-        ↓
-build target resolution
-        ↓
-source + affected targets committed atomically
+expanded OccurrenceSegments must participate in real temporal ordering
 ```
 
-This phase is BACKEND-FIRST.
+instead of always being visually grouped under their parent envelope.
 
-Do NOT implement the final conflict UX yet.
+This is the final integration phase before:
+
+```text
+05.7.5.12
+Final verification + schema 004 rollout
+```
 
 ---
 
@@ -70,55 +67,51 @@ docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
 docs/architecture/OCCURRENCE_SEGMENT_TECHNICAL_AUDIT.md
 
 modules/gestor_de_habitos/docs/valores.md
+
+modules/gestor_de_habitos/docs/segment_conflict_api.md
 ```
 
-Also inspect all completed OccurrenceSegment implementation, especially:
+Also inspect the completed implementation from:
 
 ```text
-occurrence_segment_domain.py
-
-occurrence_segment_service.py
-
-occurrence_structure_domain.py
-
-occurrence_structure_service.py
-
-recurring_segment_policy.py
-
-recurring_segment_service.py
-
-scheduling_policy.py
-
-plan_item_creation_service.py
-
-week_mutation_service.py
-
-future_schedule_service.py
-
-repositories/
-
-app.py
+05.7.5.3
+05.7.5.6
+05.7.5.8
+05.7.5.9
+05.7.5.10
 ```
 
-Audit the remaining legacy conflict code:
+Especially inspect:
 
 ```text
-edit_without_occurrence
+js/app.js
 
-prepareOccurrenceAddition
+js/api/planner-api.js
 
-commitPreparedScheduleChange
+js/mutations/
 
-commitPreparedChange
+js/views/planner-matrix.js
 
-apply_priority_overrides
+js/views/occurrence-structure-editor.js
 
-status_context / status_reason legacy code
+js/domain/occurrence-segments.js
 
-legacy priority confirmation
+js/domain/occurrence-structure-draft.js
+
+backend/app.py
+
+backend/segment_conflict_domain.py
+
+backend/segment_conflict_service.py
+
+backend/repositories/segment_conflict_repository.py
+
+backend/plan_item_creation_service.py
+
+backend/occurrence_structure_service.py
 ```
 
-Read relevant tests before implementation.
+Read all relevant tests before editing.
 
 ---
 
@@ -130,8 +123,11 @@ Interpret requirements in this order:
 CURRENT_TASK.md
 → current implementation scope
 
+segment_conflict_api.md
+→ actual conflict API contract
+
 STATUS_CONFLICT_RULES.md
-→ product conflict behavior
+→ product conflict semantics
 
 OCCURRENCE_SEGMENT_DECISIONS.md
 → approved technical decisions
@@ -140,107 +136,80 @@ OCCURRENCE_SEGMENT_V1.md
 → segment model
 
 TECHNICAL_AUDIT
-→ evidence/history
+→ history/evidence
 ```
 
-If the exact outcome for a blocker status is already defined in the normative
-documents:
-
-```text
-follow it exactly
-```
-
-Do NOT invent an alternative.
-
-If a blocker-status case required for this phase is genuinely not defined:
-
-```text
-STOP that branch
-report the ambiguity
-do not guess
-```
+The frontend must NOT reinterpret backend domain outcomes.
 
 ---
 
 # Scope
 
-This task is limited to:
+This phase includes:
 
 ```text
-segment conflict domain
+conflict dialog / confirmation UX
 
-single-source conflict planning
+PlanItem creation conflict UX
 
-blocker snapshot confirmation protocol
+single-occurrence structural conflict UX
 
-priority/user-forced authorization classification
+exact blocker snapshot confirmation
 
-segment subtraction
+realized-time correction acknowledgement
 
-trim
+stale confirmation recovery
 
-split
+network-safe retry behavior
 
-full-overlap status outcome
+selection/expansion preservation
 
-aggregate recalculation
+retirement/guarding of legacy conflict frontend paths
 
-conflict provenance metadata
+final audit of parent-level PATCH/DELETE writers
 
-atomic source + target persistence
+schema-004-safe occurrence deletion where applicable
 
-PlanItem creation conflict integration
+planner chronology cleanup
 
-single-occurrence structural conflict integration
+desktop/mobile browser verification
 
-legacy backend override retirement/guarding
-
-PostgreSQL 16 tests
+full frontend/backend regression
 ```
 
-This task does NOT implement:
+This phase does NOT implement:
 
 ```text
-final frontend conflict UX
+new conflict-domain rules
 
-recurring conflict resolution
+recurring destructive conflict resolution
 
-Apply Week/Future blocker modification
+segment-status destructive conflict resolution
 
-segment-status conflict resolution
+cross-day custom recurring movement
 
-global schedule shifting
+undefined in_progress internal split semantics
 
-planner chronology redesign
+multiple-source/same-target resolution
 
-production rollout
+authentication / owner / guest
+
+production security hardening
+
+Supabase/cloud deployment
+
+migration 004 on vcs_dev
 
 pause/resume
 
-live tracking
-
 event log
+
+global schedule shifting
 ```
-
-Apply Week/Future remain:
-
-```text
-segment-aware detection + rejection
-```
-
-for this phase.
-
-Segment status activation remains:
-
-```text
-segment-aware detection + rejection
-```
-
-for this phase.
 
 ---
 
-# 1. Inspect working tree
+# 1. Inspect working tree first
 
 Before editing:
 
@@ -250,9 +219,11 @@ git diff --stat
 git diff --check
 ```
 
-The previous phase should already be committed.
+05.7.5.10 should already be committed.
 
-Preserve user work.
+Preserve all user work.
+
+Do not revert previous OccurrenceSegment phases.
 
 ---
 
@@ -268,7 +239,7 @@ Do NOT query, clean or modify `vcs_dev`.
 
 Do NOT delete legacy PlanItems.
 
-Use isolated PostgreSQL 16 for real schema-004 verification.
+All schema-004 backend verification must use isolated PostgreSQL 16.
 
 ---
 
@@ -283,1389 +254,872 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
-If a real migration defect is found:
-
-```text
-STOP before changing it
-```
-
-and report it.
+A migration defect must be reported before any migration change.
 
 ---
 
-# 4. Core conflict model
+# 4. Backend remains authoritative
 
-The current blocking statuses are:
-
-```text
-pending
-in_progress
-completed
-not_finished
-```
-
-Non-blocking:
+Frontend must NOT calculate:
 
 ```text
-not_completed
-cancelled
+which blocker wins
+
+priority_override vs user_forced_override
+
+whether realized time may be corrected
+
+target trim range
+
+target split ranges
+
+target resulting statuses
+
+target aggregate
+
+conflict metadata
 ```
 
-Reuse the existing shared backend authority.
+Those are backend responsibilities.
 
-Do NOT create another status list.
+Frontend only:
+
+```text
+shows
+
+explains
+
+collects confirmation
+
+retries original mutation
+
+hydrates authoritative result
+```
 
 ---
 
-# 5. Conflicts are segment-vs-segment
+# 5. Supported conflict-producing UI flows
 
-Conflict detection must use:
+Integrate the new conflict UX into active user flows that correspond to:
 
 ```text
-source candidate OccurrenceSegments
-vs
-persisted target OccurrenceSegments
+PlanItem / occurrence creation
+
+occurrence translate
+
+occurrence structure replacement
+
+reset segmentation
 ```
 
-Do NOT use parent envelopes as occupation.
+These are the backend paths completed in 05.7.5.10.
 
 ---
 
-# 6. Half-open intervals
+# 6. Rejection-only flows remain rejection-only
 
-Use:
-
-```text
-[start, end)
-```
-
-Therefore:
+Do NOT add destructive confirmation UX to:
 
 ```text
-08:00–09:00
-09:00–10:00
+PATCH segment status
+
+Apply Week
+
+Apply Future
 ```
 
-is adjacency, not conflict.
+They continue to use their current controlled conflict errors.
 
 ---
 
-# 7. Parent gaps remain free
+# 7. First conflict response
 
-Example:
-
-```text
-Target parent
-08:00–12:00
-
-Target segments:
-08:00–09:00
-11:00–12:00
-```
-
-Source:
+Handle:
 
 ```text
-09:30–10:30
+409
+
+code:
+segment_conflict_resolution_required
 ```
 
-Expected:
+as a distinct domain state.
 
-```text
-NO conflict
-```
+Do NOT display it as a generic fatal error.
 
-The parent envelope is not continuous occupation.
+Do NOT mutate planner state.
+
+Do NOT invoke legacy conflict handlers.
 
 ---
 
-# 8. Single-source engine
+# 8. Conflict dialog
 
-The resolution engine in this phase resolves conflicts produced by:
+Create one dedicated conflict-resolution view/component.
 
-```text
-one logical source occurrence
-```
-
-against one or more target occurrences.
-
-This includes:
+Prefer a focused module such as:
 
 ```text
-new occurrence insertion
-
-existing occurrence structural move/change
+js/views/segment-conflict-dialog.js
 ```
 
-Do NOT generalize this phase into a multi-source recurring-resolution engine.
+or equivalent architecture consistent with the repository.
 
-Apply Week/Future continue to reject conflicts.
+Do not grow `app.js` into the conflict UI implementation.
+
+`app.js` should coordinate.
 
 ---
 
-# 9. Source action type
+# 9. Dialog must identify the source intent
 
-Every resolvable operation must explicitly identify the source action as:
+The dialog should clearly communicate what the user is trying to do.
+
+Examples:
 
 ```text
-conflict_insertion
+Crear actividad
+
+Mover actividad
+
+Modificar estructura
+
+Restablecer segmentación
+```
+
+Do not expose internal endpoint names.
+
+---
+
+# 10. Show every blocker
+
+If backend returns multiple conflict entries:
+
+```text
+show ALL of them
+```
+
+Do not display only the first blocker.
+
+The user must understand the complete operation being authorized.
+
+---
+
+# 11. Blocker information
+
+For each conflict show, where available:
+
+```text
+target activity name
+
+date
+
+startTime – endTime
+
+status
+
+resolution effect
+```
+
+Use the existing planner/store to map:
+
+```text
+planItemId
+```
+
+to a human-readable activity name.
+
+If the referenced PlanItem is unavailable:
+
+```text
+fall back gracefully
+```
+
+without inventing data.
+
+---
+
+# 12. Do not infer target structure
+
+Frontend must NOT inspect blocker time and calculate:
+
+```text
+left fragment
+
+right fragment
+
+cancel result
+```
+
+Use the backend-provided conflict information / resolutionKind.
+
+---
+
+# 13. ResolutionKind mapping
+
+Audit the actual resolutionKind values produced by 05.7.5.10.
+
+Create one centralized presentation mapping.
+
+Conceptually:
+
+```text
+backend resolutionKind
+→ human description / action label
+```
+
+Do NOT duplicate this mapping throughout views.
+
+Do NOT invent unsupported resolution kinds.
+
+---
+
+# 14. User-facing actions
+
+For supported single-conflict cases, use concise contextual language when it
+accurately represents the backend outcome.
+
+Examples may include:
+
+```text
+Segmentar y continuar
+
+Ajustar y continuar
+
+Finalizar y continuar
+
+Cancelar y continuar
+
+Confirmar corrección
+```
+
+but use only labels that correspond exactly to the actual backend
+resolutionKind/status outcome.
+
+For multiple heterogeneous conflicts, prefer:
+
+```text
+Confirmar cambios y continuar
+```
+
+after presenting all effects.
+
+---
+
+# 15. `requiredAuthorization`
+
+Backend returns:
+
+```text
+priority_override
 ```
 
 or:
 
 ```text
-conflict_move
+user_forced_override
 ```
 
-Use:
+Frontend may explain the distinction.
 
-```text
-conflict_insertion
-```
+It must NOT recompute it.
 
-for a newly created source occurrence.
-
-Use:
-
-```text
-conflict_move
-```
-
-for an already-persisted occurrence whose structural position/change causes
-the conflict.
-
-Do not infer an event log.
+It must NOT allow the user to choose which value applies.
 
 ---
 
-# 10. First request never modifies blockers
+# 16. Priority override messaging
 
-When an unconfirmed source mutation encounters blockers:
+`priority_override` still requires user confirmation.
 
-```text
-return controlled 409
-```
-
-and perform:
+Do not present higher priority as:
 
 ```text
-ZERO blocker modifications
+automatic
+
+already approved
+
+no-impact
 ```
 
-No implicit priority behavior.
+The user is still authorizing modification of another occurrence.
 
 ---
 
-# 11. Preferred first-response code
+# 17. User-forced messaging
 
-Use a canonical code such as:
+For:
+
+```text
+user_forced_override
+```
+
+make it clear that the requested operation will modify an existing occupied
+time even though priority does not automatically favor the source.
+
+Do not sensationalize.
+
+Keep wording concise and factual.
+
+---
+
+# 18. Realized-time conflicts
+
+When:
+
+```text
+requiresRealizedTimeConfirmation == true
+```
+
+the user must receive a stronger warning.
+
+Explain that the affected segment represents time already recorded as:
+
+```text
+completed
+
+or
+
+not_finished
+```
+
+and the operation will correct recorded history.
+
+---
+
+# 19. Explicit realized-time acknowledgement
+
+The ordinary confirmation button is insufficient.
+
+Require a dedicated acknowledgement control.
+
+Example wording:
+
+```text
+Entiendo que esta acción corregirá tiempo ya registrado.
+```
+
+Only after that acknowledgement may the frontend send:
+
+```json
+"confirmRealizedTimeCorrection": true
+```
+
+for that blocker snapshot.
+
+---
+
+# 20. Bind strong acknowledgement per blocker
+
+If there are multiple realized-time blockers:
+
+```text
+each exact blocker requiring strong confirmation
+```
+
+must receive the required acknowledgement.
+
+Do not use one stale global flag detached from blocker identity.
+
+---
+
+# 21. Confirmation payload
+
+On confirmation, retry the SAME source mutation with:
+
+```text
+conflictResolution.confirmations
+```
+
+using the exact contract from:
+
+```text
+segment_conflict_api.md
+```
+
+At minimum each confirmation binds:
+
+```text
+occurrenceId
+
+segmentId
+
+startTime
+
+endTime
+
+status
+
+confirmed
+```
+
+and:
+
+```text
+confirmRealizedTimeCorrection
+```
+
+when required.
+
+---
+
+# 22. Preserve original mutation request
+
+When first request returns conflict:
+
+```text
+store the exact original mutation intent/payload
+```
+
+as transient frontend command state.
+
+The confirmation retry must use that same intended source mutation.
+
+Do NOT reconstruct it from mutated planner state.
+
+---
+
+# 23. No domain persistence in pending conflict state
+
+The transient conflict command may exist in frontend memory.
+
+But it must NOT:
+
+```text
+modify planner domain state
+
+change target statuses
+
+change source persisted state
+
+insert fake segments
+```
+
+It is only pending UI/command state.
+
+---
+
+# 24. Cancel conflict dialog
+
+If user cancels:
+
+```text
+discard pending conflict confirmation state
+```
+
+No retry.
+
+No backend write.
+
+No planner mutation.
+
+The original editor/form may remain available when appropriate.
+
+---
+
+# 25. Prevent double confirmation
+
+While confirmed retry is pending:
+
+```text
+disable duplicate submit
+```
+
+One user confirmation must produce at most one mutation request.
+
+---
+
+# 26. Confirmed mutation success
+
+After confirmed mutation succeeds:
+
+```text
+mutation
+→ GET planner-state
+→ hydrate authoritative state
+```
+
+Do not locally reproduce target split/trim/cancel outcomes.
+
+---
+
+# 27. GET failure after confirmed mutation
+
+If mutation definitely succeeded but GET fails:
+
+```text
+do NOT resend the mutation
+```
+
+Recovery:
+
+```text
+GET planner-state only
+```
+
+Follow the established safe mutation pattern.
+
+---
+
+# 28. Ambiguous transport failure
+
+If the mutation request itself fails at transport level and frontend cannot know
+whether backend committed:
+
+```text
+DO NOT automatically resend
+```
+
+Surface an ambiguous-result state.
+
+Offer/perform:
+
+```text
+authoritative GET
+```
+
+before allowing the user to decide whether to retry.
+
+Never risk duplicate source creation because of automatic replay.
+
+---
+
+# 29. `conflict_resolution_stale`
+
+Handle stale confirmation explicitly.
+
+Meaning:
+
+```text
+the blocker changed after user reviewed it
+```
+
+Required behavior:
+
+```text
+old confirmation discarded
+
+no automatic destructive retry
+
+refresh authoritative planner state
+
+tell user the conflict changed and must be reviewed again
+```
+
+---
+
+# 30. Preserve source draft when safely possible
+
+For structural editor conflicts:
+
+If confirmation becomes stale but the source occurrence itself has not changed:
+
+```text
+the local structural draft may remain visible
+```
+
+but it must be marked/reviewed before another submission.
+
+If authoritative refresh shows the source occurrence changed:
+
+```text
+invalidate the stale draft
+```
+
+Do not apply an old draft blindly to a changed source.
+
+---
+
+# 31. Fresh blocker after confirmation
+
+If retry returns a new:
 
 ```text
 segment_conflict_resolution_required
 ```
 
-unless an already-approved API convention requires a closely equivalent name.
+with additional/current blockers:
 
-Use the same conflict contract across integrated single-source mutation paths.
+```text
+replace old conflict dialog data with the fresh backend conflict set
+```
+
+The user must confirm the new concrete blockers.
+
+No inherited authorization.
 
 ---
 
-# 12. Conflict response
+# 32. Undefined resolution
 
-Each conflict response must expose the concrete blocker segment.
+Handle backend errors such as:
 
-Conceptually:
-
-```json
-{
-  "status": "error",
-  "code": "segment_conflict_resolution_required",
-  "message": "La operación requiere resolver conflictos de horario.",
-  "conflicts": [
-    {
-      "blocker": {
-        "occurrenceId": "<uuid>",
-        "segmentId": "<uuid>",
-        "planItemId": "<uuid>",
-        "date": "2026-09-21",
-        "startTime": "13:00",
-        "endTime": "15:00",
-        "status": "pending"
-      },
-      "requiredAuthorization": "priority_override",
-      "resolutionKind": "<normative-resolution-kind>",
-      "requiresRealizedTimeConfirmation": false
-    }
-  ]
-}
+```text
+segment_resolution_undefined
 ```
 
-Exact envelope may follow current API conventions.
+as non-confirmable.
+
+Especially:
+
+```text
+internal split of in_progress
+
+full coverage of in_progress
+```
+
+where currently unsupported.
+
+Explain that this exact case cannot yet be resolved automatically.
+
+Do NOT offer a force button.
 
 ---
 
-# 13. Blocker snapshot contract
+# 33. Multiple-source limitation
 
-The approved confirmation granularity is the concrete blocker segment:
-
-```text
-occurrenceId
-
-segmentId
-
-startTime
-
-endTime
-
-status
-```
-
-Date and PlanItem ID may also be returned for UX, but confirmation validity
-must bind at least to the approved concrete segment snapshot.
-
-Do NOT confirm merely:
+Handle:
 
 ```text
-occurrenceId
+multiple_source_resolution_unavailable
 ```
 
-because one occurrence may contain multiple segments.
+as a controlled unsupported case.
+
+Do not emulate ordering client-side.
+
+Do not send several independent confirmations to simulate unsupported
+multi-source semantics.
 
 ---
 
-# 14. Confirmation is stateless
+# 34. Frozen history
 
-Do NOT store pending conflict confirmations in:
+If backend rejects resolution because target is frozen:
 
 ```text
-memory
-
-session
-
-temporary DB tables
-
-server cache
+show that historical time cannot be rewritten
 ```
 
-The client retries the original mutation with explicit confirmations.
+The user must modify the source intent instead.
 
-Backend re-derives and revalidates everything.
+No override button.
 
 ---
 
-# 15. Confirmation payload
+# 35. Creation conflict flow
 
-Use one explicit optional object in the mutation request, conceptually:
-
-```json
-{
-  "conflictResolution": {
-    "confirmations": [
-      {
-        "blocker": {
-          "occurrenceId": "<uuid>",
-          "segmentId": "<uuid>",
-          "startTime": "13:00",
-          "endTime": "15:00",
-          "status": "pending"
-        },
-        "confirmed": true
-      }
-    ]
-  }
-}
-```
-
-For blockers requiring stronger realized-time confirmation, include the
-smallest explicit additional acknowledgement consistent with the normative
-rules.
-
-Do NOT reuse the old:
+For PlanItem/new occurrence creation:
 
 ```text
-confirmedOccurrenceIds
-```
-
-contract as the new source of authority.
-
----
-
-# 16. Do not trust client authorization claims
-
-The backend computes:
-
-```text
-priority_override
-```
-
-or:
-
-```text
-user_forced_override
-```
-
-from current persisted priorities.
-
-The client does NOT decide which conflict reason applies.
-
-If the payload contains an authorization label for display/echo purposes:
-
-```text
-recompute and verify it
-```
-
-Do not trust it.
-
----
-
-# 17. Priority authorization
-
-Canonical rule:
-
-```text
-source.priority > target.priority
-→ priority_override
-```
-
-Otherwise:
-
-```text
-source.priority <= target.priority
-→ user_forced_override
-```
-
-Even when the source has higher priority:
-
-```text
-explicit user awareness/confirmation is still required
-```
-
-Priority does NOT silently modify another occurrence.
-
----
-
-# 18. Realized-time protection
-
-Segments with:
-
-```text
-completed
-not_finished
-```
-
-represent realized/historical time.
-
-They must NEVER be silently rewritten merely because:
-
-```text
-source priority is higher
-```
-
-Use the stronger explicit confirmation required by the normative conflict
-rules.
-
-If the required target date is frozen:
-
-```text
-do not rewrite frozen history
-```
-
-Return a controlled resolution-unavailable/frozen error.
-
-Do not bypass history immutability.
-
----
-
-# 19. `in_progress`
-
-`in_progress` conflict handling must follow the exact rule defined in:
-
-```text
-STATUS_CONFLICT_RULES.md
-```
-
-This phase is where that nuanced rule becomes executable.
-
-Do NOT treat:
-
-```text
-in_progress == pending
-```
-
-unless the normative rule explicitly says so.
-
-Do NOT silently convert it.
-
----
-
-# 20. Non-blocking statuses
-
-Do not produce a conflict for:
-
-```text
-cancelled
-
-not_completed
-```
-
-No confirmation is required merely because time ranges overlap them.
-
----
-
-# 21. Resolution planner
-
-Create a pure domain layer that transforms:
-
-```text
-target segment
-
-minus
-
-source occupied interval(s)
-```
-
-into the approved final result.
-
-It must not query:
-
-```text
-Flask
-
-PostgreSQL
-
-wall clock
-```
-
-except through explicit inputs.
-
----
-
-# 22. Conflict subtraction
-
-Canonical structural rule:
-
-```text
-affected target segment
--
-source occupied interval
-=
-surviving fragments
-```
-
-Possible structural outcomes:
-
-```text
-0 fragments
-
-1 fragment
-
-2 fragments
+submit create
+→ 409 conflict
+→ show dialog
+→ explicit confirmation
+→ retry SAME create payload + conflictResolution
+→ success
+→ GET
 ```
 
 ---
 
-# 23. One surviving fragment
+# 36. Creation conflict must not duplicate
 
-For one surviving fragment:
-
-```text
-trim the existing target segment
-```
-
-Preserve:
+A create confirmation must never accidentally create:
 
 ```text
-original segment ID
+two PlanItems
+
+two occurrences
 ```
 
-unless a normative status-specific rule explicitly requires a different
-outcome.
+Double-submit and transport recovery must be tested.
 
 ---
 
-# 24. Two surviving fragments
+# 37. Structural translate conflict flow
 
-For two surviving fragments:
-
-```text
-split within the SAME logical target occurrence
-```
-
-Preferred identity rule:
+For:
 
 ```text
-left/earlier fragment
-→ keeps original segment ID
-
-right/later fragment
-→ new backend UUID v4
+POST /occurrences/<id>/translate
 ```
 
-Preserve appropriate status according to the normative conflict rules.
+use the same shared conflict coordinator/dialog.
+
+Do not build translate-specific conflict semantics.
 
 ---
 
-# 25. Zero surviving fragments
+# 38. Structure replacement conflict flow
 
-Never create:
+For:
 
 ```text
-zero-duration segment
+PUT /occurrences/<id>/structure
 ```
 
-For full coverage:
+preserve the existing local structural draft while conflict review is active.
+
+Confirmed retry sends:
 
 ```text
-apply the normative status outcome
-```
-
-defined by `STATUS_CONFLICT_RULES.md`.
-
-Do not invent an empty fragment.
-
-Do not leave an occurrence with an invalid zero-segment graph.
-
----
-
-# 26. At least one segment
-
-Every surviving occurrence must still have:
-
-```text
-1..N OccurrenceSegments
-```
-
-If the full-overlap rule changes status rather than structure:
-
-```text
-preserve a valid segment according to the normative outcome
-```
-
-If normative documentation defines another exact strategy:
-
-```text
-follow it
-```
-
-Do not improvise.
-
----
-
-# 27. Repeated segmentation
-
-The engine must support already-segmented targets.
-
-Example:
-
-```text
-Target occurrence
-
-S1
-08:00–09:00
-
-S2
-10:00–12:00
-```
-
-A later confirmed conflict may further trim/split:
-
-```text
-S2
-```
-
-Repeated conflict resolution is valid.
-
-Do not assume:
-
-```text
-target originally had one segment
+same source structure payload
++
+conflictResolution
 ```
 
 ---
 
-# 28. Multiple source segments
+# 39. Reset conflict flow
 
-A custom source occurrence may itself contain:
+For:
 
 ```text
-multiple blocking segments
+POST /occurrences/<id>/reset-segmentation
 ```
 
-Resolution must consider every occupied source interval.
+use the same conflict engine UX.
 
-Do not treat the source parent envelope as occupation.
+The initial explicit reset confirmation and the later conflict confirmation are
+different concepts.
+
+Do not collapse them into one accidental confirmation.
 
 ---
 
-# 29. Deterministic subtraction
+# 40. Shared conflict mutation coordinator
 
-When multiple source intervals affect one target:
+Prefer one shared frontend coordinator for:
 
 ```text
-sort/process deterministically
+detect resolution-required response
+
+store source command
+
+open dialog
+
+collect snapshots
+
+retry command
+
+recover
+
+hydrate
 ```
 
-The final target graph must not depend on incidental query ordering.
-
-Existing original ID should remain attached to the earliest surviving fragment
-where the approved identity rule allows it.
-
-New fragments receive independent backend UUIDs.
-
----
-
-# 30. Candidate target graph validation
-
-After resolution, every affected target occurrence must satisfy:
+Do not duplicate the complete flow for:
 
 ```text
-at least one segment
+create
 
-positive duration
-
-inside parent envelope or approved updated envelope
-
-sibling non-overlap
-
-canonical ordering
-
-valid statuses
-
-temporal integrity
-```
-
-Reuse the existing structural/domain validators.
-
-Do not create a parallel validator.
-
----
-
-# 31. Target parent envelope
-
-Do NOT automatically shrink the target occurrence general envelope merely
-because its runtime segments were trimmed/split.
-
-Recall:
-
-```text
-Occurrence.start/end
-=
-general/planned envelope
-```
-
-Segments may leave gaps inside it.
-
-Unless normative documentation explicitly requires an envelope change for a
-specific resolution:
-
-```text
-preserve parent envelope
-```
-
----
-
-# 32. Structural duration
-
-Conflict segmentation does not change the duration definition:
-
-```text
-sum of ALL final segment durations
-```
-
-regardless of status.
-
-No realized analytics in this phase.
-
----
-
-# 33. Aggregate recalculation
-
-After target segment resolution:
-
-```text
-derive_occurrence_status(
-    all final target segments,
-    target temporal phase
-)
-```
-
-Persist the target parent aggregate in the same transaction.
-
-Never manually choose the target parent status.
-
----
-
-# 34. Source aggregate
-
-The source occurrence also remains governed by:
-
-```text
-derive_occurrence_status(...)
-```
-
-Do not mutate its parent status independently.
-
----
-
-# 35. Temporal phase
-
-Use explicit:
-
-```text
-future
-
-current_day
-
-previous_editable_day
-
-frozen_history
-```
-
-Do not use ambiguous historical booleans.
-
----
-
-# 36. One authoritative `now`
-
-Capture one backend `now` for the operation.
-
-Use it consistently for:
-
-```text
-source validation
-
-target temporal phase
-
-completed-time validation
-
-historical protection
-```
-
-Do not accept clock values from public requests.
-
----
-
-# 37. Conflict metadata — target
-
-When a confirmed conflict modifies the TARGET occurrence's:
-
-```text
-segment status
-
-or
-
-temporal structure
-```
-
-persist:
-
-```text
-conflict_reason
-=
-priority_override
-or
-user_forced_override
-```
-
-and:
-
-```text
-source_occurrence_id
-=
-current source occurrence ID
-```
-
-The latest confirmed modifying conflict wins.
-
----
-
-# 38. Historical conflict context does not auto-clear
-
-Later source movement or cancellation does NOT automatically clear:
-
-```text
-target.conflict_reason
-
-target.source_occurrence_id
-```
-
-Those fields describe historical context.
-
-Current blockers are always derived from current segment graph/status.
-
----
-
-# 39. Source creation metadata
-
-If a newly created occurrence successfully causes confirmed modifications to
-another occurrence:
-
-```text
-source.origin_reason = conflict_insertion
-```
-
-and use the approved insertion conflict-action metadata.
-
-Normal creation with no blocker modification keeps:
-
-```text
-origin_reason = NULL
-```
-
-`origin_reason` never changes after birth.
-
----
-
-# 40. Existing source move metadata
-
-If an already-existing source occurrence is structurally moved/changed and
-confirmed resolution modifies another occurrence:
-
-```text
-preserve source.origin_reason
-```
-
-and record the approved:
-
-```text
-conflict_move
-```
-
-action metadata.
-
-Do not rewrite its origin.
-
----
-
-# 41. `last_conflict_action`
-
-Follow the exact placement/semantics already documented in
-`OCCURRENCE_SEGMENT_V1` / `DECISIONS`.
-
-At minimum preserve the approved values:
-
-```text
-conflict_insertion
-
-conflict_move
-```
-
-Do NOT invent:
-
-```text
-conflict_status_activation
-
-conflict_week
-
-conflict_future
-```
-
-in this phase.
-
----
-
-# 42. Metadata is not an event log
-
-Do NOT add:
-
-```text
-conflict history table
-
-conflict count
-
-conflictSources[]
-
-event stream
-```
-
-The current model records latest relevant context only.
-
----
-
-# 43. Latest conflict wins
-
-If a target was previously modified by another conflict and a new confirmed
-source modifies it again:
-
-```text
-conflict_reason
-
-source_occurrence_id
-```
-
-must describe the NEW latest conflict.
-
-Do not preserve the first cause as if it were permanent genealogy.
-
----
-
-# 44. Source delete policy
-
-Preserve:
-
-```text
-source_occurrence_id
-ON DELETE NO ACTION
-```
-
-A referenced source still cannot be deleted.
-
-Do not weaken provenance.
-
----
-
-# 45. Source movement
-
-Do NOT reintroduce:
-
-```text
-referenced source cannot move
-```
-
-A referenced source may move.
-
-Historical target metadata remains valid historical context.
-
----
-
-# 46. Snapshot revalidation
-
-On confirmation retry:
-
-```text
-lock blocker rows
-```
-
-and compare the current blocker to the submitted snapshot.
-
-At minimum verify exact:
-
-```text
-occurrenceId
-
-segmentId
-
-startTime
-
-endTime
-
-status
-```
-
----
-
-# 47. Changed blocker invalidates confirmation
-
-If a blocker changed between:
-
-```text
-first 409
-```
-
-and:
-
-```text
-confirmation retry
-```
-
-the prior authorization is invalid.
-
-Do NOT apply it to the changed segment.
-
-Return a controlled stale/fresh-conflict response.
-
-Preferred code:
-
-```text
-conflict_resolution_stale
-```
-
-or an equivalent explicit code.
-
----
-
-# 48. Removed blocker
-
-If a previously confirmed blocker disappeared or became materially different
-before confirmation:
-
-```text
-do not blindly reuse old authorization
-```
-
-Treat the prior snapshot as stale.
-
-Re-evaluate the operation.
-
-No silent destructive action based on obsolete confirmation.
-
----
-
-# 49. New blocker
-
-If a new blocker appears before confirmation:
-
-```text
-do not modify it without explicit confirmation
-```
-
-Return the fresh conflict set.
-
----
-
-# 50. Missing confirmation
-
-If a current blocker requiring resolution has no matching confirmation:
-
-```text
-return resolution required
-```
-
-No partial resolution.
-
----
-
-# 51. Extra/invalid confirmations
-
-Reject malformed or duplicate confirmation entries.
-
-Do not allow a confirmation for:
-
-```text
-one segment
-```
-
-to authorize:
-
-```text
-another segment
-```
-
----
-
-# 52. Strong confirmation
-
-If the normative rules require stronger acknowledgement for:
-
-```text
-completed
-
-not_finished
-```
-
-that acknowledgement must also be bound to the exact blocker snapshot.
-
-Do not treat a generic:
-
-```text
-"yes"
-```
-
-from an earlier state as authorization for changed realized time.
-
----
-
-# 53. Atomic operation
-
-A confirmed source mutation and every affected target mutation must commit:
-
-```text
-together
-```
-
-or:
-
-```text
-not at all
-```
-
-No:
-
-```text
-source saved
-
-target resolution failed
-```
-
-state may survive.
-
----
-
-# 54. Transaction isolation
-
-Use:
-
-```text
-SERIALIZABLE
-```
-
-consistent with current write architecture.
-
----
-
-# 55. Deterministic locks
-
-Establish one lock order consistent with existing services.
-
-Conceptually:
-
-```text
-1. source parent when persisted
-2. source segments when persisted
-3. target parents ordered deterministically
-4. target blocker segments ordered deterministically
-5. remaining target siblings needed for final graph
-6. validate
-7. write
-```
-
-For a new source, generate required IDs/candidate graph without exposing
-partial persistence.
-
-Avoid deadlock-prone ordering divergence.
-
----
-
-# 56. Source candidate validation first
-
-Before modifying targets, validate the source candidate itself:
-
-```text
-valid temporal phase
-
-valid statuses
-
-valid structure
-
-completed-time
-
-no sibling overlap
-
-bounds
-```
-
-Do not resolve blockers for an invalid source mutation.
-
----
-
-# 57. Blocker discovery and locking
-
-Do not rely on an unlocked conflict list from a prior request.
-
-On confirmation:
-
-```text
-discover/lock authoritative blockers again
-```
-
-under the current transaction.
-
----
-
-# 58. No global schedule shift
-
-Forbidden:
-
-```text
-move every later occurrence
-
-push schedule forward
-
-cascade offsets globally
-```
-
-Conflict resolution modifies only the specifically affected target structures
-according to approved rules.
-
----
-
-# 59. PlanItem creation integration
-
-Replace the old PlanItem creation conflict override behavior with the new
-segment-aware protocol.
-
-First request:
-
-```text
-detect real segment blockers
-→ 409 resolution required
-→ zero target writes
-```
-
-Confirmed request:
-
-```text
-revalidate
-→ resolve target segments
-→ create source PlanItem/occurrence/segment graph
-→ write metadata
-→ commit atomically
-```
-
----
-
-# 60. No legacy PlanItem override
-
-The schema-004 PlanItem creation path must never call:
-
-```text
-apply_priority_overrides()
-```
-
-or legacy parent-level equivalent.
-
-The temporary guard introduced in earlier phases can be replaced by the new
-engine only when the new engine is valid.
-
-Do not reopen the old mutation path.
-
----
-
-# 61. New source IDs
-
-When conflict metadata needs:
-
-```text
-source_occurrence_id
-```
-
-for a newly created source:
-
-```text
-generate the final source occurrence ID inside the authoritative operation
-```
-
-and use that same ID for:
-
-```text
-source persistence
-
-target.source_occurrence_id
-```
-
-Do not write a temporary/fake source ID.
-
----
-
-# 62. Structural mutation integration
-
-Integrate the new engine into single-occurrence structural mutations:
-
-```text
 translate
 
-replace structure
+structure
 
-reset segmentation
-```
-
-when they produce blocking conflicts.
-
-Unconfirmed:
-
-```text
-409 resolution required
-```
-
-Confirmed:
-
-```text
-revalidate
-resolve blockers
-persist source structure
-persist target structures
-commit
+reset
 ```
 
 ---
 
-# 63. Structural target draft remains source-only
+# 41. Existing mutation modules
 
-The source structural command continues to describe:
+Respect the current mutation architecture.
+
+Extend/reuse existing:
 
 ```text
-the source occurrence candidate
+planner mutation coordinator
+
+occurrence structure mutation coordinator
+
+API client
 ```
 
-Conflict resolution modifies blocker targets in backend domain logic.
-
-Do not require the source structural payload to include manually edited target
-graphs.
+rather than placing fetch logic in views.
 
 ---
 
-# 64. `conflict_move`
+# 42. No direct `fetch()` from conflict dialog
 
-A confirmed structural mutation of an existing source that modifies blockers
-uses:
+The conflict dialog is presentation.
 
-```text
-conflict_move
-```
+It should not call endpoints directly.
 
-for the approved source conflict-action metadata.
-
-A normal structural change with no blocker modifications does NOT.
+Use centralized API/mutation layers.
 
 ---
 
-# 65. Reset conflict
+# 43. Selection after successful conflict resolution
 
-Reset segmentation may also produce a conflict.
+Preserve:
 
-It follows the same confirmation/revalidation engine.
+```text
+selectedOccurrenceId
+```
 
-Do not create a separate reset-specific override model.
+when that source/target still exists.
+
+Preserve:
+
+```text
+selectedSegmentId
+```
+
+only if that segment ID still survives.
 
 ---
 
-# 66. Segment-status mutation remains rejection-only
+# 44. Split selection identity
 
-Do NOT make:
-
-```text
-PATCH /api/occurrence-segments/<id>/status
-```
-
-modify blocker structures in this phase.
-
-It continues to return:
+When target split occurs:
 
 ```text
-segment_status_conflict
+left fragment keeps old ID
+
+right fragment receives new ID
 ```
 
-when activation overlaps blockers.
-
-Reason:
+If the old target segment was selected:
 
 ```text
-the approved conflict-action metadata currently models insertion/move
+selection naturally remains on the surviving left/original ID
 ```
 
-and status-activation conflict semantics are not being expanded here.
+Do not remap based on array indexes.
 
 ---
 
-# 67. Apply Week/Future remain rejection-only
+# 45. Cancelled/full-overlap selection
 
-Do NOT make recurring batch conflicts destructive in this phase.
-
-They continue to return:
+If a selected target segment changes status but keeps identity:
 
 ```text
-recurring_schedule_conflict
+selection may remain
 ```
 
-with blockers.
+If backend state legitimately removes/replaces the selected identity:
 
-The recurring segment-aware work from 05.7.5.9 must remain intact.
+```text
+clear dangling selection
+```
+
+Do not invent a replacement.
 
 ---
 
-# 68. Ad-hoc occurrence addition audit
+# 46. Expansion after conflict
 
-Audit:
+Preserve expanded occurrence IDs after authoritative GET when those parents
+still exist.
+
+Conflict resolution must not unexpectedly collapse the whole planner.
+
+---
+
+# 47. Legacy frontend conflict audit
+
+Audit exact callers of:
 
 ```text
 edit_without_occurrence
@@ -1673,78 +1127,105 @@ edit_without_occurrence
 prepareOccurrenceAddition
 
 commitPreparedScheduleChange
-```
 
-Determine which backend mutation should eventually own ad-hoc occurrence
-insertion conflict resolution.
+openPersistentOverride
 
-Do NOT preserve a local parent-status conflict writer merely because it already
-exists.
+addPriorityOverride
 
-If safely integrating the backend engine requires frontend UX work reserved for
-05.7.5.11:
+confirmedOccurrenceIds
 
-```text
-keep that legacy frontend path guarded
-```
-
-and report it precisely.
-
-Do not silently expand the UI scope.
-
----
-
-# 69. Legacy backend override retirement
-
-After the new engine is integrated, no active schema-004 backend insertion or
-single-occurrence move path may perform:
-
-```text
-pending parent → cancelled
-
-in_progress parent → not_finished
-
-status_reason write
-
-parent-envelope split logic
-```
-
-through the old override implementation.
-
-Old helpers may remain physically only if completely unreachable and clearly
-documented for later cleanup.
-
-Prefer removing dead code when safe.
-
----
-
-# 70. `status_reason`
-
-Do not reintroduce:
-
-```text
-status_reason
-```
-
-Schema-004 writes use:
-
-```text
-conflict_reason
-```
-
-according to the new model.
-
----
-
-# 71. `statusContext`
-
-Do not reintroduce frontend/backend dependency on:
-
-```text
 statusContext
 ```
 
-The canonical read model remains:
+---
+
+# 48. `edit_without_occurrence`
+
+05.7.5.10 guarded this path before the old local conflict writer.
+
+After the new UI integration:
+
+```text
+do not restore its old conflict behavior
+```
+
+If it still owns a legitimate non-conflict interaction:
+
+```text
+keep only that compatible responsibility
+```
+
+Otherwise retire it.
+
+---
+
+# 49. `prepareOccurrenceAddition`
+
+If it has no active caller after the new creation flow:
+
+```text
+remove it
+```
+
+when safe.
+
+If retained for non-conflict logic:
+
+```text
+prove exact caller and responsibility
+```
+
+No legacy conflict mutation may remain reachable.
+
+---
+
+# 50. `commitPreparedScheduleChange`
+
+If no active caller remains:
+
+```text
+remove it
+```
+
+or clearly isolate it as dead/deprecated code pending cleanup.
+
+Do not keep a dormant writer reachable through accidental UI state.
+
+---
+
+# 51. `openPersistentOverride`
+
+Retire it if the new dialog replaces its purpose.
+
+No active UI path may open the old parent-level priority override interface.
+
+---
+
+# 52. `addPriorityOverride`
+
+Retire/guard old client-side priority mutation logic.
+
+Frontend no longer changes blockers itself.
+
+---
+
+# 53. `confirmedOccurrenceIds`
+
+Remove it from active conflict authority.
+
+The new confirmation authority is:
+
+```text
+exact blocker segment snapshots
+```
+
+---
+
+# 54. `statusContext`
+
+Do not restore dependency on this legacy alias.
+
+Canonical frontend model remains:
 
 ```text
 conflictContext
@@ -1752,575 +1233,612 @@ conflictContext
 
 ---
 
-# 72. Pure domain tests — authorization
+# 55. Legacy backend writer audit
 
-Test:
+Audit:
 
 ```text
-source priority > target
-→ priority_override
+PATCH /api/occurrences/<id>
+
+DELETE /api/occurrences/<id>
+```
+
+and every backend caller/service they invoke.
+
+Determine whether each is:
+
+```text
+schema-004 compatible
+
+unused
+
+or incompatible
+```
+
+---
+
+# 56. Parent PATCH
+
+The report from 05.7.5.10 identified:
+
+```text
+PATCH /api/occurrences/<id>
+```
+
+as still tied to:
+
+```text
+schema 003
+
+status_reason
+
+parent-level mutation
+```
+
+This path must NOT remain an active incompatible writer after this phase.
+
+Preferred outcome:
+
+```text
+retire/remove active frontend use
 ```
 
 and:
 
 ```text
-source priority == target
-→ user_forced_override
-
-source priority < target
-→ user_forced_override
+retire/guard backend route
 ```
 
-All still require explicit confirmation.
+if no schema-004-compatible responsibility remains.
+
+Do NOT simply rename:
+
+```text
+status_reason → conflict_reason
+```
+
+and preserve incompatible semantics.
 
 ---
 
-# 73. Pure domain tests — snapshots
+# 57. No parent-level status authority
 
-Test exact blocker snapshot comparison.
+Occurrence status is materialized aggregate.
 
-Changes to:
+Therefore no generic endpoint may remain active that allows the client to set:
 
 ```text
-segment ID
-
-start
-
-end
-
-status
+Occurrence.status
 ```
 
-must invalidate previous confirmation.
+independently of its segments.
+
+Use:
+
+```text
+PATCH occurrence-segment status
+```
+
+instead.
 
 ---
 
-# 74. Pure domain tests — subtraction
+# 58. Occurrence DELETE audit
 
-Cover at minimum:
+Deleting a whole occurrence may be compatible because:
 
 ```text
-source covers middle
-→ 2 fragments
-
-source overlaps left edge
-→ 1 right fragment
-
-source overlaps right edge
-→ 1 left fragment
-
-source covers entire target
-→ normative 0-fragment outcome
-
-adjacency
-→ no subtraction
+occurrence_segments
+ON DELETE CASCADE
 ```
+
+but verify all behavior.
+
+Deletion must respect:
+
+```text
+source_occurrence_id
+ON DELETE NO ACTION
+```
+
+when the occurrence is referenced as historical conflict source.
 
 ---
 
-# 75. Split identity test
+# 59. Delete must be graph-aware
 
-For:
-
-```text
-2 fragments
-```
-
-verify:
+If active occurrence deletion remains supported:
 
 ```text
-left keeps original ID
-
-right gets backend UUID v4
+delete parent
+→ segments cascade
 ```
+
+must occur atomically.
+
+Do not individually mutate segment statuses first.
 
 ---
 
-# 76. Repeated segmentation test
+# 60. Referenced source delete UX
 
-Resolve a conflict against an occurrence that already has multiple segments.
-
-Verify:
-
-```text
-existing unrelated sibling IDs unchanged
-
-affected segment follows identity rule
-
-no sibling overlap
-
-aggregate coherent
-```
-
----
-
-# 77. Multiple source interval test
-
-Use a custom source with more than one blocking segment.
-
-Verify target subtraction uses:
-
-```text
-actual source segments
-```
-
-not source parent envelope.
-
----
-
-# 78. Pending tests
-
-Implement the exact `pending` outcomes defined by
-`STATUS_CONFLICT_RULES.md`.
-
-Cover:
-
-```text
-partial overlap
-
-middle overlap
-
-full overlap
-```
-
----
-
-# 79. In-progress tests
-
-Implement and test the exact nuanced:
-
-```text
-in_progress
-```
-
-rule from the normative conflict document.
-
-If that rule is not actually complete enough to implement:
-
-```text
-STOP
-report before inventing behavior
-```
-
----
-
-# 80. Completed / not_finished tests
-
-Verify:
-
-```text
-no silent modification
-```
-
-without the required strong explicit confirmation.
-
-Also verify frozen realized history remains protected.
-
----
-
-# 81. Non-blocking tests
-
-Overlapping:
-
-```text
-cancelled
-
-not_completed
-```
-
-must not require conflict resolution.
-
----
-
-# 82. Aggregate tests
-
-After each approved target resolution:
-
-```text
-derive aggregate from all target segments
-```
-
-Test both:
-
-```text
-single-segment target
-
-multi-segment target
-```
-
----
-
-# 83. Metadata tests
-
-Verify confirmed resolution updates exactly the approved fields.
-
-At minimum test:
-
-```text
-target conflict_reason
-
-target source_occurrence_id
-
-source origin_reason for conflict insertion
-
-source conflict-action metadata for insertion/move
-```
-
-and preservation of unrelated metadata.
-
----
-
-# 84. Latest conflict test
-
-Resolve target with Source A.
-
-Later resolve same target with Source B.
-
-Expected:
-
-```text
-latest target conflict metadata
-→ Source B
-```
-
-No multi-source genealogy.
-
----
-
-# 85. Metadata persistence after source move
-
-After a confirmed conflict:
-
-```text
-move source away without another conflict
-```
-
-Expected:
-
-```text
-target historical conflict metadata remains
-```
-
-Current blocking relationship disappears because segments no longer overlap,
-not because metadata was cleared.
-
----
-
-# 86. Referenced source movement regression
-
-A source referenced through:
+If delete fails because occurrence is referenced as:
 
 ```text
 source_occurrence_id
 ```
 
-may still move.
+surface a controlled error.
 
-No legacy movement lock.
+Do not remove historical target provenance.
 
----
-
-# 87. Referenced source delete regression
-
-Deletion remains restricted by:
-
-```text
-ON DELETE NO ACTION
-```
-
-Do not weaken it.
+Do not clear references automatically.
 
 ---
 
-# 88. First-request PostgreSQL test
+# 61. Multi-segment deletion
 
-Real schema 004:
+Do not block whole-occurrence deletion merely because the parent has multiple
+segments.
+
+If deletion is otherwise valid:
 
 ```text
-source insertion/move
-→ blocker
+the whole graph may be deleted
 ```
 
-Expected:
+through parent cascade.
+
+If product semantics currently forbid deletion for another documented reason:
 
 ```text
-409 resolution required
-
-source unchanged/uncreated as appropriate
-
-target unchanged
-
-metadata unchanged
+preserve that rule
 ```
 
 ---
 
-# 89. Confirmed insertion round trip
+# 62. No status-as-delete fallback
 
-Real PostgreSQL:
+Do not emulate deletion by changing:
 
 ```text
-POST source insertion
+parent status
+```
+
+or all child statuses unless that is an explicit separate product action.
+
+Delete and cancel are distinct operations.
+
+---
+
+# 63. Final active writer inventory
+
+At completion, enumerate every active endpoint capable of modifying:
+
+```text
+plan_items
+
+occurrences
+
+occurrence_segments
+
+generation configs / slots
+```
+
+and classify whether it is schema-004 compatible.
+
+This inventory is critical input for 05.7.5.12.
+
+---
+
+# 64. No incompatible writer allowed
+
+Definition before phase completion:
+
+```text
+no active UI path may reach a schema-003-only writer
+```
+
+Any remaining historical helper must be:
+
+```text
+removed
+
+or provably unreachable
+```
+
+Do not leave "probably unused" as the only protection.
+
+---
+
+# 65. Planner chronology debt
+
+Current known limitation:
+
+Expanded children are visually grouped under their parent instead of
+participating in global chronological order.
+
+Example current grouping:
+
+```text
+Estudiar
+  Seg 1 13:00–14:00
+  Seg 2 16:00–17:00
+
+Comer
+14:30–15:30
+```
+
+This visually hides the real chronology.
+
+---
+
+# 66. Chronology goal
+
+Expanded temporal rows must be ordered by actual occupied time:
+
+```text
+13:00  Estudiar · Seg 1
+
+14:30  Comer
+
+16:00  Estudiar · Seg 2
+```
+
+without changing domain ownership:
+
+```text
+Seg 1 and Seg 2
+still belong to the same occurrence
+```
+
+---
+
+# 67. Chronology is presentation only
+
+Do NOT modify persisted data to achieve visual ordering.
+
+Do NOT duplicate occurrences.
+
+Do NOT change segment IDs.
+
+Do NOT create synthetic persisted rows.
+
+Build a derived render model.
+
+---
+
+# 68. Compact occurrence behavior
+
+A non-expanded occurrence may continue to render as one parent-level temporal
+row using its general envelope.
+
+Do not force every occurrence to display child rows all the time.
+
+---
+
+# 69. Expanded multi-segment behavior
+
+When a multi-segment occurrence is expanded:
+
+```text
+its child temporal rows
+```
+
+must participate individually in the global chronological ordering.
+
+They may appear separated by rows from other occurrences.
+
+---
+
+# 70. Parent identity in interleaved rows
+
+Because children may no longer remain physically contiguous:
+
+Each segment row must make its parent identity clear.
+
+Examples:
+
+```text
+Estudiar · Seg 1/2
+
+Estudiar · Seg 2/2
+```
+
+Use derived ordinal ordering.
+
+Do NOT persist:
+
+```text
+segment number
+```
+
+---
+
+# 71. Parent controls
+
+The user must still be able to access parent actions:
+
+```text
+structural editor
+
+recurring editor
+
+delete if available
+
+expand/collapse
+```
+
+even when segment rows are interleaved.
+
+Choose a minimal clear presentation.
+
+Do not redesign the entire planner.
+
+---
+
+# 72. Parent summary
+
+If retaining a parent summary/control row:
+
+```text
+it must not masquerade as another occupied time interval
+```
+
+It may be a non-temporal group/control element.
+
+Do not allow it to distort chronological sorting.
+
+---
+
+# 73. Global temporal sort
+
+Use a derived sort key based on the actual row represented.
+
+For child rows:
+
+```text
+segment.startTime
+```
+
+For compact parent rows:
+
+```text
+occurrence.startTime
+```
+
+Use deterministic tie-breaking.
+
+---
+
+# 74. Tie-breaking
+
+When multiple temporal rows share the same start time:
+
+Use deterministic stable ordering based on existing planner semantics, then
+stable IDs if needed.
+
+Do not rely on incidental object insertion order.
+
+---
+
+# 75. Cross-parent gaps
+
+The visual chronology must correctly show another occurrence inside the gap of
+a segmented parent.
+
+This is the main acceptance case for chronology cleanup.
+
+---
+
+# 76. Single-segment occurrence
+
+A one-segment occurrence should retain the familiar compact UI.
+
+Do not add unnecessary expansion complexity.
+
+---
+
+# 77. Status controls
+
+For expanded multi-segment rows:
+
+```text
+segment status controls remain attached to that concrete segment
+```
+
+Parent aggregate remains informational/read-only.
+
+---
+
+# 78. Structural editing
+
+Opening the structural editor from any segment row must edit:
+
+```text
+the owning occurrence
+```
+
+not only that child.
+
+Selection should set:
+
+```text
+selectedOccurrenceId
+
+selectedSegmentId
+```
+
+appropriately.
+
+---
+
+# 79. Recurring control
+
+The dedicated:
+
+```text
+↻
+```
+
+recurring action from 05.7.5.9 remains distinct from:
+
+```text
+✏️
+```
+
+structural editing.
+
+Chronology cleanup must not regress that distinction.
+
+---
+
+# 80. Accessibility
+
+Conflict dialog must support:
+
+```text
+keyboard focus
+
+clear labels
+
+button disabled state while submitting
+
+readable warning text
+
+close/cancel action
+```
+
+Use appropriate dialog semantics consistent with existing app patterns.
+
+---
+
+# 81. Dialog focus
+
+When conflict dialog opens:
+
+```text
+focus should enter the dialog
+```
+
+When it closes:
+
+```text
+return focus to a sensible originating control
+```
+
+where practical.
+
+Do not trap the user with no keyboard escape path.
+
+---
+
+# 82. Visual hierarchy
+
+Distinguish:
+
+```text
+normal scheduling conflict
+
+user-forced conflict
+
+realized-time correction
+
+unsupported/frozen case
+```
+
+without using alarming or sensational language.
+
+---
+
+# 83. Responsive behavior
+
+The conflict dialog and chronology layout must work at approximately:
+
+```text
+1440×900 desktop
+
+390×844 mobile
+```
+
+No horizontal overflow.
+
+No action buttons outside viewport.
+
+---
+
+# 84. Long conflict lists
+
+If many blockers exist:
+
+```text
+dialog content may scroll internally
+```
+
+while keeping primary actions usable.
+
+Do not expand the whole page uncontrollably.
+
+---
+
+# 85. Creation conflict frontend tests
+
+Test:
+
+```text
+create
 → 409
-→ retry with blocker confirmation
-→ success
-→ GET planner-state
-```
-
-Verify:
-
-```text
-source exists
-
-target segmentation resolved
-
-target aggregate correct
-
-target conflict metadata correct
-
-source insertion metadata correct
-
-stable IDs
-```
-
----
-
-# 90. Confirmed structural move round trip
-
-Real PostgreSQL:
-
-```text
-translate/structure source
-→ 409
-→ confirmed retry
-→ success
+→ dialog
+→ confirmation
+→ same create + conflictResolution
 → GET
+→ hydrate
 ```
 
-Verify:
+---
+
+# 86. Creation realized-time test
+
+Test:
 
 ```text
-source moved
-
-target resolved
-
-target metadata
-
-source conflict_move metadata
-
-unrelated segments unchanged
+create
+→ completed/not_finished blocker
+→ dialog
+→ normal confirmation unavailable
+→ realized acknowledgement
+→ confirmed retry
 ```
+
+Verify exact snapshot payload.
 
 ---
 
-# 91. Stale snapshot PostgreSQL test
+# 87. Creation cancel test
 
-Flow:
+Conflict dialog cancel:
 
 ```text
-first 409
+zero retry requests
 
-modify blocker legitimately before confirmation
-
-retry old confirmation
+zero local planner mutation
 ```
 
-Expected:
+---
+
+# 88. Create double-submit test
+
+Rapid confirmation clicks:
 
 ```text
-conflict_resolution_stale
-or equivalent
-
-zero destructive writes from stale authorization
+one confirmed mutation request only
 ```
 
 ---
 
-# 92. New blocker PostgreSQL test
+# 89. Structural conflict frontend tests
 
-Between first request and confirmation:
-
-```text
-new blocker appears
-```
-
-Old confirmation must not authorize it.
-
-Return fresh conflict state.
-
----
-
-# 93. Removed blocker test
-
-If original blocker disappears/changes before confirmation:
-
-```text
-old snapshot must not be used destructively
-```
-
-Follow the approved stale revalidation behavior.
-
----
-
-# 94. Wrong segment confirmation test
-
-Confirmation for:
-
-```text
-Occurrence A / Segment X
-```
-
-must not authorize:
-
-```text
-Occurrence A / Segment Y
-```
-
----
-
-# 95. Priority override integration
-
-Higher-priority source still requires first 409 + explicit confirmation.
-
-After confirmation:
-
-```text
-target conflict_reason = priority_override
-```
-
-if target is actually modified.
-
----
-
-# 96. User-forced integration
-
-Equal/lower-priority source requires explicit user-forced confirmation.
-
-After confirmed resolution:
-
-```text
-target conflict_reason = user_forced_override
-```
-
----
-
-# 97. Strong realized-time integration
-
-For editable realized blockers requiring stronger confirmation:
-
-```text
-ordinary confirmation insufficient
-```
-
-Only the explicit stronger acknowledgement defined by the normative rules may
-authorize the correction.
-
-No silent rewrite.
-
----
-
-# 98. Frozen blocker integration
-
-A blocker in frozen history must not be structurally rewritten through this
-engine.
-
-Return a controlled error requiring source adjustment instead.
-
----
-
-# 99. Atomic rollback — source write
-
-Force failure after target candidate planning but during source persistence.
-
-Verify target remains unchanged.
-
----
-
-# 100. Atomic rollback — target update
-
-Force failure while updating a target child.
-
-Verify:
-
-```text
-source unchanged/uncreated
-
-all targets unchanged
-```
-
----
-
-# 101. Atomic rollback — split insert
-
-Force failure inserting a new right-side split fragment.
-
-Verify the original target graph survives intact.
-
----
-
-# 102. Atomic rollback — aggregate
-
-Force failure after child changes but before parent aggregate update.
-
-Verify rollback restores complete prior graph.
-
----
-
-# 103. Atomic rollback — metadata
-
-Force failure after structural resolution but before metadata completion.
-
-No partial conflict context may remain.
-
----
-
-# 104. Concurrency
-
-Test two competing confirmed source operations where practical.
-
-They must not both commit based on the same stale blocker snapshot.
-
-Expected outcomes may include:
-
-```text
-one success
-
-other concurrent_conflict / stale conflict
-```
-
-but never:
-
-```text
-lost target fragments
-
-invalid sibling overlap
-
-stale aggregate
-
-partial source/target write
-```
-
----
-
-# 105. PlanItem creation regression
-
-No-conflict creation still produces:
-
-```text
-PlanItem
-
-Occurrence
-
-one default Segment
-```
-
-without conflict metadata.
-
----
-
-# 106. Structural mutation regression
-
-No-conflict:
+Cover:
 
 ```text
 translate
@@ -2330,142 +1848,443 @@ PUT structure
 reset
 ```
 
-must continue working exactly as before.
+through shared conflict coordinator.
 
 ---
 
-# 107. Segment-status regression
+# 90. Preserve structural draft test
 
-`PATCH segment status` remains:
+For PUT structure:
 
 ```text
-segment-aware
-
-aggregate-aware
-
-conflict rejection only
+conflict dialog opens
+→ source draft remains intact
+→ confirm
+→ same source candidate sent
 ```
 
-No new override behavior there.
+No target graph is authored client-side.
 
 ---
 
-# 108. Reconciliation regression
+# 91. Stale confirmation frontend test
 
-`POST /api/planner/reconcile` remains unchanged.
-
-Conflict engine must not become a hidden reconciliation mechanism.
-
----
-
-# 109. Apply Week/Future regression
-
-Verify the completed 05.7.5.9 behavior remains:
+Mock:
 
 ```text
-SIMPLE segment-aware
-
-CUSTOM translate
-
-CUSTOM resize rejection
-
-real segment conflict rejection
-
-no runtime segment inheritance
+conflict_resolution_stale
 ```
 
-No blocker modifications from recurring commands.
-
----
-
-# 110. Planner-state regression
-
-GET remains read-only and correctly returns:
+Verify:
 
 ```text
-segments[]
+old confirmation discarded
 
-conflictContext
+GET authoritative state
 
-originReason
+no automatic mutation replay
 
-lastConflictAction
-
-sourceGenerationSlotId
-
-derived/materialized parent aggregate
+review message shown
 ```
 
 ---
 
-# 111. Frontend scope
+# 92. New blocker test
 
-Do NOT build final conflict UI.
+Confirmed retry returns a fresh resolution-required 409.
 
-Do not add:
-
-```text
-Segmentar y continuar
-
-Finalizar y continuar
-
-Cancelar y continuar
-
-Confirmar corrección
-```
-
-as real interactive flows yet.
-
-That is 05.7.5.11.
-
----
-
-# 112. Existing frontend safety
-
-If current frontend sees the new backend resolution-required response before
-05.7.5.11:
+Expected:
 
 ```text
-it may surface a controlled generic error
+fresh conflict set replaces old dialog data
+
+old confirmations do not carry forward automatically
 ```
 
-but must NOT fall back to old parent-level conflict mutation.
-
-Guard any dangerous legacy confirmation path.
-
 ---
 
-# 113. No CORS redesign
+# 93. Undefined resolution frontend test
 
-Use existing route CORS behavior.
-
-Only adjust CORS if a backend route contract change genuinely requires it.
-
-No wildcard origins.
-
----
-
-# 114. Documentation
-
-Update only necessary architecture/API documentation for:
+Mock:
 
 ```text
-segment blocker snapshot contract
-
-confirmation/revalidation protocol
-
-resolution metadata
-
-remaining rejection-only conflict paths
+segment_resolution_undefined
 ```
 
-Do not create event-log or future template designs.
+Verify:
+
+```text
+no force button
+
+no retry with fabricated confirmation
+
+clear unsupported message
+```
 
 ---
 
-# 115. PostgreSQL 16
+# 94. Multiple-source limitation frontend test
 
-Use isolated PostgreSQL 16:
+Mock:
+
+```text
+multiple_source_resolution_unavailable
+```
+
+Verify safe explanation and no client-side workaround.
+
+---
+
+# 95. Frozen conflict frontend test
+
+No confirm button capable of rewriting frozen target.
+
+User must return and modify source.
+
+---
+
+# 96. Network ambiguity test
+
+Mutation transport failure after confirmation:
+
+```text
+no automatic replay
+```
+
+Authoritative refresh path only.
+
+---
+
+# 97. Confirmed success + GET failure test
+
+Verify:
+
+```text
+mutation sent once
+
+GET fails
+
+recovery performs GET only
+```
+
+---
+
+# 98. Selection tests
+
+Verify selection through:
+
+```text
+trim
+
+split
+
+cancel/status result
+
+authoritative hydration
+```
+
+using stable IDs.
+
+No index-based remapping.
+
+---
+
+# 99. Chronology unit tests
+
+Create derived render-model tests covering:
+
+```text
+compact rows
+
+expanded children
+
+interleaving
+
+gaps
+
+same-time deterministic sorting
+
+single segment
+
+multi segment
+
+selection identity
+```
+
+---
+
+# 100. Chronology acceptance example
+
+Explicit test:
+
+```text
+Occurrence A
+parent 13:00–17:00
+
+A1 13:00–14:00
+A2 16:00–17:00
+
+Occurrence B
+14:30–15:30
+```
+
+Expanded result must render temporal order:
+
+```text
+A1
+
+B
+
+A2
+```
+
+not:
+
+```text
+A1
+
+A2
+
+B
+```
+
+---
+
+# 101. Conflict-created split chronology
+
+After authoritative GET from a confirmed conflict producing a split:
+
+```text
+new right fragment
+```
+
+must immediately participate correctly in chronology.
+
+No special-case reload required beyond normal GET/hydrate.
+
+---
+
+# 102. Monthly/status regression
+
+Chronology cleanup must not change:
+
+```text
+monthly aggregate status
+
+segment status semantics
+
+parent aggregate semantics
+```
+
+Presentation only.
+
+---
+
+# 103. Apply Week/Future regression
+
+Verify:
+
+```text
+↻ recurring action
+
+Apply Week
+
+Apply Future
+
+custom resize rejection
+
+recurring conflict rejection
+```
+
+still work as in 05.7.5.9.
+
+Do NOT route recurring conflicts into destructive conflict dialog.
+
+---
+
+# 104. Segment-status regression
+
+A segment status conflict remains:
+
+```text
+segment_status_conflict
+```
+
+and must not accidentally open the destructive creation/move resolution flow.
+
+---
+
+# 105. Reconciliation regression
+
+Bootstrap remains:
+
+```text
+POST planner/reconcile
+→ GET planner-state
+→ hydrate
+```
+
+No conflict dialog during ordinary bootstrap.
+
+---
+
+# 106. Planner-state remains authoritative
+
+GET remains read-only.
+
+Frontend may derive:
+
+```text
+display rows
+
+segment ordinals
+
+dialog labels
+```
+
+but not persistent conflict outcomes.
+
+---
+
+# 107. Backend API regression
+
+Do not redesign the 05.7.5.10 conflict contract merely for easier frontend
+implementation.
+
+If a truly missing field makes UX impossible:
+
+```text
+make the smallest backend contract addition
+
+test it
+
+document it
+```
+
+Do not move domain authority client-side.
+
+---
+
+# 108. Backend parent writer tests
+
+Add/adjust tests proving no schema-004 path can:
+
+```text
+set parent status independently
+
+write status_reason
+
+invoke legacy priority override
+```
+
+---
+
+# 109. DELETE integration tests
+
+If occurrence deletion remains active, test against schema 004:
+
+```text
+single-segment occurrence delete
+
+multi-segment occurrence delete
+
+segments cascade
+
+referenced-source delete rejection
+
+no orphan segments
+```
+
+Use isolated PostgreSQL 16.
+
+---
+
+# 110. Legacy code cleanup
+
+Remove clearly dead code when safe.
+
+Do not keep large legacy conflict systems solely because tests reference them.
+
+Update/remove obsolete tests alongside retired code.
+
+Do not delete historical documentation merely to make grep clean.
+
+---
+
+# 111. Runtime grep audit
+
+At completion search active code for:
+
+```text
+status_reason
+
+confirmedOccurrenceIds
+
+apply_priority_overrides
+
+openPersistentOverride
+
+addPriorityOverride
+
+prepareOccurrenceAddition
+
+commitPreparedScheduleChange
+
+PATCH /api/occurrences
+```
+
+Classify every remaining occurrence.
+
+Distinguish:
+
+```text
+historical tests/docs
+
+dormant compatibility code
+
+active runtime code
+```
+
+---
+
+# 112. No active `status_reason`
+
+Schema-004 runtime code must not write:
+
+```text
+status_reason
+```
+
+If references remain only in migrations/schema-003 compatibility or historical
+tests:
+
+```text
+report them precisely
+```
+
+---
+
+# 113. No active parent status mutation
+
+At phase completion:
+
+```text
+Occurrence.status
+```
+
+must only change as:
+
+```text
+materialized aggregate derived from segments
+```
+
+within schema-004 active paths.
+
+---
+
+# 114. PostgreSQL 16 isolated verification
+
+Use:
 
 ```text
 001
@@ -2474,11 +2293,49 @@ Use isolated PostgreSQL 16:
 → 004
 ```
 
-Do not use `vcs_dev`.
+in an isolated PostgreSQL 16 instance.
+
+Do NOT use `vcs_dev`.
 
 ---
 
-# 116. Full backend suite
+# 115. Conflict regression PostgreSQL
+
+Re-run the full 05.7.5.10 schema-004 conflict suite.
+
+It must remain green.
+
+---
+
+# 116. Recurring regression PostgreSQL
+
+Re-run:
+
+```text
+test_recurring_schema004_integration.py
+```
+
+Apply Week/Future remain rejection-only and segment-aware.
+
+---
+
+# 117. Deletion PostgreSQL tests
+
+If deletion path changes, verify real:
+
+```text
+parent deletion
+
+segment cascade
+
+NO ACTION provenance restriction
+
+rollback
+```
+
+---
+
+# 118. Full backend suite
 
 Run:
 
@@ -2488,49 +2345,13 @@ Run:
   -p 'test_*.py'
 ```
 
-Report skips honestly.
+Report exact result and opt-in skips.
 
 ---
 
-# 117. Schema-004 integration suite
+# 119. Full frontend suite
 
-Add/reuse real PostgreSQL tests for:
-
-```text
-first conflict 409
-
-confirmed insertion
-
-confirmed move
-
-trim
-
-split
-
-full-overlap normative outcome
-
-stale blocker
-
-new blocker
-
-priority override
-
-user-forced override
-
-strong realized confirmation
-
-metadata
-
-atomic rollback
-
-concurrency
-```
-
----
-
-# 118. Frontend regression suite
-
-Even though this phase is backend-first, run:
+Run:
 
 ```text
 for test_file in modules/gestor_de_habitos/tests/*.test.mjs
@@ -2539,11 +2360,27 @@ do
 done
 ```
 
-The existing UI must not regress.
+Report:
+
+```text
+file count
+
+test count if available
+
+result
+```
 
 ---
 
-# 119. Syntax / consistency
+# 120. Syntax
+
+Run:
+
+```text
+node --check
+```
+
+for every modified JS file.
 
 Run:
 
@@ -2551,8 +2388,6 @@ Run:
 .venv/bin/python -m compileall -q \
   modules/gestor_de_habitos/backend
 ```
-
-Run `node --check` only for JS modified if any minimal guard is necessary.
 
 Run:
 
@@ -2562,35 +2397,212 @@ git diff --check
 
 ---
 
-# 120. Still no real schema rollout
+# 121. Browser verification — conflict UX
 
-Do NOT apply migration 004 to real `vcs_dev`.
+Use mocked or isolated schema-004 backend.
 
-After this phase the primary remaining work is:
+Do NOT use `vcs_dev`.
+
+Desktop:
 
 ```text
-05.7.5.11
-Conflict UX + chronology cleanup + remaining frontend legacy conflict path
+1440×900
+```
 
-05.7.5.12
-Final writer audit + schema rollout
+Mobile:
+
+```text
+approximately 390×844
 ```
 
 ---
 
-# 121. Expected architecture after this phase
+# 122. Browser creation conflict
+
+Verify:
 
 ```text
-schema 004
+create source
+
+dialog opens
+
+blocker readable
+
+resolution effect readable
+
+confirm
+
+authoritative GET
+
+final planner correct
+```
+
+---
+
+# 123. Browser realized-time correction
+
+Verify stronger confirmation cannot be bypassed.
+
+Ordinary confirm button must not send:
+
+```text
+confirmRealizedTimeCorrection: true
+```
+
+without explicit acknowledgement.
+
+---
+
+# 124. Browser split result
+
+After confirmed split and GET:
+
+```text
+left original segment
+
+right new segment
+```
+
+both render correctly.
+
+If expanded:
+
+```text
+both participate in global chronology
+```
+
+---
+
+# 125. Browser stale conflict
+
+Verify stale response:
+
+```text
+does not auto retry
+
+refreshes authoritative state
+
+asks for review
+```
+
+---
+
+# 126. Browser unsupported conflict
+
+Verify:
+
+```text
+segment_resolution_undefined
+```
+
+has no destructive action.
+
+---
+
+# 127. Browser recurring conflict
+
+Verify Apply Week/Future conflict does NOT open the destructive single-source
+conflict confirmation flow.
+
+---
+
+# 128. Browser structural conflict
+
+Verify:
+
+```text
+structural draft
+→ conflict
+→ dialog
+→ confirmation
+→ authoritative GET
+```
+
+without losing the intended source structure.
+
+---
+
+# 129. Browser chronology desktop
+
+Verify the gap/interleaving case visually.
+
+No child grouping that creates false chronology.
+
+---
+
+# 130. Browser chronology mobile
+
+Verify:
+
+```text
+segment parent identity remains clear
+
+controls remain usable
+
+no horizontal overflow
+```
+
+---
+
+# 131. No complete visual redesign
+
+Preserve current VCS identity:
+
+```text
+dark/gold styling
+
+planner structure
+
+responsive behavior
+```
+
+Make only the UX/layout changes necessary for conflict review and chronology.
+
+---
+
+# 132. Documentation
+
+Update only documentation necessary for:
+
+```text
+frontend confirmation flow
+
+remaining unsupported conflict cases
+
+legacy retirement
+
+chronological render behavior
+```
+
+Do not document future auth/security/deployment in this phase.
+
+---
+
+# 133. Still no schema rollout
+
+Even after this phase:
+
+```text
+DO NOT apply 004 to vcs_dev
+```
+
+05.7.5.12 owns the real rollout.
+
+---
+
+# 134. Expected architecture after this phase
+
+```text
+schema 004 foundation
 ✅
 
-backend read
+backend planner read
 ✅
 
-frontend read/display
+frontend segment read/display
 ✅
 
-creation + default segment
+segment creation
 ✅
 
 segment status
@@ -2599,81 +2611,117 @@ segment status
 persistent reconciliation
 ✅
 
-frontend status
+structural backend
 ✅
 
-backend structure
+structural editor
 ✅
 
-frontend structure
+Apply Week/Future
 ✅
 
-Apply Week/Future segment-aware
+segment conflict engine
 ✅
 
-segment conflict detection
+conflict confirmation API
 ✅
 
-single-source segment conflict resolution engine
+conflict UX
 ✅
 
-snapshot confirmation
+legacy frontend conflict writer
+✅ retired/guarded
+
+parent status writer
+✅ retired/guarded
+
+planner temporal chronology
 ✅
 
-priority/user-forced conflict metadata
-✅
-
-automatic interval subtraction after explicit confirmation
-✅
-
-final conflict UX
+real vcs_dev schema rollout
 ❌
 
-planner chronology cleanup
-❌
+owner/guest auth
+❌ later
 
-real schema rollout
-❌
+security hardening
+❌ later
+
+production deployment
+❌ later
 ```
 
 ---
 
-# 122. Legacy audit
+# 135. Final writer inventory
 
-At completion identify every remaining caller of:
-
-```text
-edit_without_occurrence
-
-prepareOccurrenceAddition
-
-commitPreparedScheduleChange
-
-commitPreparedChange
-
-apply_priority_overrides
-
-legacy confirmedOccurrenceIds
-```
-
-Classify each as:
+Produce a table/report of every ACTIVE mutating route, including at minimum:
 
 ```text
-retired
+PlanItem creation
 
-guarded
+segment status
 
-dormant
+planner reconciliation
 
-active and still incompatible
+occurrence translate
+
+occurrence structure
+
+reset segmentation
+
+occurrence delete if active
+
+Apply Week
+
+Apply Future
 ```
 
-The report must identify exact remaining active incompatible paths before
-05.7.5.11.
+For each state:
+
+```text
+endpoint
+
+service
+
+tables changed
+
+segment-aware?
+
+aggregate-safe?
+
+conflict behavior
+
+schema-004 ready?
+```
+
+Do not score or rank; just factual compatibility.
 
 ---
 
-# 123. Git rules
+# 136. Remaining incompatibilities
+
+At completion, explicitly answer:
+
+```text
+Is there any active application write path that still requires schema 003?
+```
+
+If yes:
+
+```text
+05.7.5.11 is NOT complete.
+```
+
+Either make it schema-004 compatible, retire it, or guard it so it is provably
+unreachable from active application behavior.
+
+Historical test helpers do not count as active runtime paths, but must be
+identified.
+
+---
+
+# 137. Git rules
 
 The user controls Git.
 
@@ -2681,10 +2729,15 @@ Do NOT:
 
 ```text
 commit
+
 push
+
 merge
+
 rebase
+
 switch branch
+
 create branch
 ```
 
@@ -2692,98 +2745,76 @@ Do not revert user work.
 
 ---
 
-# 124. Completion report
+# 138. Completion report
 
 At completion provide:
 
 ## Files
 
-Every created/modified file.
+Every created/modified/deleted file.
 
-## Conflict domain
+## Conflict UX
 
 Explain:
 
 ```text
-blocking statuses
+first 409 handling
 
-segment-vs-segment detection
+dialog state
 
-subtraction
+blocker display
 
-0 / 1 / 2 fragment outcomes
+resolutionKind presentation
 
-repeated segmentation
+priority/user-forced messaging
 
-multi-segment source
-```
-
-## Confirmation contract
-
-Report exact:
-
-```text
-first 409 payload
+realized-time acknowledgement
 
 confirmation payload
 
-snapshot fields
+confirmed retry
 
-stale error
-
-strong realized-time acknowledgement
+GET-after-success
 ```
 
-## Authorization
+## Recovery
 
 Explain:
 
 ```text
-priority_override
+stale confirmation
 
-user_forced_override
+new blocker
 
-how backend computes each
+removed/changed blocker
+
+network ambiguity
+
+success + GET failure
+
+double submit
 ```
 
-## Status behavior
+## Unsupported cases
 
-Explain exact normative outcomes for:
+Report UI behavior for:
 
 ```text
-pending
+in_progress internal split
 
-in_progress
+in_progress full coverage if still undefined
 
-completed
+multiple-source resolution
 
-not_finished
+frozen history
 ```
 
-and identify non-blockers.
+## Flow integration
 
-## Metadata
-
-Explain exactly where and when:
+Report:
 
 ```text
-conflict_reason
-
-source_occurrence_id
-
-origin_reason
-
-last_conflict_action
-```
-
-change.
-
-## Integration
-
-Report behavior for:
-
-```text
-PlanItem creation
+creation
 
 translate
 
@@ -2792,67 +2823,111 @@ structure replacement
 reset
 ```
 
-and which paths remain rejection-only:
+and confirm:
 
 ```text
-segment status
+segment status rejection-only
 
-Apply Week
-
-Apply Future
+Apply Week/Future rejection-only
 ```
 
-## Transactions
+## Legacy retirement
+
+Give exact final status/callers for:
+
+```text
+edit_without_occurrence
+
+prepareOccurrenceAddition
+
+commitPreparedScheduleChange
+
+openPersistentOverride
+
+addPriorityOverride
+
+confirmedOccurrenceIds
+
+apply_priority_overrides
+
+status_reason
+
+statusContext
+```
+
+## Parent writer audit
+
+Explain final disposition of:
+
+```text
+PATCH /api/occurrences/<id>
+
+DELETE /api/occurrences/<id>
+```
+
+## Writer inventory
+
+List every active mutating endpoint and schema-004 compatibility.
+
+## Chronology
 
 Explain:
 
 ```text
-SERIALIZABLE
+derived render model
 
-lock order
+expanded segment interleaving
 
-atomic source + targets
+parent identity
 
-snapshot revalidation
+tie-breaking
+
+selection
+
+controls
 ```
 
 ## PostgreSQL
 
-Describe actual schema-004 tests for:
+Report:
 
 ```text
-confirmed insertion
+conflict regression
 
-confirmed move
+recurring regression
 
-trim
+deletion tests if applicable
+```
+
+## Frontend tests
+
+Exact commands and results.
+
+## Backend tests
+
+Exact commands and results.
+
+## Browser
+
+Report desktop/mobile:
+
+```text
+creation conflict
+
+realized correction
 
 split
 
-full overlap
+stale
 
-stale confirmation
+unsupported
 
-priority
+structural conflict
 
-user-forced
+recurring rejection
 
-realized-time confirmation
-
-metadata
-
-rollback
-
-concurrency
+chronology
 ```
-
-## Legacy paths
-
-List exact callers remaining.
-
-## Tests
-
-Give exact commands/results.
 
 ## Safety
 
@@ -2865,22 +2940,23 @@ PlanItems preserved
 
 migrations unchanged
 
-no recurring conflict resolution
+no auth work
 
-no segment-status conflict resolution
+no production security work
 
-no global shifting
+no cloud deployment
 
-no event log
+no recurring destructive resolution
 
-no final conflict UX
+no segment-status destructive resolution
 
-no chronology redesign
+no undefined in_progress semantics invented
 ```
 
-## Remaining incompatibilities
+## Rollout readiness
 
-List exactly what still blocks schema-004 rollout.
+State exactly what remains before 05.7.5.12 can apply schema 004 to real
+`vcs_dev`.
 
 ## Git
 
@@ -2898,58 +2974,56 @@ No push.
 
 ---
 
-# 125. Definition of done
+# 139. Definition of done
 
 This phase is complete when:
 
 ```text
-conflicts are detected by concrete segment
+creation conflict UX uses concrete segment snapshots
 
-first conflict request performs zero blocker writes
+structural conflict UX uses the same shared coordinator
 
-confirmation is bound to exact blocker snapshot
+realized-time correction requires explicit strong acknowledgement
 
-changed blocker invalidates authorization
+stale confirmations cannot be reused
 
-priority does not imply silent mutation
+new blockers require new review
 
-equal/lower priority requires user-forced authorization
+ambiguous transport failures never auto-replay mutations
 
-realized time is strongly protected
+confirmed success hydrates from authoritative GET
 
-pending/in-progress outcomes follow normative rules
+legacy local blocker mutation is unreachable
 
-conflict subtraction supports 0/1/2 fragments
+confirmedOccurrenceIds is no longer active authority
 
-split preserves left ID and creates right UUID
+active parent status writer is retired/guarded
 
-already-segmented targets can be segmented again
+no active runtime status_reason writes remain
 
-source custom gaps are respected
+whole-occurrence deletion is schema-004 safe or retired
 
-target aggregate is recalculated
+Apply Week/Future remain rejection-only
 
-target latest conflict metadata is correct
+segment status remains rejection-only
 
-source insertion/move metadata is correct
+expanded child segments render in real global chronology
 
-metadata does not auto-clear
+segment ownership remains clear
 
-PlanItem insertion uses the new engine
+selection/expansion survive authoritative hydration
 
-single-occurrence structural moves use the new engine
+desktop/mobile UX is verified
 
-legacy parent-level backend override is not reachable
+all frontend tests pass
 
-Apply Week/Future remain safe rejection-only
+all backend tests pass
 
-segment status remains safe rejection-only
+schema-004 PostgreSQL conflict regression passes
 
-all source + target writes are atomic
+schema-004 recurring regression passes
 
-stale confirmations cannot mutate data
-
-real PostgreSQL 16 verification passes
+no active application writer still depends on schema 003
 
 vcs_dev remains untouched
 ```
@@ -2958,58 +3032,50 @@ vcs_dev remains untouched
 
 # Final principle
 
-Priority is not permission to silently rewrite history.
-
-The backend may determine:
+The backend already knows:
 
 ```text
-priority_override
+WHAT conflicts
+
+WHAT resolution is allowed
+
+WHAT target state results
+
+WHICH authorization is required
 ```
 
-but the user still authorizes the concrete effect.
-
-The authorization is not:
+The frontend must now provide only:
 
 ```text
-"yes, modify that occurrence"
+UNDERSTANDING
+
+EXPLICIT HUMAN CONFIRMATION
+
+SAFE COMMAND RETRY
+
+AUTHORITATIVE REFRESH
 ```
 
-It is tied to:
+It must never become a second conflict engine.
+
+And the planner must visually represent the same truth stored in the domain:
 
 ```text
-THIS occurrence
-THIS segment
-THIS start/end
-THIS status
+an occurrence may have multiple occupied temporal pieces
 ```
 
-If that blocker changes:
+Therefore a gap inside one occurrence is genuinely available for another
+activity, both in:
 
 ```text
-the authorization expires
+conflict logic
 ```
 
-The engine operates on actual occupied time:
+and in:
 
 ```text
-SOURCE SEGMENTS
-        ↓
-TARGET SEGMENT
-        ↓
-SUBTRACT OCCUPIED INTERVAL
-        ↓
-0 / 1 / 2 SURVIVING FRAGMENTS
-        ↓
-STATUS + STRUCTURE + AGGREGATE
-        ↓
-ATOMIC COMMIT
+what the user sees on the timeline
 ```
 
-No parent envelope is treated as continuous occupation.
-
-No priority silently rewrites realized time.
-
-No conflict operation guesses what happened.
-
-And no target is modified until the user has explicitly confirmed the current
-concrete blocker.
+After this phase there should be no remaining active schema-003-only writer
+between VCS and the schema-004 rollout.

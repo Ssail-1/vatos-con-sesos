@@ -430,13 +430,14 @@ class EndpointTests(unittest.TestCase):
 
     def test_patch_and_delete_success_contracts(self):
         patch_result = {"occurrence": {"id": str(OCCURRENCE_ID)}}
-        with patch.object(service, "patch_occurrence", return_value=patch_result):
+        with patch.object(service, "patch_occurrence", return_value=patch_result) as old_writer:
             response = self.client.patch(
                 f"/api/occurrences/{OCCURRENCE_ID}",
                 json={"date": "2026-09-20", "startTime": "08:00", "endTime": "09:00"},
             )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), patch_result)
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.get_json()["code"], "occurrence_patch_retired")
+        old_writer.assert_not_called()
 
         delete_result = {"deletedOccurrenceId": str(OCCURRENCE_ID)}
         with patch.object(service, "delete_occurrence", return_value=delete_result):
@@ -444,7 +445,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), delete_result)
 
-    def test_cors_allows_only_occurrence_patch_delete_and_preflight(self):
+    def test_cors_allows_only_occurrence_delete_and_preflight(self):
         origin = "http://127.0.0.1:8000"
         patch_result = {"occurrence": {"id": str(OCCURRENCE_ID)}}
         delete_result = {"deletedOccurrenceId": str(OCCURRENCE_ID)}
@@ -455,7 +456,7 @@ class EndpointTests(unittest.TestCase):
                 f"/api/occurrences/{OCCURRENCE_ID}",
                 headers={
                     "Origin": origin,
-                    "Access-Control-Request-Method": "PATCH",
+                    "Access-Control-Request-Method": "DELETE",
                     "Access-Control-Request-Headers": "Content-Type",
                 },
             )
@@ -472,16 +473,17 @@ class EndpointTests(unittest.TestCase):
                 headers={"Origin": "http://example.invalid"},
             )
 
-        for response in (preflight, patch_response, delete_response):
+        for response in (preflight, delete_response):
             self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), origin)
             self.assertEqual(
                 response.headers.get("Access-Control-Allow-Methods"),
-                "PATCH, DELETE, OPTIONS",
+                "DELETE, OPTIONS",
             )
             self.assertEqual(
                 response.headers.get("Access-Control-Allow-Headers"), "Content-Type"
             )
         self.assertNotIn("Access-Control-Allow-Origin", rejected.headers)
+        self.assertNotIn("Access-Control-Allow-Origin", patch_response.headers)
 
     def test_errors_are_mapped_and_private_details_are_hidden(self):
         cases = (
