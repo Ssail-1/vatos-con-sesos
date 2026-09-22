@@ -50,6 +50,9 @@ function assertGenerationControls(config) {
 }
 
 function assertSlotExcludedDates(slot) {
+    if (slot.lastGenerationDate !== undefined && !isValidDateKey(slot.lastGenerationDate)) {
+        throw new MaterializationError("GenerationSlot.lastGenerationDate debe ser una fecha válida.");
+    }
     if (slot.excludedDates === undefined) return;
     if (
         !Array.isArray(slot.excludedDates) ||
@@ -194,10 +197,14 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
     const slotExcludedDates = new Map(
         (config.slots ?? []).map((slot) => [slot.id, new Set(slot.excludedDates ?? [])]),
     );
+    const slotCutoffs = new Map(
+        (config.slots ?? []).map((slot) => [slot.id, slot.lastGenerationDate]),
+    );
     return drafts.filter(({ date, sourceGenerationSlotId }) =>
         !excludedDates.has(date) &&
         !slotExcludedDates.get(sourceGenerationSlotId)?.has(date) &&
-        (!config.stoppedFromDate || date < config.stoppedFromDate)
+        (!config.stoppedFromDate || date < config.stoppedFromDate) &&
+        (!slotCutoffs.get(sourceGenerationSlotId) || date <= slotCutoffs.get(sourceGenerationSlotId))
     );
 }
 

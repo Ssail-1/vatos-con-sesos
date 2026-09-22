@@ -215,6 +215,7 @@ def lock_generation_slot(connection, slot_id):
                 slot.plan_item_id,
                 slot.start_time,
                 slot.end_time,
+                slot.last_generation_date,
                 (
                     SELECT COUNT(*)
                     FROM public.generation_slot_weekdays AS weekday
@@ -248,6 +249,7 @@ def lock_plan_item_slots(connection, plan_item_id):
                 slot.plan_item_id,
                 slot.start_time,
                 slot.end_time,
+                slot.last_generation_date,
                 (
                     SELECT COUNT(*)
                     FROM public.generation_slot_weekdays AS weekday

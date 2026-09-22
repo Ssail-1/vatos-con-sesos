@@ -123,90 +123,6 @@ for (const status of ["cancelled", "in_progress", "completed", "not_completed", 
     assert.equal(occurrenceFor(store, "cleanup", "2026-09-27"), undefined);
 }
 
-// Stop preserva historia y retira solo pending y cancelled futuro desde la frontera.
-{
-    const entries = [
-        ["2026-09-27", "07:00", "08:00"],
-        ["2026-09-28", "08:00", "09:00"],
-        ["2026-09-29", "09:00", "10:00"],
-        ["2026-09-30", "10:00", "11:00"],
-        ["2026-10-01", "11:00", "12:00"],
-        ["2026-10-02", "12:00", "13:00"],
-        ["2026-10-03", "13:00", "14:00"],
-        ["2026-10-04", "14:00", "15:00"],
-        ["2026-10-05", "15:00", "16:00"],
-    ].map(([date, startTime, endTime]) => ({ date, startTime, endTime }));
-    const config = manualConfig(entries, { excludedDates: ["2026-10-06"] });
-    const statuses = new Map([
-        ["2026-09-27", "completed"],
-        ["2026-09-28", "completed"],
-        ["2026-09-29", "cancelled"],
-        ["2026-09-30", "cancelled"],
-        ["2026-10-01", "pending"],
-        ["2026-10-02", "completed"],
-        ["2026-10-03", "not_completed"],
-        ["2026-10-04", "not_finished"],
-        ["2026-10-05", "in_progress"],
-    ]);
-    const store = createPlannerStore(
-        [planItem("stop-statuses", config)],
-        [...statuses].map(([date, status]) => ({ planItemId: "stop-statuses", date, status })),
-        REFERENCE_DATE,
-    );
-    const beforeByDate = new Map(store.getOccurrencesForPlanItem("stop-statuses").map((occurrence) => [occurrence.date, occurrence]));
-    const result = store.stopPlanItemFromDate("stop-statuses", "2026-09-28");
-    assert.equal(result.planItem.generationConfig.stoppedFromDate, "2026-09-28");
-    assert.deepEqual(result.planItem.generationConfig.excludedDates, []);
-    assert.deepEqual(result.removedOccurrences.map(({ date }) => date), ["2026-09-30", "2026-10-01"]);
-    for (const date of ["2026-09-27", "2026-09-28", "2026-09-29", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]) {
-        assert.deepEqual(occurrenceFor(store, "stop-statuses", date), beforeByDate.get(date));
-    }
-    assert.equal(occurrenceFor(store, "stop-statuses", "2026-09-30"), undefined);
-    assert.equal(occurrenceFor(store, "stop-statuses", "2026-10-01"), undefined);
-    assert.deepEqual(store.materializePlanItem("stop-statuses", "2026-09-28", "2026-10-31"), []);
-}
-
-// Stop es válido sin occurrence exacta, desde futuro, y universal para todos los modos.
-{
-    const config = manualConfig([
-            { date: REFERENCE_DATE, startTime: "08:00", endTime: "09:00" },
-            { date: "2026-09-30", startTime: "08:00", endTime: "09:00" },
-    ]);
-    const store = createPlannerStore(
-        [planItem("stop-current", config)],
-        [{ planItemId: "stop-current", date: "2026-09-30", status: "cancelled" }],
-        REFERENCE_DATE,
-    );
-    const currentPending = occurrenceFor(store, "stop-current", REFERENCE_DATE);
-    const futureCancelled = occurrenceFor(store, "stop-current", "2026-09-30");
-    const currentCancelled = store.addOccurrenceForPlanItem("stop-current", {
-        date: REFERENCE_DATE,
-        startTime: "10:00",
-        endTime: "11:00",
-    });
-    store.setOccurrenceStatus(currentCancelled.id, "cancelled");
-    store.stopPlanItemFromDate("stop-current", REFERENCE_DATE);
-    assert.equal(store.getOccurrenceById(currentPending.id), null);
-    assert.equal(store.getOccurrenceById(futureCancelled.id), null);
-    assert.equal(store.getOccurrenceById(currentCancelled.id).status, "cancelled");
-}
-
-{
-    const config = manualConfig([
-            { date: "2026-09-28", startTime: "08:00", endTime: "09:00" },
-            { date: "2026-09-30", startTime: "08:00", endTime: "09:00" },
-    ]);
-    const store = createPlannerStore(
-        [planItem("stop-yesterday", config)],
-        [{ planItemId: "stop-yesterday", date: "2026-09-28", status: "cancelled" }],
-        REFERENCE_DATE,
-    );
-    const yesterdayCancelled = occurrenceFor(store, "stop-yesterday", "2026-09-28");
-    store.stopPlanItemFromDate("stop-yesterday", "2026-09-28");
-    assert.equal(store.getOccurrenceById(yesterdayCancelled.id).status, "cancelled");
-    assert.equal(occurrenceFor(store, "stop-yesterday", "2026-09-30"), undefined);
-}
-
 const modeCases = [
     ["weekly", weeklyConfig()],
     ["interval", intervalConfig({ startDate: "2026-09-29", intervalDays: 2 })],
@@ -216,28 +132,12 @@ const modeCases = [
     ])],
     ["explicit", explicitDateConfig("2026-10-03")],
 ];
-for (const [id, config] of modeCases) {
-    const store = createPlannerStore([planItem(`mode-${id}`, config)], [], REFERENCE_DATE);
-    const result = store.stopPlanItemFromDate(`mode-${id}`, "2026-10-01");
-    assert.equal(result.planItem.generationConfig.stoppedFromDate, "2026-10-01", `${id} guarda frontera`);
-    assert.ok(store.getOccurrencesForPlanItem(`mode-${id}`).every(({ date, status }) => date < "2026-10-01" || status !== "pending"));
-    assert.deepEqual(store.materializePlanItem(`mode-${id}`, "2026-10-01", "2026-12-31"), [], `${id} no reaparece`);
-}
 
-// Monotonía: adelanta la frontera, nunca la mueve hacia adelante ni reanuda.
+// La terminación de planificación es exclusivamente persistente. El store no
+// conserva el writer local anterior, que podía divergir del estado autoritativo.
 {
-    const config = weeklyConfig({ stoppedFromDate: "2026-10-10" });
-    const store = createPlannerStore([planItem("monotonic", config)], [], REFERENCE_DATE);
-    store.stopPlanItemFromDate("monotonic", "2026-10-05");
-    assert.equal(store.getPlanItemById("monotonic").generationConfig.stoppedFromDate, "2026-10-05");
-    const before = store.getOccurrencesForPlanItem("monotonic");
-    expectCode(() => store.stopPlanItemFromDate("monotonic", "2026-10-08"), "already_stopped");
-    assert.equal(store.getPlanItemById("monotonic").generationConfig.stoppedFromDate, "2026-10-05");
-    assert.deepEqual(store.getOccurrencesForPlanItem("monotonic"), before);
-    expectCode(
-        () => store.prepareOccurrenceAddition("monotonic", { date: "2026-10-08", startTime: "10:00", endTime: "11:00" }),
-        "planning_stopped",
-    );
+    const store = createPlannerStore([planItem("persistent-stop-only")], [], REFERENCE_DATE);
+    assert.equal("stopPlanItemFromDate" in store, false);
 }
 
 // Los editores de recurrencia conservan los controles de eliminación ajenos al formulario.
@@ -271,11 +171,6 @@ for (const [id, config] of modeCases) {
     assert.ok(store.getOccurrenceById(adHoc.id));
     assert.deepEqual(sourceSlotFor(store, "ambiguous", first).excludedDates, [REFERENCE_DATE]);
 
-    const beforeItem = store.getPlanItemById("ambiguous");
-    const beforeOccurrences = store.getOccurrencesForPlanItem("ambiguous");
-    expectCode(() => store.stopPlanItemFromDate("ambiguous", "2026-09-27"), "history_frozen");
-    assert.deepEqual(store.getPlanItemById("ambiguous"), beforeItem);
-    assert.deepEqual(store.getOccurrencesForPlanItem("ambiguous"), beforeOccurrences);
 }
 
 // En multi-slot recurrente la exclusión pertenece solo al slot eliminado.
@@ -320,46 +215,6 @@ for (const [id, config] of modeCases) {
     };
     const drafts = materializeOccurrenceDrafts(planItem(`materializer-${id}`, controlled), "2026-09-29", "2026-10-31");
     assert.ok(drafts.every(({ date }) => date !== "2026-10-03" && date < "2026-10-05"));
-}
-
-// La procedencia de prioridad se preserva en historia retenida y la occurrence superior no se toca.
-{
-    const store = createPlannerStore(
-        [planItem("lower", explicitDateConfig(REFERENCE_DATE, "08:00", "10:00"))],
-        [],
-        REFERENCE_DATE,
-    );
-    const lower = occurrenceFor(store, "lower", REFERENCE_DATE);
-    store.setOccurrenceStatus(lower.id, "in_progress");
-    const prepared = store.preparePlanItemCreation(
-        planItem("higher", explicitDateConfig(REFERENCE_DATE, "09:00", "09:30"), "event"),
-    );
-    const higherResult = store.commitPreparedScheduleChange(prepared);
-    const interrupted = store.getOccurrenceById(lower.id);
-    const contextBefore = { ...interrupted.conflictContext };
-    store.stopPlanItemFromDate("lower", REFERENCE_DATE);
-    assert.equal(store.getOccurrenceById(lower.id).status, "not_finished");
-    assert.deepEqual(store.getOccurrenceById(lower.id).conflictContext, contextBefore);
-    assert.ok(store.getOccurrenceById(higherResult.occurrences[0].id));
-}
-
-{
-    const futureDate = "2026-09-30";
-    const store = createPlannerStore(
-        [planItem("future-lower", explicitDateConfig(futureDate, "08:00", "10:00"))],
-        [],
-        REFERENCE_DATE,
-    );
-    const lower = occurrenceFor(store, "future-lower", futureDate);
-    const prepared = store.preparePlanItemCreation(
-        planItem("future-higher", explicitDateConfig(futureDate, "09:00", "09:30"), "event"),
-    );
-    const higherResult = store.commitPreparedScheduleChange(prepared);
-    assert.equal(store.getOccurrenceById(lower.id).status, "cancelled");
-    assert.equal(store.getOccurrenceById(lower.id).conflictContext.reason, "priority_override");
-    store.stopPlanItemFromDate("future-lower", REFERENCE_DATE);
-    assert.equal(store.getOccurrenceById(lower.id), null, "la cancelación futura desplazada se retira completa");
-    assert.ok(store.getOccurrenceById(higherResult.occurrences[0].id), "la occurrence superior permanece intacta");
 }
 
 console.log("deletion-management.test.mjs: todas las pruebas pasaron");

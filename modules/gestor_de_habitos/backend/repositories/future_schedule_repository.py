@@ -34,7 +34,7 @@ def lock_generation_slots(connection, plan_item_id):
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
-            SELECT id, plan_item_id, start_time, end_time
+            SELECT id, plan_item_id, start_time, end_time, last_generation_date
             FROM public.generation_slots
             WHERE plan_item_id = %s
             ORDER BY id

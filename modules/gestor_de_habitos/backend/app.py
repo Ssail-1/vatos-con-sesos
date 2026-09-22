@@ -10,6 +10,7 @@ import occurrence_mutation_service
 import occurrence_segment_service
 import occurrence_structure_service
 import plan_item_creation_service
+import planning_termination_service
 import planner_state_service
 import week_mutation_service
 from repositories import plan_item_repository
@@ -43,6 +44,14 @@ def add_frontend_cors(response):
         request.method in {"DELETE", "OPTIONS"}
         and request.path.startswith("/api/occurrences/")
         and request.path.count("/") == 3
+    )
+    planning_termination = (
+        request.method in {"POST", "OPTIONS"}
+        and request.path.startswith("/api/occurrences/")
+        and request.path.count("/") == 4
+        and request.path.rsplit("/", 1)[-1] in {
+            "stop-slot-after", "stop-recurring-after", "delete-future-after"
+        }
     )
     structural_mutation = (
         request.path.startswith("/api/occurrences/")
@@ -78,6 +87,7 @@ def add_frontend_cors(response):
         not planner_read
         and not plan_item_creation
         and not occurrence_mutation
+        and not planning_termination
         and not structural_mutation
         and not recurring_schedule_mutation
         and not segment_status_mutation
@@ -91,6 +101,9 @@ def add_frontend_cors(response):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if occurrence_mutation:
         response.headers["Access-Control-Allow-Methods"] = "DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if planning_termination:
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     if structural_mutation:
         response.headers["Access-Control-Allow-Methods"] = (
@@ -361,6 +374,46 @@ def delete_occurrence(occurrence_id):
     except occurrence_mutation_service.OccurrenceMutationError as error:
         return _occurrence_mutation_error_response(error)
     return jsonify(result)
+
+
+def _planning_termination_response(occurrence_id, scope):
+    if request.get_json(silent=True) not in (None, {}):
+        return jsonify(status="error", code="invalid_payload",
+                       message="Esta acción no acepta datos de alcance del cliente."), 400
+    try:
+        result = planning_termination_service.terminate_after_occurrence(
+            occurrence_id, scope
+        )
+    except planning_termination_service.PlanningTerminationValidationError:
+        return jsonify(status="error", code="invalid_identifier",
+                       message="El identificador no es válido."), 400
+    except planning_termination_service.PlanningTerminationNotFoundError:
+        return jsonify(status="error", code="occurrence_not_found",
+                       message="La aparición no existe."), 404
+    except planning_termination_service.PlanningTerminationConflictError as error:
+        return jsonify(status="error", code=error.code, message=str(error)), 409
+    except planning_termination_service.PlanningTerminationConsistencyError:
+        return jsonify(status="error", code="persisted_state_invalid",
+                       message="El estado persistido no es válido."), 500
+    except planning_termination_service.PlanningTerminationUnavailableError:
+        return jsonify(status="error", code="database_unavailable",
+                       message="No se pudo completar la acción."), 503
+    return jsonify(result)
+
+
+@app.post("/api/occurrences/<occurrence_id>/stop-slot-after")
+def stop_slot_after(occurrence_id):
+    return _planning_termination_response(occurrence_id, "slot")
+
+
+@app.post("/api/occurrences/<occurrence_id>/stop-recurring-after")
+def stop_recurring_after(occurrence_id):
+    return _planning_termination_response(occurrence_id, "recurring")
+
+
+@app.post("/api/occurrences/<occurrence_id>/delete-future-after")
+def delete_future_after(occurrence_id):
+    return _planning_termination_response(occurrence_id, "future")
 
 
 def _week_mutation_error_response(error):

@@ -149,11 +149,17 @@ def _base_slot(row):
     start_time, end_time = _time_range(
         row["start_time"], row["end_time"], "start_time", "end_time"
     )
-    return {
+    slot = {
         "id": _slot_uuid_string(row["id"], "generation_slots.id"),
         "startTime": start_time,
         "endTime": end_time,
     }
+    cutoff = row.get("last_generation_date")
+    if cutoff is not None:
+        slot["lastGenerationDate"] = _date_string(
+            cutoff, "generation_slots.last_generation_date"
+        )
+    return slot
 
 
 def _add_slot_exclusions(slot, excluded_rows_by_slot, allow):

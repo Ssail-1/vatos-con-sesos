@@ -6,10 +6,7 @@ import {
 } from "../domain/generation-slots.js";
 import {
     DELETION_REASONS,
-    getEarlierStoppedFromDate,
     getIndividualDeletionPolicy,
-    getStopPlanningPolicy,
-    shouldRemoveOccurrenceWhenStopping,
 } from "../domain/deletion-policy.js";
 import { getSchedulingPriority, PRIORITY_OVERRIDE_REASON } from "../domain/scheduling-priority.js";
 import {
@@ -566,12 +563,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             historyEditWindowDays,
             hasGenerationConfig: planItem.generationConfig !== null,
         });
-        const stop = getStopPlanningPolicy({
-            generationConfig: planItem.generationConfig,
-            selectedDate,
-            referenceDate,
-            historyEditWindowDays,
-        });
         return {
             planItem: clonePlanItem(planItem),
             selectedDate,
@@ -579,7 +570,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 ...individual,
                 occurrence: individual.occurrence ? cloneOccurrence(individual.occurrence) : null,
             },
-            stop: { ...stop },
         };
     }
 
@@ -1309,50 +1299,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             return {
                 planItem: clonePlanItem(candidatePlanItem),
                 deletedOccurrence: cloneOccurrence(occurrence),
-            };
-        },
-
-        stopPlanItemFromDate(planItemId, selectedDate) {
-            const referenceDate = getCurrentReferenceDate();
-            const options = getDeletionOptionsInternal(planItemId, selectedDate, referenceDate);
-            if (!options.stop.allowed) {
-                throwForDeletionDecision(options.stop, "detener la planificación");
-            }
-
-            const planItem = getPlanItemReference(planItemId);
-            const stoppedFromDate = getEarlierStoppedFromDate(
-                planItem.generationConfig.stoppedFromDate,
-                selectedDate,
-            );
-            const candidatePlanItem = {
-                ...planItem,
-                generationConfig: {
-                    ...cloneGenerationConfig(planItem.generationConfig),
-                    stoppedFromDate,
-                    ...(planItem.generationConfig.excludedDates !== undefined
-                        ? {
-                            excludedDates: planItem.generationConfig.excludedDates.filter(
-                                (date) => date < stoppedFromDate,
-                            ),
-                        }
-                        : {}),
-                },
-            };
-            validatePlanItem(candidatePlanItem);
-            const removedOccurrences = occurrences.filter((occurrence) =>
-                occurrence.planItemId === planItemId &&
-                shouldRemoveOccurrenceWhenStopping(occurrence, stoppedFromDate, referenceDate)
-            );
-            removedOccurrences.forEach(requireConflictContextSourceUnlocked);
-            const removedIds = new Set(removedOccurrences.map(({ id }) => id));
-            const preservedOccurrences = occurrences.filter(({ id }) => !removedIds.has(id));
-
-            const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
-            planItems[planItemIndex] = candidatePlanItem;
-            occurrences = preservedOccurrences;
-            return {
-                planItem: clonePlanItem(candidatePlanItem),
-                removedOccurrences: removedOccurrences.map(cloneOccurrence),
             };
         },
 

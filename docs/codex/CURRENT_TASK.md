@@ -1,57 +1,108 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Conflict UX, Legacy Retirement & Planner Chronology
+## OccurrenceSegment v1 — Persistent Planning Termination & Future Cleanup
 
 ### Objective
 
-Connect the completed backend segment-conflict engine to the real planner UI.
-
-The user must be able to:
+Replace the remaining local-only:
 
 ```text
-attempt a source mutation
-→ receive concrete segment conflicts
-→ understand what will happen
-→ explicitly confirm
-→ retry the SAME mutation with exact blocker confirmations
-→ receive authoritative persisted state
+Detener planificación
 ```
 
-without the frontend:
+behavior with authoritative persisted backend commands.
+
+The planner must support FOUR distinct user intentions:
 
 ```text
-rewriting blocker status locally
+1. Eliminar solo esta aparición
 
-calculating target fragments
+2. Detener este horario
+   después de este día
 
-deciding conflict authorization
+3. Detener toda la planificación recurrente
+   después de este día
 
-calling legacy parent-level override code
+4. Eliminar todas las apariciones
+   después de este día
 ```
 
-This phase must also retire or guard every remaining active frontend/backend
-writer that is incompatible with schema 004.
+These operations differ by identity and scope.
 
-Finally, fix the known planner chronology debt:
+They must NOT be implemented as variations of:
 
 ```text
-expanded OccurrenceSegments must participate in real temporal ordering
+delete everything after this date
 ```
 
-instead of always being visually grouped under their parent envelope.
-
-This is the final integration phase before:
+without respecting:
 
 ```text
-05.7.5.12
-Final verification + schema 004 rollout
+Occurrence identity
+
+GenerationSlot provenance
+
+PlanItem identity
+
+manual/ad-hoc occurrences
+
+recurring configuration
+```
+
+This phase must make all four operations persistent and schema-004-compatible
+before the real database rollout.
+
+The real `vcs_dev` migration is moved to:
+
+```text
+05.7.5.13
+Final Verification + Real Schema Rollout
+```
+
+---
+
+# Core product rule
+
+Let:
+
+```text
+D = date of the selected owning occurrence
+```
+
+For every "after this day" command:
+
+```text
+date == D
+→ KEEP
+```
+
+```text
+date < D
+→ NEVER TOUCH
+```
+
+```text
+date > D
+→ affected according to command scope
+```
+
+The cutoff is therefore:
+
+```text
+exclusive toward the future
+```
+
+not:
+
+```text
+date >= D
 ```
 
 ---
 
 # Required reading
 
-Before changing anything, read completely:
+Before editing, read completely:
 
 ```text
 AGENTS.md
@@ -71,141 +122,61 @@ modules/gestor_de_habitos/docs/valores.md
 modules/gestor_de_habitos/docs/segment_conflict_api.md
 ```
 
-Also inspect the completed implementation from:
+Also inspect all current scheduling implementation:
 
 ```text
-05.7.5.3
-05.7.5.6
-05.7.5.8
-05.7.5.9
-05.7.5.10
+GenerationConfig
+
+GenerationSlot
+
+generation_slot_weekdays
+
+generation_slot_dates
+
+generation_slot_excluded_dates
+
+generation_excluded_dates
+
+source_generation_slot_id
+
+Apply Week
+
+Apply Future
+
+occurrence DELETE
+
+occurrence creation
+
+occurrence generation/reconciliation
+
+planner-store local stop-planning behavior
 ```
 
 Especially inspect:
 
 ```text
+backend/app.py
+
+backend/occurrence_mutation_service.py
+
+backend/week_mutation_service.py
+
+backend/future_schedule_service.py
+
+backend/recurring_segment_service.py
+
+backend/repositories/
+
 js/app.js
 
-js/api/planner-api.js
-
-js/mutations/
+js/state/planner-store.js
 
 js/views/planner-matrix.js
 
-js/views/occurrence-structure-editor.js
-
-js/domain/occurrence-segments.js
-
-js/domain/occurrence-structure-draft.js
-
-backend/app.py
-
-backend/segment_conflict_domain.py
-
-backend/segment_conflict_service.py
-
-backend/repositories/segment_conflict_repository.py
-
-backend/plan_item_creation_service.py
-
-backend/occurrence_structure_service.py
+js/api/planner-api.js
 ```
 
-Read all relevant tests before editing.
-
----
-
-# Authority hierarchy
-
-Interpret requirements in this order:
-
-```text
-CURRENT_TASK.md
-→ current implementation scope
-
-segment_conflict_api.md
-→ actual conflict API contract
-
-STATUS_CONFLICT_RULES.md
-→ product conflict semantics
-
-OCCURRENCE_SEGMENT_DECISIONS.md
-→ approved technical decisions
-
-OCCURRENCE_SEGMENT_V1.md
-→ segment model
-
-TECHNICAL_AUDIT
-→ history/evidence
-```
-
-The frontend must NOT reinterpret backend domain outcomes.
-
----
-
-# Scope
-
-This phase includes:
-
-```text
-conflict dialog / confirmation UX
-
-PlanItem creation conflict UX
-
-single-occurrence structural conflict UX
-
-exact blocker snapshot confirmation
-
-realized-time correction acknowledgement
-
-stale confirmation recovery
-
-network-safe retry behavior
-
-selection/expansion preservation
-
-retirement/guarding of legacy conflict frontend paths
-
-final audit of parent-level PATCH/DELETE writers
-
-schema-004-safe occurrence deletion where applicable
-
-planner chronology cleanup
-
-desktop/mobile browser verification
-
-full frontend/backend regression
-```
-
-This phase does NOT implement:
-
-```text
-new conflict-domain rules
-
-recurring destructive conflict resolution
-
-segment-status destructive conflict resolution
-
-cross-day custom recurring movement
-
-undefined in_progress internal split semantics
-
-multiple-source/same-target resolution
-
-authentication / owner / guest
-
-production security hardening
-
-Supabase/cloud deployment
-
-migration 004 on vcs_dev
-
-pause/resume
-
-event log
-
-global schedule shifting
-```
+Read relevant tests before implementation.
 
 ---
 
@@ -219,31 +190,31 @@ git diff --stat
 git diff --check
 ```
 
-05.7.5.10 should already be committed.
+05.7.5.11 should already be committed.
 
-Preserve all user work.
+Preserve user work.
 
-Do not revert previous OccurrenceSegment phases.
+Do not revert any completed OccurrenceSegment phase.
 
 ---
 
 # 2. Database safety
 
-Do NOT apply migration 004 to:
+DO NOT apply migration 004 to:
 
 ```text
 vcs_dev
 ```
 
-Do NOT query, clean or modify `vcs_dev`.
+DO NOT query, clean or modify `vcs_dev`.
 
-Do NOT delete legacy PlanItems.
+DO NOT delete the user's real legacy PlanItems.
 
-All schema-004 backend verification must use isolated PostgreSQL 16.
+Use isolated PostgreSQL 16 for all real persistence tests.
 
 ---
 
-# 3. Migrations remain immutable
+# 3. Existing migrations are immutable
 
 Do NOT modify:
 
@@ -254,2102 +225,2197 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
-A migration defect must be reported before any migration change.
+However, this phase MUST audit whether the current schema can persist an
+unbounded recurring cutoff correctly.
+
+If it cannot, an ADDITIVE migration:
+
+```text
+005_*.sql
+```
+
+may be created.
+
+Never rewrite 001–004.
 
 ---
 
-# 4. Backend remains authoritative
+# 4. Persistence-model audit comes first
 
-Frontend must NOT calculate:
-
-```text
-which blocker wins
-
-priority_override vs user_forced_override
-
-whether realized time may be corrected
-
-target trim range
-
-target split ranges
-
-target resulting statuses
-
-target aggregate
-
-conflict metadata
-```
-
-Those are backend responsibilities.
-
-Frontend only:
+Before implementing the commands, determine exactly how the current scheduling
+model answers:
 
 ```text
-shows
-
-explains
-
-collects confirmation
-
-retries original mutation
-
-hydrates authoritative result
-```
-
----
-
-# 5. Supported conflict-producing UI flows
-
-Integrate the new conflict UX into active user flows that correspond to:
-
-```text
-PlanItem / occurrence creation
-
-occurrence translate
-
-occurrence structure replacement
-
-reset segmentation
-```
-
-These are the backend paths completed in 05.7.5.10.
-
----
-
-# 6. Rejection-only flows remain rejection-only
-
-Do NOT add destructive confirmation UX to:
-
-```text
-PATCH segment status
-
-Apply Week
-
-Apply Future
-```
-
-They continue to use their current controlled conflict errors.
-
----
-
-# 7. First conflict response
-
-Handle:
-
-```text
-409
-
-code:
-segment_conflict_resolution_required
-```
-
-as a distinct domain state.
-
-Do NOT display it as a generic fatal error.
-
-Do NOT mutate planner state.
-
-Do NOT invoke legacy conflict handlers.
-
----
-
-# 8. Conflict dialog
-
-Create one dedicated conflict-resolution view/component.
-
-Prefer a focused module such as:
-
-```text
-js/views/segment-conflict-dialog.js
-```
-
-or equivalent architecture consistent with the repository.
-
-Do not grow `app.js` into the conflict UI implementation.
-
-`app.js` should coordinate.
-
----
-
-# 9. Dialog must identify the source intent
-
-The dialog should clearly communicate what the user is trying to do.
-
-Examples:
-
-```text
-Crear actividad
-
-Mover actividad
-
-Modificar estructura
-
-Restablecer segmentación
-```
-
-Do not expose internal endpoint names.
-
----
-
-# 10. Show every blocker
-
-If backend returns multiple conflict entries:
-
-```text
-show ALL of them
-```
-
-Do not display only the first blocker.
-
-The user must understand the complete operation being authorized.
-
----
-
-# 11. Blocker information
-
-For each conflict show, where available:
-
-```text
-target activity name
-
-date
-
-startTime – endTime
-
-status
-
-resolution effect
-```
-
-Use the existing planner/store to map:
-
-```text
-planItemId
-```
-
-to a human-readable activity name.
-
-If the referenced PlanItem is unavailable:
-
-```text
-fall back gracefully
-```
-
-without inventing data.
-
----
-
-# 12. Do not infer target structure
-
-Frontend must NOT inspect blocker time and calculate:
-
-```text
-left fragment
-
-right fragment
-
-cancel result
-```
-
-Use the backend-provided conflict information / resolutionKind.
-
----
-
-# 13. ResolutionKind mapping
-
-Audit the actual resolutionKind values produced by 05.7.5.10.
-
-Create one centralized presentation mapping.
-
-Conceptually:
-
-```text
-backend resolutionKind
-→ human description / action label
-```
-
-Do NOT duplicate this mapping throughout views.
-
-Do NOT invent unsupported resolution kinds.
-
----
-
-# 14. User-facing actions
-
-For supported single-conflict cases, use concise contextual language when it
-accurately represents the backend outcome.
-
-Examples may include:
-
-```text
-Segmentar y continuar
-
-Ajustar y continuar
-
-Finalizar y continuar
-
-Cancelar y continuar
-
-Confirmar corrección
-```
-
-but use only labels that correspond exactly to the actual backend
-resolutionKind/status outcome.
-
-For multiple heterogeneous conflicts, prefer:
-
-```text
-Confirmar cambios y continuar
-```
-
-after presenting all effects.
-
----
-
-# 15. `requiredAuthorization`
-
-Backend returns:
-
-```text
-priority_override
-```
-
-or:
-
-```text
-user_forced_override
-```
-
-Frontend may explain the distinction.
-
-It must NOT recompute it.
-
-It must NOT allow the user to choose which value applies.
-
----
-
-# 16. Priority override messaging
-
-`priority_override` still requires user confirmation.
-
-Do not present higher priority as:
-
-```text
-automatic
-
-already approved
-
-no-impact
-```
-
-The user is still authorizing modification of another occurrence.
-
----
-
-# 17. User-forced messaging
-
-For:
-
-```text
-user_forced_override
-```
-
-make it clear that the requested operation will modify an existing occupied
-time even though priority does not automatically favor the source.
-
-Do not sensationalize.
-
-Keep wording concise and factual.
-
----
-
-# 18. Realized-time conflicts
-
-When:
-
-```text
-requiresRealizedTimeConfirmation == true
-```
-
-the user must receive a stronger warning.
-
-Explain that the affected segment represents time already recorded as:
-
-```text
-completed
-
-or
-
-not_finished
-```
-
-and the operation will correct recorded history.
-
----
-
-# 19. Explicit realized-time acknowledgement
-
-The ordinary confirmation button is insufficient.
-
-Require a dedicated acknowledgement control.
-
-Example wording:
-
-```text
-Entiendo que esta acción corregirá tiempo ya registrado.
-```
-
-Only after that acknowledgement may the frontend send:
-
-```json
-"confirmRealizedTimeCorrection": true
-```
-
-for that blocker snapshot.
-
----
-
-# 20. Bind strong acknowledgement per blocker
-
-If there are multiple realized-time blockers:
-
-```text
-each exact blocker requiring strong confirmation
-```
-
-must receive the required acknowledgement.
-
-Do not use one stale global flag detached from blocker identity.
-
----
-
-# 21. Confirmation payload
-
-On confirmation, retry the SAME source mutation with:
-
-```text
-conflictResolution.confirmations
-```
-
-using the exact contract from:
-
-```text
-segment_conflict_api.md
-```
-
-At minimum each confirmation binds:
-
-```text
-occurrenceId
-
-segmentId
-
-startTime
-
-endTime
-
-status
-
-confirmed
+How does a GenerationSlot stop generating after a date?
 ```
 
 and:
 
 ```text
-confirmRealizedTimeCorrection
+How does a whole recurring PlanItem stop generating after a date?
 ```
 
-when required.
-
----
-
-# 22. Preserve original mutation request
-
-When first request returns conflict:
-
-```text
-store the exact original mutation intent/payload
-```
-
-as transient frontend command state.
-
-The confirmation retry must use that same intended source mutation.
-
-Do NOT reconstruct it from mutated planner state.
-
----
-
-# 23. No domain persistence in pending conflict state
-
-The transient conflict command may exist in frontend memory.
-
-But it must NOT:
-
-```text
-modify planner domain state
-
-change target statuses
-
-change source persisted state
-
-insert fake segments
-```
-
-It is only pending UI/command state.
-
----
-
-# 24. Cancel conflict dialog
-
-If user cancels:
-
-```text
-discard pending conflict confirmation state
-```
-
-No retry.
-
-No backend write.
-
-No planner mutation.
-
-The original editor/form may remain available when appropriate.
-
----
-
-# 25. Prevent double confirmation
-
-While confirmed retry is pending:
-
-```text
-disable duplicate submit
-```
-
-One user confirmation must produce at most one mutation request.
-
----
-
-# 26. Confirmed mutation success
-
-After confirmed mutation succeeds:
-
-```text
-mutation
-→ GET planner-state
-→ hydrate authoritative state
-```
-
-Do not locally reproduce target split/trim/cancel outcomes.
-
----
-
-# 27. GET failure after confirmed mutation
-
-If mutation definitely succeeded but GET fails:
-
-```text
-do NOT resend the mutation
-```
-
-Recovery:
-
-```text
-GET planner-state only
-```
-
-Follow the established safe mutation pattern.
-
----
-
-# 28. Ambiguous transport failure
-
-If the mutation request itself fails at transport level and frontend cannot know
-whether backend committed:
-
-```text
-DO NOT automatically resend
-```
-
-Surface an ambiguous-result state.
-
-Offer/perform:
-
-```text
-authoritative GET
-```
-
-before allowing the user to decide whether to retry.
-
-Never risk duplicate source creation because of automatic replay.
-
----
-
-# 29. `conflict_resolution_stale`
-
-Handle stale confirmation explicitly.
-
-Meaning:
-
-```text
-the blocker changed after user reviewed it
-```
-
-Required behavior:
-
-```text
-old confirmation discarded
-
-no automatic destructive retry
-
-refresh authoritative planner state
-
-tell user the conflict changed and must be reviewed again
-```
-
----
-
-# 30. Preserve source draft when safely possible
-
-For structural editor conflicts:
-
-If confirmation becomes stale but the source occurrence itself has not changed:
-
-```text
-the local structural draft may remain visible
-```
-
-but it must be marked/reviewed before another submission.
-
-If authoritative refresh shows the source occurrence changed:
-
-```text
-invalidate the stale draft
-```
-
-Do not apply an old draft blindly to a changed source.
-
----
-
-# 31. Fresh blocker after confirmation
-
-If retry returns a new:
-
-```text
-segment_conflict_resolution_required
-```
-
-with additional/current blockers:
-
-```text
-replace old conflict dialog data with the fresh backend conflict set
-```
-
-The user must confirm the new concrete blockers.
-
-No inherited authorization.
-
----
-
-# 32. Undefined resolution
-
-Handle backend errors such as:
-
-```text
-segment_resolution_undefined
-```
-
-as non-confirmable.
-
-Especially:
-
-```text
-internal split of in_progress
-
-full coverage of in_progress
-```
-
-where currently unsupported.
-
-Explain that this exact case cannot yet be resolved automatically.
-
-Do NOT offer a force button.
-
----
-
-# 33. Multiple-source limitation
-
-Handle:
-
-```text
-multiple_source_resolution_unavailable
-```
-
-as a controlled unsupported case.
-
-Do not emulate ordering client-side.
-
-Do not send several independent confirmations to simulate unsupported
-multi-source semantics.
-
----
-
-# 34. Frozen history
-
-If backend rejects resolution because target is frozen:
-
-```text
-show that historical time cannot be rewritten
-```
-
-The user must modify the source intent instead.
-
-No override button.
-
----
-
-# 35. Creation conflict flow
-
-For PlanItem/new occurrence creation:
-
-```text
-submit create
-→ 409 conflict
-→ show dialog
-→ explicit confirmation
-→ retry SAME create payload + conflictResolution
-→ success
-→ GET
-```
-
----
-
-# 36. Creation conflict must not duplicate
-
-A create confirmation must never accidentally create:
-
-```text
-two PlanItems
-
-two occurrences
-```
-
-Double-submit and transport recovery must be tested.
-
----
-
-# 37. Structural translate conflict flow
-
-For:
-
-```text
-POST /occurrences/<id>/translate
-```
-
-use the same shared conflict coordinator/dialog.
-
-Do not build translate-specific conflict semantics.
-
----
-
-# 38. Structure replacement conflict flow
-
-For:
-
-```text
-PUT /occurrences/<id>/structure
-```
-
-preserve the existing local structural draft while conflict review is active.
-
-Confirmed retry sends:
-
-```text
-same source structure payload
-+
-conflictResolution
-```
-
----
-
-# 39. Reset conflict flow
-
-For:
-
-```text
-POST /occurrences/<id>/reset-segmentation
-```
-
-use the same conflict engine UX.
-
-The initial explicit reset confirmation and the later conflict confirmation are
-different concepts.
-
-Do not collapse them into one accidental confirmation.
-
----
-
-# 40. Shared conflict mutation coordinator
-
-Prefer one shared frontend coordinator for:
-
-```text
-detect resolution-required response
-
-store source command
-
-open dialog
-
-collect snapshots
-
-retry command
-
-recover
-
-hydrate
-```
-
-Do not duplicate the complete flow for:
-
-```text
-create
-
-translate
-
-structure
-
-reset
-```
-
----
-
-# 41. Existing mutation modules
-
-Respect the current mutation architecture.
-
-Extend/reuse existing:
-
-```text
-planner mutation coordinator
-
-occurrence structure mutation coordinator
-
-API client
-```
-
-rather than placing fetch logic in views.
-
----
-
-# 42. No direct `fetch()` from conflict dialog
-
-The conflict dialog is presentation.
-
-It should not call endpoints directly.
-
-Use centralized API/mutation layers.
-
----
-
-# 43. Selection after successful conflict resolution
-
-Preserve:
-
-```text
-selectedOccurrenceId
-```
-
-when that source/target still exists.
-
-Preserve:
-
-```text
-selectedSegmentId
-```
-
-only if that segment ID still survives.
-
----
-
-# 44. Split selection identity
-
-When target split occurs:
-
-```text
-left fragment keeps old ID
-
-right fragment receives new ID
-```
-
-If the old target segment was selected:
-
-```text
-selection naturally remains on the surviving left/original ID
-```
-
-Do not remap based on array indexes.
-
----
-
-# 45. Cancelled/full-overlap selection
-
-If a selected target segment changes status but keeps identity:
-
-```text
-selection may remain
-```
-
-If backend state legitimately removes/replaces the selected identity:
-
-```text
-clear dangling selection
-```
-
-Do not invent a replacement.
-
----
-
-# 46. Expansion after conflict
-
-Preserve expanded occurrence IDs after authoritative GET when those parents
-still exist.
-
-Conflict resolution must not unexpectedly collapse the whole planner.
-
----
-
-# 47. Legacy frontend conflict audit
-
-Audit exact callers of:
-
-```text
-edit_without_occurrence
-
-prepareOccurrenceAddition
-
-commitPreparedScheduleChange
-
-openPersistentOverride
-
-addPriorityOverride
-
-confirmedOccurrenceIds
-
-statusContext
-```
-
----
-
-# 48. `edit_without_occurrence`
-
-05.7.5.10 guarded this path before the old local conflict writer.
-
-After the new UI integration:
-
-```text
-do not restore its old conflict behavior
-```
-
-If it still owns a legitimate non-conflict interaction:
-
-```text
-keep only that compatible responsibility
-```
-
-Otherwise retire it.
-
----
-
-# 49. `prepareOccurrenceAddition`
-
-If it has no active caller after the new creation flow:
-
-```text
-remove it
-```
-
-when safe.
-
-If retained for non-conflict logic:
-
-```text
-prove exact caller and responsibility
-```
-
-No legacy conflict mutation may remain reachable.
-
----
-
-# 50. `commitPreparedScheduleChange`
-
-If no active caller remains:
-
-```text
-remove it
-```
-
-or clearly isolate it as dead/deprecated code pending cleanup.
-
-Do not keep a dormant writer reachable through accidental UI state.
-
----
-
-# 51. `openPersistentOverride`
-
-Retire it if the new dialog replaces its purpose.
-
-No active UI path may open the old parent-level priority override interface.
-
----
-
-# 52. `addPriorityOverride`
-
-Retire/guard old client-side priority mutation logic.
-
-Frontend no longer changes blockers itself.
-
----
-
-# 53. `confirmedOccurrenceIds`
-
-Remove it from active conflict authority.
-
-The new confirmation authority is:
-
-```text
-exact blocker segment snapshots
-```
-
----
-
-# 54. `statusContext`
-
-Do not restore dependency on this legacy alias.
-
-Canonical frontend model remains:
-
-```text
-conflictContext
-```
-
----
-
-# 55. Legacy backend writer audit
+Do not assume the schema already supports this.
 
 Audit:
 
 ```text
-PATCH /api/occurrences/<id>
+GenerationConfig lifecycle
 
-DELETE /api/occurrences/<id>
-```
+GenerationSlot lifecycle
 
-and every backend caller/service they invoke.
+weekdays
 
-Determine whether each is:
+explicit dates
 
-```text
-schema-004 compatible
+excluded dates
 
-unused
+Apply Future rewriting
 
-or incompatible
-```
+generation horizon/materialization
 
----
-
-# 56. Parent PATCH
-
-The report from 05.7.5.10 identified:
-
-```text
-PATCH /api/occurrences/<id>
-```
-
-as still tied to:
-
-```text
-schema 003
-
-status_reason
-
-parent-level mutation
-```
-
-This path must NOT remain an active incompatible writer after this phase.
-
-Preferred outcome:
-
-```text
-retire/remove active frontend use
-```
-
-and:
-
-```text
-retire/guard backend route
-```
-
-if no schema-004-compatible responsibility remains.
-
-Do NOT simply rename:
-
-```text
-status_reason → conflict_reason
-```
-
-and preserve incompatible semantics.
-
----
-
-# 57. No parent-level status authority
-
-Occurrence status is materialized aggregate.
-
-Therefore no generic endpoint may remain active that allows the client to set:
-
-```text
-Occurrence.status
-```
-
-independently of its segments.
-
-Use:
-
-```text
-PATCH occurrence-segment status
-```
-
-instead.
-
----
-
-# 58. Occurrence DELETE audit
-
-Deleting a whole occurrence may be compatible because:
-
-```text
-occurrence_segments
-ON DELETE CASCADE
-```
-
-but verify all behavior.
-
-Deletion must respect:
-
-```text
-source_occurrence_id
-ON DELETE NO ACTION
-```
-
-when the occurrence is referenced as historical conflict source.
-
----
-
-# 59. Delete must be graph-aware
-
-If active occurrence deletion remains supported:
-
-```text
-delete parent
-→ segments cascade
-```
-
-must occur atomically.
-
-Do not individually mutate segment statuses first.
-
----
-
-# 60. Referenced source delete UX
-
-If delete fails because occurrence is referenced as:
-
-```text
-source_occurrence_id
-```
-
-surface a controlled error.
-
-Do not remove historical target provenance.
-
-Do not clear references automatically.
-
----
-
-# 61. Multi-segment deletion
-
-Do not block whole-occurrence deletion merely because the parent has multiple
-segments.
-
-If deletion is otherwise valid:
-
-```text
-the whole graph may be deleted
-```
-
-through parent cascade.
-
-If product semantics currently forbid deletion for another documented reason:
-
-```text
-preserve that rule
+slot provenance
 ```
 
 ---
 
-# 62. No status-as-delete fallback
+# 5. Forbidden fake persistence
 
-Do not emulate deletion by changing:
+Do NOT represent:
 
 ```text
-parent status
+stop forever after D
 ```
 
-or all child statuses unless that is an explicit separate product action.
+by generating an arbitrary finite list such as:
 
-Delete and cancel are distinct operations.
+```text
+D+1 exclusion
+D+2 exclusion
+...
+next 365 days
+```
+
+That is not a durable recurrence cutoff.
+
+Do NOT rely solely on deleting currently materialized future occurrences.
+
+Otherwise regeneration could recreate them.
 
 ---
 
-# 63. Final active writer inventory
+# 6. Preserve GenerationSlot provenance
 
-At completion, enumerate every active endpoint capable of modifying:
+Do NOT solve slot termination by deleting the GenerationSlot if that would
+destroy historical:
 
 ```text
-plan_items
-
-occurrences
-
-occurrence_segments
-
-generation configs / slots
+source_generation_slot_id
 ```
 
-and classify whether it is schema-004 compatible.
+provenance.
 
-This inventory is critical input for 05.7.5.12.
+Historical occurrences must still be able to answer:
+
+```text
+Which recurring slot created me?
+```
+
+even after that slot stops generating future occurrences.
 
 ---
 
-# 64. No incompatible writer allowed
+# 7. If migration 005 is required
 
-Definition before phase completion:
+If current schema lacks a durable bounded recurrence representation:
 
-```text
-no active UI path may reach a schema-003-only writer
-```
+create the MINIMAL additive schema needed.
 
-Any remaining historical helper must be:
+The persistence model must support:
 
 ```text
-removed
-
-or provably unreachable
+slot-level inclusive final generation date
 ```
 
-Do not leave "probably unused" as the only protection.
+and, if technically required by the existing GenerationConfig architecture:
+
+```text
+schedule/config-level inclusive final generation date
+```
+
+or an equivalent normalized model.
+
+Semantics:
+
+```text
+NULL
+→ no cutoff
+
+D
+→ may generate on D
+→ must not generate after D
+```
+
+Use clear naming consistent with repository style.
+
+Do not add unrelated scheduling features.
 
 ---
 
-# 65. Planner chronology debt
+# 8. Migration 005 requirements
 
-Current known limitation:
-
-Expanded children are visually grouped under their parent instead of
-participating in global chronological order.
-
-Example current grouping:
+If created:
 
 ```text
-Estudiar
-  Seg 1 13:00–14:00
-  Seg 2 16:00–17:00
+BEGIN / COMMIT
 
-Comer
-14:30–15:30
+safe additive changes
+
+NULL-compatible backfill
+
+existing schedules remain unbounded
+
+indexes only if justified
+
+verification queries/tests
 ```
 
-This visually hides the real chronology.
+No existing schedule may accidentally stop.
 
----
-
-# 66. Chronology goal
-
-Expanded temporal rows must be ordered by actual occupied time:
-
-```text
-13:00  Estudiar · Seg 1
-
-14:30  Comer
-
-16:00  Estudiar · Seg 2
-```
-
-without changing domain ownership:
-
-```text
-Seg 1 and Seg 2
-still belong to the same occurrence
-```
-
----
-
-# 67. Chronology is presentation only
-
-Do NOT modify persisted data to achieve visual ordering.
-
-Do NOT duplicate occurrences.
-
-Do NOT change segment IDs.
-
-Do NOT create synthetic persisted rows.
-
-Build a derived render model.
-
----
-
-# 68. Compact occurrence behavior
-
-A non-expanded occurrence may continue to render as one parent-level temporal
-row using its general envelope.
-
-Do not force every occurrence to display child rows all the time.
-
----
-
-# 69. Expanded multi-segment behavior
-
-When a multi-segment occurrence is expanded:
-
-```text
-its child temporal rows
-```
-
-must participate individually in the global chronological ordering.
-
-They may appear separated by rows from other occurrences.
-
----
-
-# 70. Parent identity in interleaved rows
-
-Because children may no longer remain physically contiguous:
-
-Each segment row must make its parent identity clear.
-
-Examples:
-
-```text
-Estudiar · Seg 1/2
-
-Estudiar · Seg 2/2
-```
-
-Use derived ordinal ordering.
-
-Do NOT persist:
-
-```text
-segment number
-```
-
----
-
-# 71. Parent controls
-
-The user must still be able to access parent actions:
-
-```text
-structural editor
-
-recurring editor
-
-delete if available
-
-expand/collapse
-```
-
-even when segment rows are interleaved.
-
-Choose a minimal clear presentation.
-
-Do not redesign the entire planner.
-
----
-
-# 72. Parent summary
-
-If retaining a parent summary/control row:
-
-```text
-it must not masquerade as another occupied time interval
-```
-
-It may be a non-temporal group/control element.
-
-Do not allow it to distort chronological sorting.
-
----
-
-# 73. Global temporal sort
-
-Use a derived sort key based on the actual row represented.
-
-For child rows:
-
-```text
-segment.startTime
-```
-
-For compact parent rows:
-
-```text
-occurrence.startTime
-```
-
-Use deterministic tie-breaking.
-
----
-
-# 74. Tie-breaking
-
-When multiple temporal rows share the same start time:
-
-Use deterministic stable ordering based on existing planner semantics, then
-stable IDs if needed.
-
-Do not rely on incidental object insertion order.
-
----
-
-# 75. Cross-parent gaps
-
-The visual chronology must correctly show another occurrence inside the gap of
-a segmented parent.
-
-This is the main acceptance case for chronology cleanup.
-
----
-
-# 76. Single-segment occurrence
-
-A one-segment occurrence should retain the familiar compact UI.
-
-Do not add unnecessary expansion complexity.
-
----
-
-# 77. Status controls
-
-For expanded multi-segment rows:
-
-```text
-segment status controls remain attached to that concrete segment
-```
-
-Parent aggregate remains informational/read-only.
-
----
-
-# 78. Structural editing
-
-Opening the structural editor from any segment row must edit:
-
-```text
-the owning occurrence
-```
-
-not only that child.
-
-Selection should set:
-
-```text
-selectedOccurrenceId
-
-selectedSegmentId
-```
-
-appropriately.
-
----
-
-# 79. Recurring control
-
-The dedicated:
-
-```text
-↻
-```
-
-recurring action from 05.7.5.9 remains distinct from:
-
-```text
-✏️
-```
-
-structural editing.
-
-Chronology cleanup must not regress that distinction.
-
----
-
-# 80. Accessibility
-
-Conflict dialog must support:
-
-```text
-keyboard focus
-
-clear labels
-
-button disabled state while submitting
-
-readable warning text
-
-close/cancel action
-```
-
-Use appropriate dialog semantics consistent with existing app patterns.
-
----
-
-# 81. Dialog focus
-
-When conflict dialog opens:
-
-```text
-focus should enter the dialog
-```
-
-When it closes:
-
-```text
-return focus to a sensible originating control
-```
-
-where practical.
-
-Do not trap the user with no keyboard escape path.
-
----
-
-# 82. Visual hierarchy
-
-Distinguish:
-
-```text
-normal scheduling conflict
-
-user-forced conflict
-
-realized-time correction
-
-unsupported/frozen case
-```
-
-without using alarming or sensational language.
-
----
-
-# 83. Responsive behavior
-
-The conflict dialog and chronology layout must work at approximately:
-
-```text
-1440×900 desktop
-
-390×844 mobile
-```
-
-No horizontal overflow.
-
-No action buttons outside viewport.
-
----
-
-# 84. Long conflict lists
-
-If many blockers exist:
-
-```text
-dialog content may scroll internally
-```
-
-while keeping primary actions usable.
-
-Do not expand the whole page uncontrollably.
-
----
-
-# 85. Creation conflict frontend tests
-
-Test:
-
-```text
-create
-→ 409
-→ dialog
-→ confirmation
-→ same create + conflictResolution
-→ GET
-→ hydrate
-```
-
----
-
-# 86. Creation realized-time test
-
-Test:
-
-```text
-create
-→ completed/not_finished blocker
-→ dialog
-→ normal confirmation unavailable
-→ realized acknowledgement
-→ confirmed retry
-```
-
-Verify exact snapshot payload.
-
----
-
-# 87. Creation cancel test
-
-Conflict dialog cancel:
-
-```text
-zero retry requests
-
-zero local planner mutation
-```
-
----
-
-# 88. Create double-submit test
-
-Rapid confirmation clicks:
-
-```text
-one confirmed mutation request only
-```
-
----
-
-# 89. Structural conflict frontend tests
-
-Cover:
-
-```text
-translate
-
-PUT structure
-
-reset
-```
-
-through shared conflict coordinator.
-
----
-
-# 90. Preserve structural draft test
-
-For PUT structure:
-
-```text
-conflict dialog opens
-→ source draft remains intact
-→ confirm
-→ same source candidate sent
-```
-
-No target graph is authored client-side.
-
----
-
-# 91. Stale confirmation frontend test
-
-Mock:
-
-```text
-conflict_resolution_stale
-```
-
-Verify:
-
-```text
-old confirmation discarded
-
-GET authoritative state
-
-no automatic mutation replay
-
-review message shown
-```
-
----
-
-# 92. New blocker test
-
-Confirmed retry returns a fresh resolution-required 409.
-
-Expected:
-
-```text
-fresh conflict set replaces old dialog data
-
-old confirmations do not carry forward automatically
-```
-
----
-
-# 93. Undefined resolution frontend test
-
-Mock:
-
-```text
-segment_resolution_undefined
-```
-
-Verify:
-
-```text
-no force button
-
-no retry with fabricated confirmation
-
-clear unsupported message
-```
-
----
-
-# 94. Multiple-source limitation frontend test
-
-Mock:
-
-```text
-multiple_source_resolution_unavailable
-```
-
-Verify safe explanation and no client-side workaround.
-
----
-
-# 95. Frozen conflict frontend test
-
-No confirm button capable of rewriting frozen target.
-
-User must return and modify source.
-
----
-
-# 96. Network ambiguity test
-
-Mutation transport failure after confirmation:
-
-```text
-no automatic replay
-```
-
-Authoritative refresh path only.
-
----
-
-# 97. Confirmed success + GET failure test
-
-Verify:
-
-```text
-mutation sent once
-
-GET fails
-
-recovery performs GET only
-```
-
----
-
-# 98. Selection tests
-
-Verify selection through:
-
-```text
-trim
-
-split
-
-cancel/status result
-
-authoritative hydration
-```
-
-using stable IDs.
-
-No index-based remapping.
-
----
-
-# 99. Chronology unit tests
-
-Create derived render-model tests covering:
-
-```text
-compact rows
-
-expanded children
-
-interleaving
-
-gaps
-
-same-time deterministic sorting
-
-single segment
-
-multi segment
-
-selection identity
-```
-
----
-
-# 100. Chronology acceptance example
-
-Explicit test:
-
-```text
-Occurrence A
-parent 13:00–17:00
-
-A1 13:00–14:00
-A2 16:00–17:00
-
-Occurrence B
-14:30–15:30
-```
-
-Expanded result must render temporal order:
-
-```text
-A1
-
-B
-
-A2
-```
-
-not:
-
-```text
-A1
-
-A2
-
-B
-```
-
----
-
-# 101. Conflict-created split chronology
-
-After authoritative GET from a confirmed conflict producing a split:
-
-```text
-new right fragment
-```
-
-must immediately participate correctly in chronology.
-
-No special-case reload required beyond normal GET/hydrate.
-
----
-
-# 102. Monthly/status regression
-
-Chronology cleanup must not change:
-
-```text
-monthly aggregate status
-
-segment status semantics
-
-parent aggregate semantics
-```
-
-Presentation only.
-
----
-
-# 103. Apply Week/Future regression
-
-Verify:
-
-```text
-↻ recurring action
-
-Apply Week
-
-Apply Future
-
-custom resize rejection
-
-recurring conflict rejection
-```
-
-still work as in 05.7.5.9.
-
-Do NOT route recurring conflicts into destructive conflict dialog.
-
----
-
-# 104. Segment-status regression
-
-A segment status conflict remains:
-
-```text
-segment_status_conflict
-```
-
-and must not accidentally open the destructive creation/move resolution flow.
-
----
-
-# 105. Reconciliation regression
-
-Bootstrap remains:
-
-```text
-POST planner/reconcile
-→ GET planner-state
-→ hydrate
-```
-
-No conflict dialog during ordinary bootstrap.
-
----
-
-# 106. Planner-state remains authoritative
-
-GET remains read-only.
-
-Frontend may derive:
-
-```text
-display rows
-
-segment ordinals
-
-dialog labels
-```
-
-but not persistent conflict outcomes.
-
----
-
-# 107. Backend API regression
-
-Do not redesign the 05.7.5.10 conflict contract merely for easier frontend
-implementation.
-
-If a truly missing field makes UX impossible:
-
-```text
-make the smallest backend contract addition
-
-test it
-
-document it
-```
-
-Do not move domain authority client-side.
-
----
-
-# 108. Backend parent writer tests
-
-Add/adjust tests proving no schema-004 path can:
-
-```text
-set parent status independently
-
-write status_reason
-
-invoke legacy priority override
-```
-
----
-
-# 109. DELETE integration tests
-
-If occurrence deletion remains active, test against schema 004:
-
-```text
-single-segment occurrence delete
-
-multi-segment occurrence delete
-
-segments cascade
-
-referenced-source delete rejection
-
-no orphan segments
-```
-
-Use isolated PostgreSQL 16.
-
----
-
-# 110. Legacy code cleanup
-
-Remove clearly dead code when safe.
-
-Do not keep large legacy conflict systems solely because tests reference them.
-
-Update/remove obsolete tests alongside retired code.
-
-Do not delete historical documentation merely to make grep clean.
-
----
-
-# 111. Runtime grep audit
-
-At completion search active code for:
-
-```text
-status_reason
-
-confirmedOccurrenceIds
-
-apply_priority_overrides
-
-openPersistentOverride
-
-addPriorityOverride
-
-prepareOccurrenceAddition
-
-commitPreparedScheduleChange
-
-PATCH /api/occurrences
-```
-
-Classify every remaining occurrence.
-
-Distinguish:
-
-```text
-historical tests/docs
-
-dormant compatibility code
-
-active runtime code
-```
-
----
-
-# 112. No active `status_reason`
-
-Schema-004 runtime code must not write:
-
-```text
-status_reason
-```
-
-If references remain only in migrations/schema-003 compatibility or historical
-tests:
-
-```text
-report them precisely
-```
-
----
-
-# 113. No active parent status mutation
-
-At phase completion:
-
-```text
-Occurrence.status
-```
-
-must only change as:
-
-```text
-materialized aggregate derived from segments
-```
-
-within schema-004 active paths.
-
----
-
-# 114. PostgreSQL 16 isolated verification
-
-Use:
+Migration must be tested:
 
 ```text
 001
 → 002
 → 003
 → 004
+→ 005
 ```
 
-in an isolated PostgreSQL 16 instance.
-
-Do NOT use `vcs_dev`.
+on isolated PostgreSQL 16.
 
 ---
 
-# 115. Conflict regression PostgreSQL
+# 9. Generation engine must honor cutoff
 
-Re-run the full 05.7.5.10 schema-004 conflict suite.
+Whatever persistent representation is selected:
 
-It must remain green.
+ALL future occurrence generation must respect it.
 
----
-
-# 116. Recurring regression PostgreSQL
-
-Re-run:
+A stopped slot may generate:
 
 ```text
-test_recurring_schema004_integration.py
+date <= cutoff
 ```
 
-Apply Week/Future remain rejection-only and segment-aware.
-
----
-
-# 117. Deletion PostgreSQL tests
-
-If deletion path changes, verify real:
+but never:
 
 ```text
-parent deletion
-
-segment cascade
-
-NO ACTION provenance restriction
-
-rollback
+date > cutoff
 ```
 
----
-
-# 118. Full backend suite
-
-Run:
+This must remain true after:
 
 ```text
-.venv/bin/python -m unittest discover \
-  -s modules/gestor_de_habitos/backend \
-  -p 'test_*.py'
-```
+reload
 
-Report exact result and opt-in skips.
+Flask restart
+
+reconciliation
+
+later planner bootstrap
+```
 
 ---
 
-# 119. Full frontend suite
+# 10. Apply Week / Apply Future cutoff audit
+
+Audit how:
+
+```text
+Apply Week
+
+Apply Future
+```
+
+interact with a stopped slot/schedule.
+
+They must NOT silently clear or ignore an existing cutoff.
+
+Do not automatically restart stopped planning.
+
+If current semantics cannot safely combine with a cutoff:
+
+```text
+reject/report that exact operation
+```
+
+rather than silently reopening recurrence.
+
+Explicit "restart planning" behavior is OUT OF SCOPE.
+
+---
+
+# 11. Selection may be a segment
+
+The UI may currently have:
+
+```text
+selectedOccurrenceId
+
+selectedSegmentId
+```
+
+The four commands are NOT segment operations.
+
+If a segment is selected:
+
+```text
+selectedSegment
+→ owning occurrence
+→ command scope
+```
+
+The selected segment's individual time does not define the scope.
+
+---
+
+# 12. Command 1 — Delete only this occurrence
+
+User-facing meaning:
+
+```text
+Eliminar solo esta aparición
+```
+
+Scope:
+
+```text
+exact selected occurrenceId
+```
+
+Existing schema-004 DELETE behavior from 05.7.5.11 should remain authoritative.
+
+---
+
+# 13. Generated occurrence deletion
+
+If selected occurrence came from:
+
+```text
+source_generation_slot_id != NULL
+```
+
+deleting only that occurrence must preserve the existing recurrence semantics
+that prevent that same occurrence from simply regenerating.
+
+Reuse the approved exclusion behavior.
+
+Do not stop the entire slot.
+
+---
+
+# 14. Manual occurrence deletion
+
+If:
+
+```text
+source_generation_slot_id == NULL
+```
+
+delete only that occurrence.
+
+Do not modify recurrence merely because the PlanItem itself is recurrent.
+
+---
+
+# 15. Command 2 — Stop this recurring slot
+
+User-facing meaning:
+
+```text
+Detener este horario después de este día
+```
+
+Canonical identity:
+
+```text
+selected occurrence.source_generation_slot_id
+```
+
+---
+
+# 16. Command 2 applicability
+
+This command is available only when the selected owning occurrence has:
+
+```text
+source_generation_slot_id != NULL
+```
+
+If selected occurrence is manual/ad-hoc:
+
+```text
+source_generation_slot_id == NULL
+```
+
+this scope does not exist.
+
+Frontend should hide/disable it appropriately.
+
+Backend must still reject misuse safely.
+
+---
+
+# 17. Command 2 cutoff
+
+Given selected occurrence date:
+
+```text
+D
+```
+
+persist:
+
+```text
+selected GenerationSlot may generate through D
+
+selected GenerationSlot may NOT generate after D
+```
+
+---
+
+# 18. Command 2 materialized cleanup
+
+Delete/reconcile already-materialized occurrences satisfying:
+
+```text
+occurrence.source_generation_slot_id
+==
+selected source_generation_slot_id
+```
+
+AND:
+
+```text
+occurrence.date > D
+```
+
+---
+
+# 19. Command 2 follows provenance, not current time
+
+This is CRITICAL.
+
+Example:
+
+Original slot:
+
+```text
+14:00–17:00
+```
+
+Future occurrence was manually changed to:
+
+```text
+13:00–18:00
+```
+
+but still has:
+
+```text
+source_generation_slot_id = Slot B
+```
+
+Stopping Slot B after D MUST affect that customized occurrence.
+
+Do NOT determine membership using:
+
+```text
+current startTime
+
+current endTime
+```
+
+Use provenance:
+
+```text
+source_generation_slot_id
+```
+
+---
+
+# 20. Command 2 preserves other slots
+
+Example:
+
+```text
+Uber
+
+Slot A 08:00–11:00
+Slot B 14:00–17:00
+Slot C 20:00–22:00
+```
+
+Stopping Slot B after D:
+
+```text
+A future occurrences → KEEP
+
+B future occurrences → REMOVE / STOP
+
+C future occurrences → KEEP
+```
+
+---
+
+# 21. Command 2 preserves manual occurrences
+
+A future occurrence with:
+
+```text
+source_generation_slot_id = NULL
+```
+
+must remain.
+
+Even if:
+
+```text
+plan_item_id
+```
+
+is the same.
+
+---
+
+# 22. Command 3 — Stop all recurring planning
+
+User-facing meaning:
+
+```text
+Detener toda la planificación recurrente
+después de este día
+```
+
+Scope:
+
+```text
+the selected PlanItem's recurring schedule
+```
+
+---
+
+# 23. Command 3 recurrence effect
+
+After cutoff D:
+
+```text
+NO recurring GenerationSlot belonging to the selected PlanItem's
+authoritative recurring schedule may generate future occurrences.
+```
+
+All recurring slots are stopped after D.
+
+---
+
+# 24. Command 3 materialized cleanup
+
+Remove/reconcile materialized occurrences where:
+
+```text
+plan_item_id == selected PlanItem
+```
+
+AND:
+
+```text
+date > D
+```
+
+AND:
+
+```text
+source_generation_slot_id != NULL
+```
+
+---
+
+# 25. Command 3 preserves manual/ad-hoc occurrences
+
+Occurrences satisfying:
+
+```text
+source_generation_slot_id == NULL
+```
+
+must remain.
+
+This distinction is intentional.
+
+The user is saying:
+
+```text
+Stop automatic recurring planning
+```
+
+not:
+
+```text
+Delete everything belonging to this PlanItem
+```
+
+---
+
+# 26. Command 3 follows provenance after customization
+
+A generated occurrence remains recurring-origin even if its runtime:
+
+```text
+date/time/segments
+```
+
+were customized, as long as its provenance identifies it as generated from the
+recurring schedule.
+
+Do not classify by matching current slot time.
+
+---
+
+# 27. Command 4 — Delete all future appearances
+
+User-facing meaning:
+
+```text
+Eliminar todas las apariciones
+después de este día
+```
+
+Scope:
+
+```text
+selected plan_item_id
+```
+
+regardless of occurrence origin.
+
+---
+
+# 28. Command 4 occurrence cleanup
+
+For selected PlanItem:
+
+```text
+date > D
+```
+
+remove ALL relevant future occurrences, including:
+
+```text
+generated recurring occurrences
+
+customized generated occurrences
+
+manual/ad-hoc occurrences
+```
+
+---
+
+# 29. Command 4 must also stop recurrence
+
+This command cannot merely delete current future rows.
+
+Otherwise recurring generation could recreate them.
+
+Therefore Command 4 includes:
+
+```text
+Command 3
++
+deletion of manual/ad-hoc future occurrences
+```
+
+Conceptually:
+
+```text
+stop all recurring generation after D
++
+delete every PlanItem occurrence with date > D
+```
+
+---
+
+# 30. Command 4 does not delete the PlanItem itself
+
+The PlanItem identity remains.
+
+This command removes/stops:
+
+```text
+future appearances
+```
+
+not the PlanItem definition/history.
+
+Historical and cutoff-date data remain.
+
+---
+
+# 31. Summary of the four scopes
+
+Canonical identity:
+
+```text
+1. This occurrence
+→ occurrence_id
+
+2. This recurring slot
+→ source_generation_slot_id
+
+3. All recurring planning
+→ recurring schedule / GenerationSlots of plan_item_id
+
+4. All future appearances
+→ plan_item_id
+```
+
+---
+
+# 32. Canonical example
+
+PlanItem:
+
+```text
+Uber
+```
+
+Recurring slots:
+
+```text
+A → 08:00–11:00
+
+B → 14:00–17:00
+
+C → 20:00–22:00
+```
+
+Selected:
+
+```text
+21 Oct
+Slot B occurrence
+```
+
+Manual occurrence:
+
+```text
+25 Oct
+18:30–19:00
+source_generation_slot_id = NULL
+```
+
+Customized B occurrence:
+
+```text
+25 Oct
+13:00–18:00
+source_generation_slot_id = B
+```
+
+---
+
+# 33. Command 2 expected result
+
+Stop this slot after 21 Oct:
+
+```text
+21 Oct → KEEP
+
+22 Oct onward:
+
+A → KEEP
+
+B → REMOVE / no regeneration
+
+customized B → REMOVE
+
+C → KEEP
+
+manual → KEEP
+```
+
+---
+
+# 34. Command 3 expected result
+
+Stop all recurring planning after 21 Oct:
+
+```text
+21 Oct → KEEP
+
+22 Oct onward:
+
+A → REMOVE
+
+B → REMOVE
+
+customized B → REMOVE
+
+C → REMOVE
+
+manual → KEEP
+```
+
+---
+
+# 35. Command 4 expected result
+
+Delete all future appearances after 21 Oct:
+
+```text
+21 Oct → KEEP
+
+22 Oct onward:
+
+A → REMOVE
+
+B → REMOVE
+
+customized B → REMOVE
+
+C → REMOVE
+
+manual → REMOVE
+```
+
+and recurring generation remains stopped after the cutoff.
+
+---
+
+# 36. Historical protection
+
+These commands are planning operations, not history rewriting operations.
+
+Do NOT permit a cutoff that would retrospectively delete historical data.
+
+Preferred rule:
+
+```text
+selected occurrence date D
+must be today or future
+```
+
+Backend enforces this using authoritative local date.
+
+If:
+
+```text
+D < today
+```
+
+return a controlled error.
+
+Do not delete past occurrences.
+
+---
+
+# 37. Today is allowed
+
+If:
+
+```text
+D == today
+```
+
+the selected day's occurrences are preserved.
+
+Only:
+
+```text
+date > today
+```
+
+are affected.
+
+---
+
+# 38. Future is allowed
+
+If:
+
+```text
+D > today
+```
+
+the selected occurrence/day remains.
+
+All affected rows strictly after D follow command scope.
+
+---
+
+# 39. No client clock authority
+
+Backend determines:
+
+```text
+today
+```
+
+from its authoritative clock.
+
+Do not accept:
+
+```text
+today
+
+now
+
+temporalPhase
+```
+
+from public payloads.
+
+Capture one authoritative `now` per command.
+
+---
+
+# 40. Derive scope from server data
+
+Prefer command APIs where the frontend supplies:
+
+```text
+selected occurrence ID
+```
+
+and backend derives:
+
+```text
+cutoff date
+
+planItemId
+
+sourceGenerationSlotId
+
+GenerationConfig/slot ownership
+```
+
+Do NOT trust the client to tell backend which PlanItem or Slot it owns.
+
+---
+
+# 41. Preferred API shape
+
+Prefer explicit command endpoints consistent with repository conventions.
+
+Conceptually:
+
+```text
+DELETE /api/occurrences/<id>
+```
+
+for Command 1.
+
+And commands conceptually equivalent to:
+
+```text
+POST /api/occurrences/<id>/stop-slot-after
+
+POST /api/occurrences/<id>/stop-recurring-after
+
+POST /api/occurrences/<id>/delete-future-after
+```
+
+Exact naming may follow existing API style.
+
+Avoid an overloaded generic endpoint whose behavior depends on ambiguous
+boolean combinations.
+
+---
+
+# 42. No client-side deletion loops
+
+Frontend must NOT:
+
+```text
+GET all future occurrences
+
+loop
+
+DELETE each one
+```
+
+The backend owns the command atomically.
+
+---
+
+# 43. Atomicity
+
+Commands 2–4 must be atomic.
+
+A successful command may need to coordinate:
+
+```text
+recurrence cutoff state
+
+GenerationConfig
+
+GenerationSlots
+
+materialized occurrences
+
+occurrence_segments through cascade
+
+slot/date exclusions when applicable
+```
+
+All or nothing.
+
+---
+
+# 44. Isolation
+
+Use:
+
+```text
+SERIALIZABLE
+```
+
+consistent with current mutation architecture.
+
+---
+
+# 45. Deterministic locking
+
+Lock relevant rows in deterministic order.
+
+Conceptually:
+
+```text
+selected occurrence
+
+PlanItem / GenerationConfig
+
+GenerationSlots
+
+target occurrences ordered by date + ID
+
+dependent provenance rows if needed
+```
+
+Avoid lock-order divergence from existing scheduling mutations.
+
+---
+
+# 46. Referential provenance
+
+Remember:
+
+```text
+source_occurrence_id
+ON DELETE NO ACTION
+```
+
+Future occurrences selected for deletion may themselves be referenced as
+historical conflict sources.
+
+Do not clear provenance automatically.
+
+---
+
+# 47. External source reference
+
+If an occurrence to be deleted is referenced by an occurrence OUTSIDE the same
+deletion set:
+
+```text
+do not delete it silently
+```
+
+Return a controlled conflict explaining that historical provenance protects the
+occurrence.
+
+No automatic:
+
+```text
+source_occurrence_id = NULL
+```
+
+---
+
+# 48. References entirely inside deletion set
+
+Audit actual PostgreSQL FK behavior.
+
+If both source and referencing occurrence belong to the SAME atomic deletion
+set and PostgreSQL permits the final consistent delete:
+
+```text
+allow it
+```
+
+only with explicit integration coverage.
+
+Do not guess.
+
+---
+
+# 49. Segment handling
+
+Deleting an occurrence deletes its:
+
+```text
+OccurrenceSegments
+```
+
+through:
+
+```text
+ON DELETE CASCADE
+```
+
+Do not individually delete/modify child segments first.
+
+---
+
+# 50. Conflict metadata
+
+Stopping recurrence / deleting future planning is NOT:
+
+```text
+priority_override
+
+user_forced_override
+
+conflict_move
+
+conflict_insertion
+```
+
+Do not create conflict metadata merely because scheduling was stopped.
+
+---
+
+# 51. Generation provenance survives cutoff
+
+Stopping a slot does not alter historical:
+
+```text
+source_generation_slot_id
+```
+
+of surviving occurrences.
+
+Do not rewrite old occurrences to NULL.
+
+---
+
+# 52. No segmentation templates
+
+These commands do not introduce:
+
+```text
+runtime segment templates
+
+generation-slot segments
+
+segment inheritance
+```
+
+GenerationSlot remains recurring-envelope/domain scheduling state.
+
+---
+
+# 53. Customized future occurrence membership
+
+For Commands 2 and 3:
+
+membership is based on provenance.
+
+Example:
+
+```text
+source_generation_slot_id = B
+```
+
+remains B even if occurrence changed:
+
+```text
+14:00–17:00
+→
+13:00–18:00
+```
+
+That occurrence is still affected by stopping B.
+
+---
+
+# 54. Manual future occurrence membership
+
+For:
+
+```text
+source_generation_slot_id = NULL
+```
+
+Command 2:
+
+```text
+KEEP
+```
+
+Command 3:
+
+```text
+KEEP
+```
+
+Command 4:
+
+```text
+DELETE
+```
+
+This must have explicit tests.
+
+---
+
+# 55. Existing individual DELETE remains distinct
+
+Do not replace:
+
+```text
+Eliminar solo esta aparición
+```
+
+with one of the new bulk commands.
+
+All four actions remain independently available when applicable.
+
+---
+
+# 56. Frontend action menu
+
+Expose four clearly distinct actions.
+
+Recommended wording:
+
+```text
+Eliminar solo esta aparición
+
+Detener este horario
+después de este día
+
+Detener toda la planificación recurrente
+después de este día
+
+Eliminar todas las apariciones
+después de este día
+```
+
+Keep wording concise.
+
+---
+
+# 57. Applicability in UI
+
+Command 2:
+
+only available when:
+
+```text
+source_generation_slot_id != NULL
+```
+
+Command 3:
+
+available when the PlanItem has recurring planning that can be stopped.
+
+Command 4:
+
+available for any PlanItem for which future appearances may exist.
+
+Do not show impossible actions as though they will work.
+
+---
+
+# 58. Confirmation UX — Command 1
+
+Existing occurrence delete confirmation may remain.
+
+Explain:
+
+```text
+only this occurrence is removed
+```
+
+---
+
+# 59. Confirmation UX — Command 2
+
+Explain:
+
+```text
+This occurrence/day remains.
+
+Future occurrences from this same recurring time slot will stop.
+
+Other recurring times remain.
+
+Manual occurrences remain.
+```
+
+---
+
+# 60. Confirmation UX — Command 3
+
+Explain:
+
+```text
+This day remains.
+
+All future recurring occurrences of this PlanItem stop.
+
+Manual future occurrences remain.
+```
+
+---
+
+# 61. Confirmation UX — Command 4
+
+This is the broadest/destructive action.
+
+Explain clearly:
+
+```text
+This day remains.
+
+All future recurring planning stops.
+
+All future occurrences of this PlanItem are removed,
+including occurrences added manually.
+```
+
+Require explicit confirmation.
+
+Do not make it the accidental default action.
+
+---
+
+# 62. Segment selection UX
+
+If user selected:
+
+```text
+Seg 2
+```
+
+and opens planning/deletion actions:
+
+the UI acts on:
+
+```text
+owning occurrence
+```
+
+Make parent identity clear.
+
+Do not imply:
+
+```text
+stop only this segment
+```
+
+---
+
+# 63. Authoritative success flow
+
+For Commands 2–4:
+
+```text
+command
+→ success
+→ GET planner-state
+→ hydrate
+```
+
+Do not manually remove rows from store as authoritative domain state.
+
+---
+
+# 64. Success + GET failure
+
+If command succeeded but GET failed:
+
+```text
+recovery = GET only
+```
+
+Do NOT resend destructive command.
+
+---
+
+# 65. Ambiguous transport failure
+
+If frontend cannot know whether destructive command committed:
+
+```text
+NO automatic replay
+```
+
+Perform authoritative GET before allowing another attempt.
+
+This is especially important for bulk deletion.
+
+---
+
+# 66. Double-submit
+
+While command is pending:
+
+```text
+disable duplicate confirmation/submission
+```
+
+One intent must send at most one active mutation request.
+
+---
+
+# 67. Selection after success
+
+After authoritative hydrate:
+
+If selected occurrence still exists:
+
+```text
+keep selection
+```
+
+Commands 2–4 keep cutoff-day occurrence, so selection should normally survive.
+
+If exact selected segment survives:
+
+```text
+keep selectedSegmentId
+```
+
+Clear only dangling IDs.
+
+---
+
+# 68. Expanded parent after success
+
+Preserve expansion for surviving cutoff-day parent.
+
+Do not collapse unrelated planner state.
+
+---
+
+# 69. Planner chronology regression
+
+Do not regress 05.7.5.11 chronology.
+
+Expanded segments must still interleave globally:
+
+```text
+A1
+B
+A2
+```
+
+---
+
+# 70. Conflict UX regression
+
+Do not regress:
+
+```text
+segment conflict confirmation
+
+realized-time acknowledgement
+
+stale confirmation handling
+
+structural conflict draft preservation
+```
+
+---
+
+# 71. Apply Week/Future regression
+
+Apply Week/Future remain segment-aware and rejection-only for conflicts.
+
+They must additionally respect any persisted recurrence cutoffs.
+
+They must not silently resurrect stopped planning.
+
+---
+
+# 72. Segment status regression
+
+PATCH segment status remains segment-aware and conflict rejection-only.
+
+No changes to this domain.
+
+---
+
+# 73. Reconciliation regression
+
+Bootstrap remains:
+
+```text
+POST reconcile
+→ GET planner-state
+→ hydrate
+```
+
+Stopped planning must remain stopped after bootstrap.
+
+---
+
+# 74. Generation regression
+
+After stopping a slot/schedule:
+
+trigger whatever normal generation path would ordinarily materialize future
+occurrences.
+
+Verify:
+
+```text
+stopped dates do NOT return
+```
+
+This is a critical persistence test.
+
+---
+
+# 75. Restart Flask regression
+
+Persist stop command.
+
+Restart/recreate service context.
+
+Re-read/generate.
+
+Expected:
+
+```text
+cutoff still enforced
+```
+
+This proves the feature is not memory-only.
+
+---
+
+# 76. Pure/domain tests
+
+Add focused tests for scope classification.
+
+Given selected occurrence:
+
+```text
+occurrenceId
+
+planItemId
+
+sourceGenerationSlotId
+
+date D
+```
+
+verify target sets for:
+
+```text
+this occurrence
+
+this slot after D
+
+recurring schedule after D
+
+all PlanItem appearances after D
+```
+
+---
+
+# 77. Exclusive cutoff tests
+
+Explicitly verify:
+
+```text
+date < D → untouched
+
+date == D → untouched
+
+date > D → affected according to scope
+```
+
+for Commands 2–4.
+
+---
+
+# 78. Slot provenance test
+
+Future customized occurrence:
+
+```text
+original slot B 14–17
+
+occurrence changed to 13–18
+
+source_generation_slot_id = B
+```
+
+Command 2 on B:
+
+```text
+must remove it
+```
+
+---
+
+# 79. Other-slot preservation test
+
+Command 2:
+
+```text
+A remains
+
+B stops
+
+C remains
+```
+
+---
+
+# 80. Manual preservation test
+
+Command 2:
+
+```text
+manual future occurrence remains
+```
+
+Command 3:
+
+```text
+manual future occurrence remains
+```
+
+Command 4:
+
+```text
+manual future occurrence removed
+```
+
+---
+
+# 81. All-recurring test
+
+Command 3 must stop:
+
+```text
+all recurring-origin occurrences
+```
+
+after D for selected PlanItem.
+
+No GenerationSlot may regenerate them.
+
+---
+
+# 82. All-appearances test
+
+Command 4 must:
+
+```text
+stop recurrence
+
+delete generated future occurrences
+
+delete manual future occurrences
+```
+
+while preserving:
+
+```text
+PlanItem itself
+
+D
+
+history < D
+```
+
+---
+
+# 83. Non-recurring PlanItem test
+
+If PlanItem has no recurring schedule:
+
+Command 3 should be:
+
+```text
+unavailable / controlled no-op/error
+```
+
+according to UI/backend convention.
+
+Command 4 may still remove:
+
+```text
+manual future occurrences
+```
+
+after D.
+
+---
+
+# 84. Manual selected occurrence test
+
+If selected occurrence is manual:
+
+Command 2:
+
+```text
+not applicable
+```
+
+Command 3:
+
+may still operate on the PlanItem's recurrence if one exists.
+
+Command 4:
+
+operates on all PlanItem future occurrences.
+
+---
+
+# 85. Historical cutoff test
+
+Attempt command from:
+
+```text
+D < today
+```
+
+Expected:
+
+```text
+controlled rejection
+```
+
+No writes.
+
+---
+
+# 86. Today cutoff test
+
+Selected occurrence today:
+
+```text
+today occurrence remains
+
+tomorrow onward affected
+```
+
+---
+
+# 87. Future cutoff test
+
+Selected future D:
+
+```text
+D remains
+
+D+1 onward affected
+```
+
+---
+
+# 88. Referenced source test
+
+Future occurrence targeted for deletion is referenced by surviving historical
+provenance.
+
+Expected:
+
+```text
+controlled rejection
+
+atomic rollback
+```
+
+unless the full referencing graph is also legitimately part of the same
+deletion set and tested safe.
+
+---
+
+# 89. Atomicity tests
+
+Force failures during:
+
+```text
+cutoff persistence
+
+slot update
+
+config update
+
+occurrence deletion
+
+cascade-sensitive operation
+
+final commit
+```
+
+Expected:
+
+```text
+no partial cutoff
+
+no partial future deletion
+
+no recurrence configuration divergence
+```
+
+---
+
+# 90. Concurrency
+
+Test where practical:
+
+```text
+stop-slot command
+vs
+Apply Future
+
+stop-all recurrence
+vs
+generation
+
+delete-all future
+vs
+manual occurrence creation
+```
+
+Use SERIALIZABLE behavior.
+
+No lost cutoff or half-deleted schedule.
+
+---
+
+# 91. Migration 005 integration tests
+
+If migration 005 is necessary:
+
+real PostgreSQL 16:
+
+```text
+001
+→ 002
+→ 003
+→ 004
+→ 005
+```
+
+Verify old schedules:
+
+```text
+remain unlimited by default
+```
+
+and new cutoff fields/constraints behave correctly.
+
+---
+
+# 92. Existing schema path
+
+If audit proves no migration 005 is required:
+
+document exactly how existing persisted schema represents an unbounded
+post-date stop.
+
+Prove it survives regeneration/restart.
+
+Do not merely assert it.
+
+---
+
+# 93. PostgreSQL real Command 2
+
+Create:
+
+```text
+A
+
+B
+
+C
+```
+
+with materialized future occurrences.
+
+Customize one future B occurrence.
+
+Add manual occurrence.
+
+Stop B after D.
+
+Verify real DB:
+
+```text
+D kept
+
+future B removed
+
+custom B removed
+
+A/C kept
+
+manual kept
+
+slot cannot regenerate > D
+```
+
+---
+
+# 94. PostgreSQL real Command 3
+
+Stop all recurrence after D.
+
+Verify:
+
+```text
+D kept
+
+future generated A/B/C removed
+
+manual future occurrence kept
+
+future recurring generation blocked
+```
+
+---
+
+# 95. PostgreSQL real Command 4
+
+Delete all appearances after D.
+
+Verify:
+
+```text
+D kept
+
+generated future removed
+
+customized generated future removed
+
+manual future removed
+
+recurrence cannot regenerate
+```
+
+---
+
+# 96. PostgreSQL individual DELETE regression
+
+Verify Command 1 still works:
+
+```text
+generated single occurrence
+
+manual single occurrence
+
+multi-segment occurrence
+
+referenced source rejection
+```
+
+---
+
+# 97. Frontend tests — menu
+
+Test availability:
+
+```text
+generated occurrence
+→ all four applicable when schedule exists
+
+manual occurrence
+→ no "this slot" action
+
+non-recurring PlanItem
+→ recurring-stop action unavailable
+```
+
+---
+
+# 98. Frontend tests — Command 2
+
+Verify:
+
+```text
+confirmation
+
+one POST
+
+GET
+
+hydrate
+
+selected D remains
+```
+
+No local deletion loop.
+
+---
+
+# 99. Frontend tests — Command 3
+
+Verify explanatory text makes clear:
+
+```text
+manual future occurrences remain
+```
+
+Then:
+
+```text
+command
+→ GET
+→ hydrate
+```
+
+---
+
+# 100. Frontend tests — Command 4
+
+Verify stronger destructive explanation states:
+
+```text
+manual future occurrences are also removed
+```
+
+Double-submit protected.
+
+---
+
+# 101. Network recovery tests
+
+For Commands 2–4 test:
+
+```text
+command success + GET failure
+→ GET-only retry
+```
+
+and:
+
+```text
+ambiguous command transport failure
+→ no automatic destructive replay
+```
+
+---
+
+# 102. Browser verification
+
+Use mocked or isolated schema-compatible backend.
+
+DO NOT use `vcs_dev`.
+
+Desktop:
+
+```text
+1440×900
+```
+
+Mobile:
+
+```text
+~390×844
+```
+
+---
+
+# 103. Browser — four actions
+
+Verify the action menu/dialog makes the distinction understandable.
+
+Specifically verify the user can distinguish:
+
+```text
+this occurrence
+
+this recurring slot
+
+all recurring planning
+
+all future appearances
+```
+
+---
+
+# 104. Browser — slot stop
+
+Using Uber-like scenario:
+
+```text
+A / B / C
+```
+
+confirm after authoritative hydrate:
+
+```text
+A visible
+
+B future gone
+
+C visible
+```
+
+---
+
+# 105. Browser — all recurrence stop
+
+Confirm:
+
+```text
+generated future gone
+
+manual future remains
+```
+
+---
+
+# 106. Browser — all appearances stop
+
+Confirm:
+
+```text
+generated future gone
+
+manual future gone
+```
+
+---
+
+# 107. Responsive behavior
+
+No horizontal overflow.
+
+Confirmation text must remain readable.
+
+Do not redesign VCS.
+
+Preserve:
+
+```text
+dark/gold identity
+
+planner controls
+
+chronology
+```
+
+---
+
+# 108. Active writer inventory
+
+Update the 05.7.5.11 writer inventory with the new command endpoints.
+
+At minimum:
+
+```text
+PlanItem create
+
+segment status
+
+planner reconcile
+
+translate
+
+structure
+
+reset segmentation
+
+single occurrence DELETE
+
+stop-slot-after
+
+stop-recurring-after
+
+delete-future-after
+
+Apply Week
+
+Apply Future
+```
+
+For each report:
+
+```text
+endpoint
+
+service
+
+tables modified
+
+segment-aware?
+
+aggregate-safe?
+
+scope
+
+schema-ready?
+```
+
+---
+
+# 109. No local-only planning action
+
+At phase completion:
+
+```text
+Detener planificación
+```
+
+must not exist as an authoritative memory-only action.
+
+Every exposed planner termination action must:
+
+```text
+persist backend state
+
+or
+
+be removed
+```
+
+---
+
+# 110. No schema-003 writer regression
+
+05.7.5.11 established:
+
+```text
+no active application writer requires schema 003
+```
+
+This must remain true.
+
+Do not reactivate:
+
+```text
+PATCH parent status
+
+status_reason
+
+legacy override writer
+```
+
+---
+
+# 111. Full frontend suite
 
 Run:
 
@@ -2360,19 +2426,55 @@ do
 done
 ```
 
-Report:
+Report exact file/test result.
+
+---
+
+# 112. Full backend suite
+
+Run:
 
 ```text
-file count
+.venv/bin/python -m unittest discover \
+  -s modules/gestor_de_habitos/backend \
+  -p 'test_*.py'
+```
 
-test count if available
+Report opt-in skips honestly.
 
-result
+---
+
+# 113. Real PostgreSQL integration
+
+Run all relevant isolated suites.
+
+If 005 exists:
+
+```text
+schema target = 001→005
+```
+
+otherwise:
+
+```text
+001→004
+```
+
+Include regression:
+
+```text
+segment conflict engine
+
+recurring Apply Week/Future
+
+single DELETE
+
+new termination commands
 ```
 
 ---
 
-# 120. Syntax
+# 114. Syntax / consistency
 
 Run:
 
@@ -2397,331 +2499,71 @@ git diff --check
 
 ---
 
-# 121. Browser verification — conflict UX
+# 115. Still NO real rollout
 
-Use mocked or isolated schema-004 backend.
-
-Do NOT use `vcs_dev`.
-
-Desktop:
+Even if this phase passes:
 
 ```text
-1440×900
+DO NOT migrate vcs_dev
 ```
 
-Mobile:
+Do not apply:
 
 ```text
-approximately 390×844
+004
+
+or 005 if created
 ```
 
----
+to real user data.
 
-# 122. Browser creation conflict
-
-Verify:
+That belongs exclusively to:
 
 ```text
-create source
-
-dialog opens
-
-blocker readable
-
-resolution effect readable
-
-confirm
-
-authoritative GET
-
-final planner correct
+05.7.5.13
 ```
 
 ---
 
-# 123. Browser realized-time correction
+# 116. Documentation
 
-Verify stronger confirmation cannot be bypassed.
+Update normative/project documentation with the four command semantics.
 
-Ordinary confirm button must not send:
+Document explicitly:
 
 ```text
-confirmRealizedTimeCorrection: true
+D kept
+
+>D affected
 ```
 
-without explicit acknowledgement.
-
----
-
-# 124. Browser split result
-
-After confirmed split and GET:
+and scope identities:
 
 ```text
-left original segment
+occurrenceId
 
-right new segment
-```
+source_generation_slot_id
 
-both render correctly.
+recurrence
 
-If expanded:
-
-```text
-both participate in global chronology
+plan_item_id
 ```
 
 ---
 
-# 125. Browser stale conflict
+# 117. If migration 005 exists
 
-Verify stale response:
+Update DB README/migration documentation to state:
 
 ```text
-does not auto retry
-
-refreshes authoritative state
-
-asks for review
+vcs_dev still has NOT received 004/005
 ```
+
+Do not imply rollout occurred.
 
 ---
 
-# 126. Browser unsupported conflict
-
-Verify:
-
-```text
-segment_resolution_undefined
-```
-
-has no destructive action.
-
----
-
-# 127. Browser recurring conflict
-
-Verify Apply Week/Future conflict does NOT open the destructive single-source
-conflict confirmation flow.
-
----
-
-# 128. Browser structural conflict
-
-Verify:
-
-```text
-structural draft
-→ conflict
-→ dialog
-→ confirmation
-→ authoritative GET
-```
-
-without losing the intended source structure.
-
----
-
-# 129. Browser chronology desktop
-
-Verify the gap/interleaving case visually.
-
-No child grouping that creates false chronology.
-
----
-
-# 130. Browser chronology mobile
-
-Verify:
-
-```text
-segment parent identity remains clear
-
-controls remain usable
-
-no horizontal overflow
-```
-
----
-
-# 131. No complete visual redesign
-
-Preserve current VCS identity:
-
-```text
-dark/gold styling
-
-planner structure
-
-responsive behavior
-```
-
-Make only the UX/layout changes necessary for conflict review and chronology.
-
----
-
-# 132. Documentation
-
-Update only documentation necessary for:
-
-```text
-frontend confirmation flow
-
-remaining unsupported conflict cases
-
-legacy retirement
-
-chronological render behavior
-```
-
-Do not document future auth/security/deployment in this phase.
-
----
-
-# 133. Still no schema rollout
-
-Even after this phase:
-
-```text
-DO NOT apply 004 to vcs_dev
-```
-
-05.7.5.12 owns the real rollout.
-
----
-
-# 134. Expected architecture after this phase
-
-```text
-schema 004 foundation
-✅
-
-backend planner read
-✅
-
-frontend segment read/display
-✅
-
-segment creation
-✅
-
-segment status
-✅
-
-persistent reconciliation
-✅
-
-structural backend
-✅
-
-structural editor
-✅
-
-Apply Week/Future
-✅
-
-segment conflict engine
-✅
-
-conflict confirmation API
-✅
-
-conflict UX
-✅
-
-legacy frontend conflict writer
-✅ retired/guarded
-
-parent status writer
-✅ retired/guarded
-
-planner temporal chronology
-✅
-
-real vcs_dev schema rollout
-❌
-
-owner/guest auth
-❌ later
-
-security hardening
-❌ later
-
-production deployment
-❌ later
-```
-
----
-
-# 135. Final writer inventory
-
-Produce a table/report of every ACTIVE mutating route, including at minimum:
-
-```text
-PlanItem creation
-
-segment status
-
-planner reconciliation
-
-occurrence translate
-
-occurrence structure
-
-reset segmentation
-
-occurrence delete if active
-
-Apply Week
-
-Apply Future
-```
-
-For each state:
-
-```text
-endpoint
-
-service
-
-tables changed
-
-segment-aware?
-
-aggregate-safe?
-
-conflict behavior
-
-schema-004 ready?
-```
-
-Do not score or rank; just factual compatibility.
-
----
-
-# 136. Remaining incompatibilities
-
-At completion, explicitly answer:
-
-```text
-Is there any active application write path that still requires schema 003?
-```
-
-If yes:
-
-```text
-05.7.5.11 is NOT complete.
-```
-
-Either make it schema-004 compatible, retire it, or guard it so it is provably
-unreachable from active application behavior.
-
-Historical test helpers do not count as active runtime paths, but must be
-identified.
-
----
-
-# 137. Git rules
+# 118. Git rules
 
 The user controls Git.
 
@@ -2745,189 +2587,180 @@ Do not revert user work.
 
 ---
 
-# 138. Completion report
+# 119. Completion report
 
 At completion provide:
 
-## Files
+## Persistence model audit
 
-Every created/modified/deleted file.
+Explain exactly how recurrence cutoff is persisted.
 
-## Conflict UX
+State whether migration 005 was required and why.
+
+## Migration
+
+If 005 exists:
+
+```text
+filename
+
+schema changes
+
+NULL/backfill behavior
+
+constraints/indexes
+
+001→005 verification
+```
+
+## Four commands
+
+For each explain:
+
+```text
+identity
+
+cutoff
+
+what is removed
+
+what is preserved
+
+recurrence effect
+```
+
+## Command 1
+
+Explain individual occurrence delete and regeneration prevention.
+
+## Command 2
 
 Explain:
 
 ```text
-first 409 handling
+source_generation_slot_id identity
 
-dialog state
+customized occurrence behavior
 
-blocker display
+other slots preserved
 
-resolutionKind presentation
-
-priority/user-forced messaging
-
-realized-time acknowledgement
-
-confirmation payload
-
-confirmed retry
-
-GET-after-success
+manual occurrences preserved
 ```
+
+## Command 3
+
+Explain:
+
+```text
+all recurring slots stopped
+
+generated future occurrences removed
+
+manual future occurrences preserved
+```
+
+## Command 4
+
+Explain:
+
+```text
+recurrence stopped
+
+all future PlanItem occurrences removed
+
+manual included
+
+PlanItem/history preserved
+```
+
+## Temporal protection
+
+Explain:
+
+```text
+D < today
+
+D == today
+
+D > today
+```
+
+## Provenance
+
+Explain:
+
+```text
+source_generation_slot_id preservation
+
+source_occurrence_id restrictions
+```
+
+## Transactions
+
+Explain:
+
+```text
+SERIALIZABLE
+
+lock order
+
+atomic cutoff + cleanup
+
+rollback
+
+concurrency
+```
+
+## Frontend
+
+Explain four action labels/applicability and selected-segment→parent behavior.
 
 ## Recovery
 
 Explain:
 
 ```text
-stale confirmation
+GET-after-success
 
-new blocker
+GET-only retry
 
-removed/changed blocker
-
-network ambiguity
-
-success + GET failure
+ambiguous transport
 
 double submit
 ```
 
-## Unsupported cases
+## Generation
 
-Report UI behavior for:
-
-```text
-in_progress internal split
-
-in_progress full coverage if still undefined
-
-multiple-source resolution
-
-frozen history
-```
-
-## Flow integration
-
-Report:
+Prove stopped recurrence does not regenerate after:
 
 ```text
-creation
+reconcile
 
-translate
+reload
 
-structure replacement
-
-reset
+service restart
 ```
 
-and confirm:
+## Apply Week/Future
 
-```text
-segment status rejection-only
-
-Apply Week/Future rejection-only
-```
-
-## Legacy retirement
-
-Give exact final status/callers for:
-
-```text
-edit_without_occurrence
-
-prepareOccurrenceAddition
-
-commitPreparedScheduleChange
-
-openPersistentOverride
-
-addPriorityOverride
-
-confirmedOccurrenceIds
-
-apply_priority_overrides
-
-status_reason
-
-statusContext
-```
-
-## Parent writer audit
-
-Explain final disposition of:
-
-```text
-PATCH /api/occurrences/<id>
-
-DELETE /api/occurrences/<id>
-```
-
-## Writer inventory
-
-List every active mutating endpoint and schema-004 compatibility.
-
-## Chronology
-
-Explain:
-
-```text
-derived render model
-
-expanded segment interleaving
-
-parent identity
-
-tie-breaking
-
-selection
-
-controls
-```
+Explain how cutoffs interact and confirm stopped planning cannot be silently
+resurrected.
 
 ## PostgreSQL
 
-Report:
+Report real isolated results for all four scopes.
 
-```text
-conflict regression
+## Writer inventory
 
-recurring regression
+Give complete active mutating endpoint inventory.
 
-deletion tests if applicable
-```
+## Tests
 
-## Frontend tests
-
-Exact commands and results.
-
-## Backend tests
-
-Exact commands and results.
+Give exact commands/results.
 
 ## Browser
 
-Report desktop/mobile:
-
-```text
-creation conflict
-
-realized correction
-
-split
-
-stale
-
-unsupported
-
-structural conflict
-
-recurring rejection
-
-chronology
-```
+Report desktop/mobile.
 
 ## Safety
 
@@ -2936,27 +2769,50 @@ Confirm:
 ```text
 vcs_dev untouched
 
-PlanItems preserved
+real PlanItems preserved
 
-migrations unchanged
+001–004 unchanged
 
-no auth work
+005 only additive if created
 
-no production security work
+no schema rollout
 
-no cloud deployment
+no auth/security/cloud work
 
-no recurring destructive resolution
-
-no segment-status destructive resolution
-
-no undefined in_progress semantics invented
+no new conflict semantics
 ```
 
 ## Rollout readiness
 
-State exactly what remains before 05.7.5.12 can apply schema 004 to real
-`vcs_dev`.
+Explicitly answer:
+
+```text
+Is every exposed planning/deletion action now persisted and schema-ready?
+```
+
+and:
+
+```text
+Is any active application writer still dependent on schema 003?
+```
+
+Required for completion:
+
+```text
+YES
+NO
+```
+
+respectively.
+
+## Remaining work
+
+State exactly what remains for:
+
+```text
+05.7.5.13
+Final Verification + Real Schema Rollout
+```
 
 ## Git
 
@@ -2974,56 +2830,66 @@ No push.
 
 ---
 
-# 139. Definition of done
+# 120. Definition of done
 
 This phase is complete when:
 
 ```text
-creation conflict UX uses concrete segment snapshots
+"Eliminar solo esta aparición"
+is persisted
 
-structural conflict UX uses the same shared coordinator
+"Detener este horario después de este día"
+is persisted
 
-realized-time correction requires explicit strong acknowledgement
+"Detener toda la planificación recurrente después de este día"
+is persisted
 
-stale confirmations cannot be reused
+"Eliminar todas las apariciones después de este día"
+is persisted
 
-new blockers require new review
+selected date D is always preserved
 
-ambiguous transport failures never auto-replay mutations
+history before D is always preserved
 
-confirmed success hydrates from authoritative GET
+slot stop uses source_generation_slot_id
 
-legacy local blocker mutation is unreachable
+customized slot-origin occurrences remain attributable to that slot
 
-confirmedOccurrenceIds is no longer active authority
+other recurring slots survive slot-only stop
 
-active parent status writer is retired/guarded
+manual occurrences survive slot-only stop
 
-no active runtime status_reason writes remain
+manual occurrences survive recurring-only stop
 
-whole-occurrence deletion is schema-004 safe or retired
+manual occurrences are removed by all-appearances stop
 
-Apply Week/Future remain rejection-only
+all-appearances stop also prevents recurrence regeneration
 
-segment status remains rejection-only
+recurring cutoffs survive reload/restart/reconcile
 
-expanded child segments render in real global chronology
+no finite fake exclusion horizon is used
 
-segment ownership remains clear
+historical slot provenance is preserved
 
-selection/expansion survive authoritative hydration
+segment selection resolves to owning occurrence
 
-desktop/mobile UX is verified
+all commands are backend-authoritative
 
-all frontend tests pass
+no client deletion loop exists
 
-all backend tests pass
+success hydrates from GET
 
-schema-004 PostgreSQL conflict regression passes
+ambiguous failures never auto-replay destructive commands
 
-schema-004 recurring regression passes
+transactions are atomic
 
-no active application writer still depends on schema 003
+schema-004/005 PostgreSQL integration passes
+
+05.7.5.11 conflict UX/chronology remains green
+
+Apply Week/Future do not silently resurrect stopped schedules
+
+no active writer requires schema 003
 
 vcs_dev remains untouched
 ```
@@ -3032,50 +2898,62 @@ vcs_dev remains untouched
 
 # Final principle
 
-The backend already knows:
+These four actions are not interchangeable.
+
+They represent four different identities:
 
 ```text
-WHAT conflicts
-
-WHAT resolution is allowed
-
-WHAT target state results
-
-WHICH authorization is required
+Occurrence
+→ this concrete appearance
 ```
-
-The frontend must now provide only:
 
 ```text
-UNDERSTANDING
-
-EXPLICIT HUMAN CONFIRMATION
-
-SAFE COMMAND RETRY
-
-AUTHORITATIVE REFRESH
+GenerationSlot
+→ this recurring time/source
 ```
-
-It must never become a second conflict engine.
-
-And the planner must visually represent the same truth stored in the domain:
 
 ```text
-an occurrence may have multiple occupied temporal pieces
+Recurring schedule
+→ all automatic planning for the PlanItem
 ```
-
-Therefore a gap inside one occurrence is genuinely available for another
-activity, both in:
 
 ```text
-conflict logic
+PlanItem
+→ every future appearance regardless of origin
 ```
 
-and in:
+Therefore:
 
 ```text
-what the user sees on the timeline
+DELETE THIS OCCURRENCE
+≠
+STOP THIS SLOT
+≠
+STOP RECURRENCE
+≠
+DELETE ALL FUTURE APPEARANCES
 ```
 
-After this phase there should be no remaining active schema-003-only writer
-between VCS and the schema-004 rollout.
+And for every future-cutoff command:
+
+```text
+D remains.
+
+History remains.
+
+Only dates > D are affected.
+```
+
+Runtime customization does not erase provenance.
+
+If an occurrence was born from Slot B:
+
+```text
+source_generation_slot_id = B
+```
+
+then it remains part of Slot B's recurring lineage even if its runtime time was
+later changed.
+
+That provenance, not its current clock time, determines the scope of
+"Detener este horario".

@@ -18,9 +18,14 @@ db/migrations/
 ├── 001_initial_schema.sql
 ├── 002_fix_occurrence_status_context.sql
 ├── 003_multi_slot_scheduling.sql
-└── 004_occurrence_segments.sql
+├── 004_occurrence_segments.sql
+└── 005_generation_slot_cutoff.sql
 ```
 
-La migración 004 requiere un despliegue coordinado con un backend compatible con
-`conflict_reason` y `occurrence_segments`. No debe aplicarse a `vcs_dev` antes de
-esa fase de compatibilidad.
+La migración 005 agrega `generation_slots.last_generation_date DATE NULL`.
+`NULL` conserva horarios sin límite; una fecha `D` permite generar hasta `D`
+inclusive y nunca después. No elimina slots ni altera su procedencia histórica.
+El corte global continúa en `generation_configs.stopped_from_date` (exclusivo).
+
+Las migraciones 004 y 005 requieren despliegue coordinado con un backend
+compatible. No deben aplicarse a `vcs_dev` antes de la fase de rollout real.

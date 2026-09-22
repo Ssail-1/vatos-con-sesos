@@ -37,6 +37,7 @@ class RecurringSchema004IntegrationTests(unittest.TestCase):
                 "002_fix_occurrence_status_context.sql",
                 "003_multi_slot_scheduling.sql",
                 "004_occurrence_segments.sql",
+                "005_generation_slot_cutoff.sql",
             ):
                 connection.execute((MIGRATIONS / filename).read_text(encoding="utf-8"))
 

@@ -282,6 +282,58 @@ export function deleteOccurrence(occurrenceId, options = {}) {
     return mutateOccurrence("DELETE", occurrenceId, undefined, options);
 }
 
+const TERMINATION_PATHS = Object.freeze({
+    slot: "stop-slot-after",
+    recurring: "stop-recurring-after",
+    future: "delete-future-after",
+});
+
+export async function terminatePlanningAfter(occurrenceId, scope, {
+    fetchImpl = globalThis.fetch,
+    baseUrl = getApiBaseUrl(),
+} = {}) {
+    if (!TERMINATION_PATHS[scope] || typeof occurrenceId !== "string" || !occurrenceId) {
+        throw new PlannerApiError("invalid_payload", "La acción de planificación no es válida.");
+    }
+    if (typeof fetchImpl !== "function") {
+        throw new PlannerApiError("network_error", "No existe un cliente HTTP disponible.");
+    }
+    let response;
+    try {
+        response = await fetchImpl(
+            buildApiUrl(`/api/occurrences/${encodeURIComponent(occurrenceId)}/${TERMINATION_PATHS[scope]}`, baseUrl),
+            { method: "POST", headers: { Accept: "application/json" } },
+        );
+    } catch {
+        throw new PlannerApiError("network_error", "No fue posible conectar con el backend.");
+    }
+    let payload;
+    try { payload = await readJson(response); }
+    catch (error) {
+        if (response?.ok) error.details.mutationConfirmed = true;
+        throw error;
+    }
+    if (!response.ok) {
+        throw new PlannerApiError(
+            typeof payload?.code === "string" ? payload.code : "http_error",
+            typeof payload?.message === "string" ? payload.message : "No se pudo completar la acción.",
+            { status: response.status },
+        );
+    }
+    if (
+        !isRecord(payload) || payload.status !== "ok" || payload.scope !== scope
+        || payload.selectedOccurrenceId !== occurrenceId
+        || !isValidDateKey(payload.cutoffDate)
+        || typeof payload.planItemId !== "string"
+        || !Array.isArray(payload.deletedOccurrenceIds)
+        || !payload.deletedOccurrenceIds.every((id) => typeof id === "string")
+    ) {
+        throw new PlannerApiError("invalid_response", "La acción se aceptó, pero la respuesta no es válida.",
+            { mutationConfirmed: true, status: response.status });
+    }
+    return payload;
+}
+
 export async function updateSegmentStatus(segmentId, status, {
     fetchImpl = globalThis.fetch,
     baseUrl = getApiBaseUrl(),

@@ -228,6 +228,8 @@ def _validate_slots(mode, slots, plan_item_id, expected_count):
         end_time = _db_time(slot["end_time"], "generation_slots.end_time")
         if start_time >= end_time:
             raise WeekConsistencyError("Un GenerationSlot tiene horario inválido.")
+        if slot.get("last_generation_date") is not None:
+            _db_date(slot["last_generation_date"], "last_generation_date")
     return slot_ids
 
 
@@ -280,7 +282,9 @@ def _candidate_state(
     reference_date,
     stopped_from_date,
     uuid_factory,
+    slot_cutoffs=None,
 ):
+    slot_cutoffs = slot_cutoffs or {}
     by_id = {row["id"]: dict(row) for row in rows}
     updates = []
     deletes = []
@@ -338,6 +342,13 @@ def _candidate_state(
 
         _require_in_week(operation["date"], week_start, week_end)
         _require_mutable(operation["date"], reference_date)
+        source_slot_id = occurrence["source_generation_slot_id"]
+        slot_cutoff = slot_cutoffs.get(source_slot_id)
+        if slot_cutoff is not None and operation["date"] > slot_cutoff:
+            raise WeekConflictError(
+                "planning_stopped",
+                "Un horario detenido no puede moverse después de su fecha final.",
+            )
         updated = {
             **occurrence,
             "occurrence_date": operation["date"],
@@ -566,6 +577,10 @@ def apply_week(plan_item_id, payload, reference_date=None, uuid_factory=uuid4):
                     current_date,
                     plan_item["stopped_from_date"],
                     uuid_factory,
+                    {
+                        slot["id"]: slot.get("last_generation_date")
+                        for slot in slots
+                    },
                 )
                 delete_ids = [row["id"] for row in deletes]
                 if occurrence_repository.lock_status_context_dependents_for_sources(

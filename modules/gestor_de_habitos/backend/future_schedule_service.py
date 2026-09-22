@@ -508,6 +508,17 @@ def apply_future(plan_item_id, payload, reference_date=None, uuid_factory=uuid4)
                         "unsupported_mode",
                         "Apply Future no está disponible para manual_dates.",
                     )
+                if any(
+                    slot.get("lastGenerationDate") is not None
+                    for slot in old_config["slots"]
+                ):
+                    # Apply Future may replace/delete slot identities. Until a
+                    # restart-planning contract exists, it cannot reopen a
+                    # stopped slot or erase its historical provenance.
+                    raise FutureConflictError(
+                        "planning_stopped",
+                        "Apply Future no puede reemplazar horarios detenidos.",
+                    )
                 _validate_snapshot_occurrences(snapshot["occurrences"], old_config)
                 persisted_graphs = segment_service.load_segment_graphs(
                     connection, snapshot["occurrences"], authoritative_now

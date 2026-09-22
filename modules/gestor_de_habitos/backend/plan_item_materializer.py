@@ -119,6 +119,10 @@ def materialize_occurrence_drafts(plan_item, range_start, range_end):
         slot["id"]: set(slot.get("excludedDates", []))
         for slot in config.get("slots", [])
     }
+    slot_cutoffs = {
+        slot["id"]: slot.get("lastGenerationDate")
+        for slot in config.get("slots", [])
+    }
     stopped_from_date = config.get("stoppedFromDate")
     return [
         draft
@@ -127,4 +131,8 @@ def materialize_occurrence_drafts(plan_item, range_start, range_end):
         and draft["date"]
         not in slot_excluded_dates.get(draft["sourceGenerationSlotId"], set())
         and (stopped_from_date is None or draft["date"] < stopped_from_date)
+        and (
+            slot_cutoffs.get(draft["sourceGenerationSlotId"]) is None
+            or draft["date"] <= slot_cutoffs[draft["sourceGenerationSlotId"]]
+        )
     ]

@@ -489,7 +489,7 @@ class MaterializationTests(unittest.TestCase):
                             endDate="2026-09-30",
                             indefinite=False,
                             slots=[
-                                {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00"},
+                                {"id": slot_id(1), "isoWeekday": 1, "startTime": "08:00", "endTime": "09:00", "lastGenerationDate": "2026-09-14"},
                                 {"id": slot_id(2), "isoWeekday": 1, "startTime": "09:00", "endTime": "10:00", "excludedDates": ["2026-09-21"]},
                                 {"id": slot_id(4), "isoWeekday": 1, "startTime": "10:00", "endTime": "11:00"},
                                 {"id": slot_id(3), "isoWeekday": 3, "startTime": "14:00", "endTime": "15:00"},

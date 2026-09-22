@@ -248,30 +248,47 @@
             <div class="override-dialog-content">
                 <div class="dialog-heading">
                     <p class="section-kicker">Gestión de planificación</p>
-                    <h2 id="deletionDialogTitle">Eliminar o detener</h2>
+                    <h2 id="deletionDialogTitle" tabindex="-1">Eliminar o detener</h2>
                     <p id="deletionSummary" class="insertion-reference"></p>
                 </div>
 
                 <div class="deletion-options">
                     <section class="deletion-option" aria-labelledby="deleteOccurrenceButton">
                         <button id="deleteOccurrenceButton" class="destructive-button" type="button">
-                            Eliminar solo este día
+                            Eliminar solo esta aparición
                         </button>
                         <p id="deleteOccurrenceDetails"></p>
                     </section>
 
+                    <section class="deletion-option" aria-labelledby="stopSlotButton">
+                        <button id="stopSlotButton" class="destructive-button" type="button">
+                            Detener este horario después de este día
+                        </button>
+                        <p id="stopSlotDetails"></p>
+                    </section>
+
                     <section class="deletion-option" aria-labelledby="stopPlanningButton">
                         <button id="stopPlanningButton" class="destructive-button" type="button">
-                            Detener de aquí en adelante
+                            Detener toda la planificación recurrente después de este día
                         </button>
                         <p id="stopPlanningDetails"></p>
+                    </section>
+
+                    <section class="deletion-option" aria-labelledby="deleteFutureButton">
+                        <button id="deleteFutureButton" class="destructive-button" type="button">
+                            Eliminar todas las apariciones después de este día
+                        </button>
+                        <p id="deleteFutureDetails"></p>
                     </section>
                 </div>
 
                 <p id="deletionError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+                <p id="deletionConfirmation" role="status" aria-live="polite" hidden></p>
 
                 <div class="dialog-actions">
                     <button id="deletionBackButton" class="secondary-button" type="button">Volver</button>
+                    <button id="deletionRetryButton" class="secondary-button" type="button" hidden>Reintentar solo lectura</button>
+                    <button id="deletionConfirmButton" class="destructive-button" type="button" hidden>Confirmar acción</button>
                 </div>
             </div>
         </dialog>

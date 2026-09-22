@@ -37,7 +37,7 @@ _QUERIES = (
     (
         "generation_slots",
         """
-        SELECT id, plan_item_id, start_time, end_time
+        SELECT id, plan_item_id, start_time, end_time, last_generation_date
         FROM public.generation_slots
         ORDER BY plan_item_id, start_time, end_time, id
         """,

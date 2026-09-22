@@ -7,6 +7,7 @@ import {
     reconcilePlanner,
     replaceOccurrenceStructure,
     resetOccurrenceSegmentation,
+    terminatePlanningAfter,
     translateOccurrence,
     updateSegmentStatus,
 } from "./api/planner-api.js";
@@ -24,6 +25,8 @@ import {
     getRecurringScheduleMutationErrorMessage,
 } from "./mutations/recurring-schedule-mutation.js";
 import { createPlannerStore } from "./state/planner-store.js";
+import { getPersistentPlanningActions } from "./domain/deletion-policy.js";
+import { createPlanningTerminationMutationCoordinator } from "./mutations/planning-termination-mutation.js";
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./domain/temporal-integrity.js";
 import { dateKeyToLocalDate, formatDateKey, formatMonth, formatSelectedDate, getMonthDates } from "./utils/date-time.js";
 import { createSegmentConflictDialogView } from "./views/segment-conflict-dialog.js";
@@ -50,7 +53,9 @@ const elements = Object.fromEntries([
     "segmentConflictDialog", "segmentConflictTitle", "segmentConflictSummary", "segmentConflictList",
     "segmentConflictError", "segmentConflictBackButton", "segmentConflictConfirmButton",
     "deletionDialog", "deletionSummary", "deleteOccurrenceButton", "deleteOccurrenceDetails",
-    "stopPlanningButton", "stopPlanningDetails", "deletionError", "deletionBackButton",
+    "stopSlotButton", "stopSlotDetails", "stopPlanningButton", "stopPlanningDetails",
+    "deleteFutureButton", "deleteFutureDetails", "deletionConfirmation", "deletionConfirmButton",
+    "deletionRetryButton", "deletionError", "deletionBackButton",
     "structureDialog", "structureForm", "structureDialogTitle", "structureReference",
     "structureStartTime", "structureEndTime", "structureSegments", "structureDuration",
     "structureError", "structureSaving", "structureAddSegmentButton",
@@ -220,6 +225,15 @@ const matrixView = createPlannerMatrixView({
             selectedDateKey,
             occurrence?.id ?? null,
         );
+        options.selectedOccurrence = occurrence
+            ? plannerStore.getOccurrenceById(occurrence.id)
+            : options.individual.occurrence;
+        options.selectedSegmentId = selectedOccurrenceId === occurrence?.id ? selectedSegmentId : null;
+        options.actions = getPersistentPlanningActions({
+            occurrence: options.selectedOccurrence,
+            generationConfig: options.planItem.generationConfig,
+            referenceDate: formatDateKey(getCurrentLocalDate()),
+        });
         deletionDialogView.open(options, {
             onDeleteOccurrence: async (occurrenceId) => {
                 const outcome = await occurrenceDeleteMutation.submit(occurrenceId);
@@ -228,14 +242,25 @@ const matrixView = createPlannerMatrixView({
                     planItemId: item.id,
                 });
             },
-            onStopPlanning: (planItemId, date) => plannerStore.stopPlanItemFromDate(planItemId, date),
+            onTerminate: async (occurrenceId, scope) => settlePersistentTermination(
+                await planningTerminationMutation.submit(occurrenceId, scope), scope,
+            ),
+            onRetryRefresh: async () => occurrenceDeleteMutation.hasPendingRefresh()
+                ? settlePersistentOccurrenceMutation(
+                    await occurrenceDeleteMutation.retryRefresh(),
+                    { operation: "delete", planItemId: item.id },
+                )
+                : settlePersistentTermination(
+                    await planningTerminationMutation.retryRefresh(), "recovered",
+                ),
             onComplete: (result, operation) => {
-                selectPlanItemSummary(result?.planItem?.id ?? item.id);
-                if (operation !== "deleted_occurrence") render();
+                render();
                 showFeedback(
-                    operation === "deleted_occurrence"
-                        ? "La aparición fue eliminada únicamente para esta fecha."
-                        : "La planificación futura fue detenida; el historial se conservó.",
+                    result?.status === "review_required"
+                        ? "Se actualizó el planner tras un resultado de red incierto. Revisa si el cambio se aplicó antes de repetirlo."
+                        : operation === "individual"
+                            ? "La aparición se eliminó solo para esta fecha."
+                            : "La planificación se actualizó y sincronizó desde PostgreSQL.",
                     "notice",
                 );
             },
@@ -262,6 +287,13 @@ const deletionDialogView = createDeletionDialogView({
     deleteOccurrenceDetails: elements.deleteOccurrenceDetails,
     stopPlanningButton: elements.stopPlanningButton,
     stopPlanningDetails: elements.stopPlanningDetails,
+    stopSlotButton: elements.stopSlotButton,
+    stopSlotDetails: elements.stopSlotDetails,
+    deleteFutureButton: elements.deleteFutureButton,
+    deleteFutureDetails: elements.deleteFutureDetails,
+    confirmationRegion: elements.deletionConfirmation,
+    confirmButton: elements.deletionConfirmButton,
+    retryButton: elements.deletionRetryButton,
     errorRegion: elements.deletionError,
     backButton: elements.deletionBackButton,
     fallbackFocusElement: elements.addActivityButton,
@@ -286,8 +318,14 @@ const segmentConflictMutation = createSegmentConflictMutationCoordinator({
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
 
-const occurrenceDeleteMutation = createOccurrenceMutationCoordinator({
-    mutateOccurrence: deleteOccurrence,
+const occurrenceDeleteMutation = createPlanningTerminationMutationCoordinator({
+    terminatePlanning: (occurrenceId) => deleteOccurrence(occurrenceId),
+    loadPlannerState: fetchPlannerState,
+    hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+});
+
+const planningTerminationMutation = createPlanningTerminationMutationCoordinator({
+    terminatePlanning: terminatePlanningAfter,
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
 });
@@ -436,11 +474,49 @@ function settlePersistentOccurrenceMutation(outcome, { operation, planItemId }) 
                 : "La aparición se guardó, pero no se pudo actualizar la vista. Reintenta la actualización; no se volverá a modificar.",
         };
     }
+    if (outcome.status === "unknown_result") {
+        return {
+            status: "unknown_result",
+            keepOpen: true,
+            retryRefresh: true,
+            message: "No se conoce el resultado de la eliminación y falló la actualización. Reintenta solo la lectura; no se repetirá el DELETE.",
+        };
+    }
+    if (outcome.status === "review_required") {
+        render();
+        return { status: "review_required" };
+    }
     if (outcome.status === "mutation_error") {
         outcome.error.message = getOccurrenceMutationErrorMessage(outcome.error, operation);
         throw outcome.error;
     }
     throw new Error("No se pudo completar la mutación persistente.");
+}
+
+function settlePersistentTermination(outcome, scope) {
+    if (outcome.status === "synced") {
+        // render() drops only IDs that no longer exist. A surviving cutoff-day
+        // occurrence and its selected segment/expansion remain selected.
+        render();
+        return { status: "synced" };
+    }
+    if (outcome.status === "saved_refresh_error" || outcome.status === "unknown_result") {
+        return {
+            keepOpen: true,
+            retryRefresh: true,
+            message: outcome.status === "unknown_result"
+                ? "No se conoce el resultado de la red y falló la actualización. Reintenta solo la lectura; no se repetirá la acción."
+                : "La acción se guardó, pero falló la actualización. Reintenta solo la lectura; no se repetirá la acción.",
+        };
+    }
+    if (outcome.status === "review_required") {
+        render();
+        return { status: "review_required" };
+    }
+    if (outcome.status === "mutation_error") {
+        throw new Error(outcome.error?.message || `No se pudo completar la acción ${scope}.`);
+    }
+    throw new Error("No se pudo completar la acción de planificación.");
 }
 
 function settlePersistentRecurringMutation(outcome, { scope, planItemId }) {
