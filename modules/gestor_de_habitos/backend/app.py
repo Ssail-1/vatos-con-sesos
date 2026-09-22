@@ -297,6 +297,8 @@ def _occurrence_structure_error_response(error):
         body = {"status": "error", "code": error.code, "message": str(error)}
         if error.blockers is not None:
             body["blockers"] = error.blockers
+        if error.conflicts is not None:
+            body["conflicts"] = error.conflicts
         return jsonify(body), 409
     if isinstance(error, occurrence_structure_service.OccurrenceStructureConsistencyError):
         return jsonify(

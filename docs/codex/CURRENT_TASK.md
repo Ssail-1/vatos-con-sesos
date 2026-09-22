@@ -1,75 +1,54 @@
 # CURRENT TASK
 
-## OccurrenceSegment v1 — Segment-Aware Apply Week / Apply Future
+## OccurrenceSegment v1 — Segment-Aware Conflict Engine
 
 ### Objective
 
-Make the existing recurring schedule mutation flows:
+Replace the remaining legacy parent-level conflict-resolution model with an
+authoritative backend engine based on:
 
 ```text
-Apply Week
-
-Apply Future
+OccurrenceSegment vs OccurrenceSegment
 ```
 
-fully compatible with the persisted OccurrenceSegment model.
-
-The goal is NOT to make runtime segmentation recurring.
-
-The goal is to preserve the structural meaning of each already-persisted
-Occurrence while the recurring schedule itself changes.
-
-The core rules are:
+The engine must:
 
 ```text
-SIMPLE OCCURRENCE
-one segment == complete parent envelope
-        ↓
-may follow the recurring envelope change
-        ↓
-same segment identity/status
-        ↓
-segment becomes equal to new envelope
+detect
+→ explain
+→ require explicit confirmation
+→ revalidate
+→ resolve
+→ persist atomically
 ```
+
+It must never silently rewrite another occurrence because of priority.
+
+The primary flow is:
 
 ```text
-CUSTOM SEGMENTED OCCURRENCE
-same-duration pure move
+SOURCE mutation
         ↓
-translate every segment by one delta
+candidate source segments
         ↓
-preserve IDs / statuses / gaps / durations
+segment conflict detection
+        ↓
+409 resolution required
+        ↓
+user explicitly confirms exact blocker snapshot
+        ↓
+same mutation retried with confirmation
+        ↓
+backend locks + revalidates blocker
+        ↓
+build target resolution
+        ↓
+source + affected targets committed atomically
 ```
 
-```text
-CUSTOM SEGMENTED OCCURRENCE
-duration-changing recurring resize
-        ↓
-DO NOT scale
-DO NOT trim
-DO NOT reset
-DO NOT guess
-        ↓
-reject and require explicit structural resolution
-```
+This phase is BACKEND-FIRST.
 
-And critically:
-
-```text
-runtime OccurrenceSegments
-ARE NOT recurring templates
-```
-
-A GenerationSlot continues to describe only the general recurring schedule.
-
-This phase may update existing persisted occurrences and create new generated
-occurrences, but newly generated occurrences still begin with:
-
-```text
-one default segment == occurrence envelope
-```
-
-unless a future explicit segment-template feature is approved.
+Do NOT implement the final conflict UX yet.
 
 ---
 
@@ -86,66 +65,60 @@ docs/architecture/STATUS_CONFLICT_RULES.md
 
 docs/architecture/OCCURRENCE_SEGMENT_V1.md
 
-docs/architecture/OCCURRENCE_SEGMENT_TECHNICAL_AUDIT.md
-
 docs/architecture/OCCURRENCE_SEGMENT_DECISIONS.md
+
+docs/architecture/OCCURRENCE_SEGMENT_TECHNICAL_AUDIT.md
 
 modules/gestor_de_habitos/docs/valores.md
 ```
 
-Also inspect all existing implementation and tests for:
+Also inspect all completed OccurrenceSegment implementation, especially:
 
 ```text
-Apply Week
+occurrence_segment_domain.py
 
-Apply Future
+occurrence_segment_service.py
 
-generation configs
-
-generation slots
-
-generation slot weekdays/dates/exclusions
-
-source_generation_slot_id
-
-recurring schedule mutations
-
-occurrence structural mutation
-
-occurrence segment status
-
-PlanItem creation
-
-planner-state hydration
-
-frontend mutation coordinators
-
-legacy conflict preparation
-```
-
-Particularly inspect:
-
-```text
 occurrence_structure_domain.py
 
 occurrence_structure_service.py
 
-occurrence_segment_service.py
+recurring_segment_policy.py
 
-occurrence_segment_repository.py
+recurring_segment_service.py
+
+scheduling_policy.py
 
 plan_item_creation_service.py
 
-planner-api.js
+week_mutation_service.py
 
-occurrence-mutation.js
+future_schedule_service.py
 
-occurrence-structure-mutation.js
+repositories/
 
-app.js
+app.py
 ```
 
-Do not edit until the current recurring flows and their tests are understood.
+Audit the remaining legacy conflict code:
+
+```text
+edit_without_occurrence
+
+prepareOccurrenceAddition
+
+commitPreparedScheduleChange
+
+commitPreparedChange
+
+apply_priority_overrides
+
+status_context / status_reason legacy code
+
+legacy priority confirmation
+```
+
+Read relevant tests before implementation.
 
 ---
 
@@ -157,99 +130,129 @@ Interpret requirements in this order:
 CURRENT_TASK.md
 → current implementation scope
 
+STATUS_CONFLICT_RULES.md
+→ product conflict behavior
+
 OCCURRENCE_SEGMENT_DECISIONS.md
-→ approved technical architecture
+→ approved technical decisions
 
 OCCURRENCE_SEGMENT_V1.md
-→ approved segment model
-
-STATUS_CONFLICT_RULES.md
-→ approved product/domain behavior
+→ segment model
 
 TECHNICAL_AUDIT
 → evidence/history
 ```
 
-Do not silently reinterpret approved behavior.
+If the exact outcome for a blocker status is already defined in the normative
+documents:
+
+```text
+follow it exactly
+```
+
+Do NOT invent an alternative.
+
+If a blocker-status case required for this phase is genuinely not defined:
+
+```text
+STOP that branch
+report the ambiguity
+do not guess
+```
 
 ---
 
 # Scope
 
-This phase is limited to:
+This task is limited to:
 
 ```text
-audit existing Apply Week behavior
+segment conflict domain
 
-audit existing Apply Future behavior
+single-source conflict planning
 
-make their backend writes segment-aware
+blocker snapshot confirmation protocol
 
-make their active frontend flows consume authoritative backend behavior
+priority/user-forced authorization classification
 
-preserve existing recurring semantics where compatible
+segment subtraction
 
-transform simple occurrences safely
+trim
 
-translate custom segmentation on pure same-duration moves
+split
 
-reject custom segmented recurring resize
+full-overlap status outcome
 
-create default segments for newly generated occurrences
+aggregate recalculation
 
-segment-aware batch conflict detection for rejection only
+conflict provenance metadata
 
-atomic recurring schedule + occurrence + segment persistence
+atomic source + target persistence
 
-authoritative GET-after-success
+PlanItem creation conflict integration
 
-tests
+single-occurrence structural conflict integration
 
-safe browser verification
+legacy backend override retirement/guarding
+
+PostgreSQL 16 tests
 ```
 
-Do NOT implement:
+This task does NOT implement:
 
 ```text
-runtime segment templates in GenerationSlot
+final frontend conflict UX
 
-segment inheritance across recurrence
+recurring conflict resolution
 
-priority conflict resolution
+Apply Week/Future blocker modification
 
-user-forced conflict resolution
+segment-status conflict resolution
 
-automatic split/trim because of conflicts
-
-conflict confirmation handshake
+global schedule shifting
 
 planner chronology redesign
+
+production rollout
 
 pause/resume
 
 live tracking
 
-production timezone/jobs
-
-new recurrence semantics unrelated to segments
+event log
 ```
+
+Apply Week/Future remain:
+
+```text
+segment-aware detection + rejection
+```
+
+for this phase.
+
+Segment status activation remains:
+
+```text
+segment-aware detection + rejection
+```
+
+for this phase.
 
 ---
 
-# 1. Inspect working tree first
+# 1. Inspect working tree
 
 Before editing:
 
 ```text
 git status --short --untracked-files=all
 git diff --stat
+git diff --check
 ```
 
 The previous phase should already be committed.
 
-Preserve all user work.
-
-Do not revert completed OccurrenceSegment phases.
+Preserve user work.
 
 ---
 
@@ -261,19 +264,11 @@ Do NOT apply migration 004 to:
 vcs_dev
 ```
 
-Do NOT query, clean or modify real development data.
+Do NOT query, clean or modify `vcs_dev`.
 
 Do NOT delete legacy PlanItems.
 
-Use:
-
-```text
-isolated PostgreSQL 16
-```
-
-for actual schema-004 recurring-write verification.
-
-Frontend/browser verification must use mocks or isolated data.
+Use isolated PostgreSQL 16 for real schema-004 verification.
 
 ---
 
@@ -288,657 +283,733 @@ Do NOT modify:
 004_occurrence_segments.sql
 ```
 
-If a genuine migration defect is discovered:
+If a real migration defect is found:
 
 ```text
 STOP before changing it
 ```
 
-and report the finding.
+and report it.
 
 ---
 
-# 4. First audit the existing recurring semantics
+# 4. Core conflict model
 
-Before implementation, determine exactly what the current code means by:
-
-```text
-Apply Week
-
-Apply Future
-```
-
-Document internally:
+The current blocking statuses are:
 
 ```text
-which occurrences each command targets
-
-which generation config/slot rows change
-
-whether missing occurrences are created
-
-whether occurrences are removed/excluded
-
-whether dates change
-
-how source_generation_slot_id is preserved
-
-which endpoint/service currently owns each operation
-
-what conflict logic currently runs
-
-what frontend coordinator invokes it
+pending
+in_progress
+completed
+not_finished
 ```
 
-Do NOT redesign those semantics merely because this phase touches them.
-
-The purpose is:
+Non-blocking:
 
 ```text
-make approved existing recurring behavior segment-aware
+not_completed
+cancelled
 ```
 
-not:
+Reuse the existing shared backend authority.
 
-```text
-invent a new recurrence system
-```
+Do NOT create another status list.
 
 ---
 
-# 5. Existing target selection semantics remain authoritative
+# 5. Conflicts are segment-vs-segment
 
-Preserve the already-approved meaning of:
-
-```text
-this week
-
-future
-```
-
-including:
+Conflict detection must use:
 
 ```text
-date boundaries
-
-GenerationSlot targeting
-
-specific-date behavior
-
-existing exclusions
-
-sourceGenerationSlot relationships
+source candidate OccurrenceSegments
+vs
+persisted target OccurrenceSegments
 ```
 
-Only change what is necessary for OccurrenceSegment compatibility.
-
-If current implementation contains a genuine ambiguity or contradiction with
-normative docs:
-
-```text
-stop in that area
-report it
-do not guess
-```
+Do NOT use parent envelopes as occupation.
 
 ---
 
-# 6. No runtime segment templates
+# 6. Half-open intervals
 
-Do NOT add fields such as:
-
-```text
-generation_slot_segments
-
-segment_template
-
-segment_pattern
-
-recurring_segments
-```
-
-GenerationSlot continues to store the recurring schedule envelope.
-
-Runtime segmentation belongs to:
+Use:
 
 ```text
-Occurrence
+[start, end)
 ```
 
-only.
+Therefore:
+
+```text
+08:00–09:00
+09:00–10:00
+```
+
+is adjacency, not conflict.
 
 ---
 
-# 7. New generated occurrences remain simple
-
-Any new occurrence created by Apply Week / Apply Future must start as:
-
-```text
-Occurrence envelope
-
-└── exactly one OccurrenceSegment
-    start = occurrence.start
-    end   = occurrence.end
-    status = valid initial status
-```
-
-Use the existing creation/domain behavior.
-
-Do NOT copy the segment structure of another occurrence.
-
----
-
-# 8. No segmentation inheritance
+# 7. Parent gaps remain free
 
 Example:
 
 ```text
-Monday occurrence
-
-Occurrence 13:00–17:00
-
-Seg 1 13:00–14:00
-Seg 2 16:00–17:00
-```
-
-Changing the recurring schedule must NOT cause future generated Mondays to
-inherit:
-
-```text
-13:00–14:00
-16:00–17:00
-```
-
-unless a future explicit recurring-segment-template feature is implemented.
-
-This phase explicitly forbids that behavior.
-
----
-
-# 9. Classify every targeted persisted occurrence
-
-Before transforming an occurrence, classify its current structure as:
-
-```text
-SIMPLE
-
-or
-
-CUSTOM
-```
-
----
-
-# 10. Definition of SIMPLE
-
-An occurrence is structurally simple only when:
-
-```text
-exactly one persisted segment exists
-```
-
-AND:
-
-```text
-segment.start_time == occurrence.start_time
-```
-
-AND:
-
-```text
-segment.end_time == occurrence.end_time
-```
-
-A one-segment occurrence whose child is trimmed inside the parent envelope is:
-
-```text
-CUSTOM
-```
-
-not simple.
-
----
-
-# 11. Definition of CUSTOM
-
-An occurrence is custom when ANY of these apply:
-
-```text
-more than one segment
-
-one segment does not equal full parent envelope
-
-runtime gaps exist
-
-runtime trim exists
-
-manual custom structure exists
-```
-
-Do not infer customness from number of segments alone.
-
----
-
-# 12. Recurring candidate envelope
-
-For every targeted occurrence, determine the envelope the existing recurring
-operation wants to produce:
-
-```text
-old parent start/end
-
-→
-
-candidate parent start/end
-```
-
-Then transform segments according to the rules below.
-
----
-
-# 13. SIMPLE occurrence transformation
-
-For a SIMPLE target occurrence:
-
-```text
-old parent
-08:00–09:00
-
-S1
-08:00–09:00
-```
-
-Recurring change to:
-
-```text
-10:00–11:30
-```
-
-may produce:
-
-```text
-parent
-10:00–11:30
-
-S1
-10:00–11:30
-```
-
-Preserve:
-
-```text
-S1.id
-
-S1.status
-
-source_generation_slot_id
-
-conflict metadata
-```
-
-The simple segment follows the new envelope.
-
----
-
-# 14. SIMPLE resize is allowed
-
-Because the simple child represents the entire parent envelope:
-
-```text
-08:00–09:00
-→
-10:00–11:30
-```
-
-may resize that one segment to the new envelope.
-
-This is NOT considered scaling custom segmentation.
-
----
-
-# 15. SIMPLE status remains preserved
-
-Do NOT silently reset an existing simple occurrence status merely because its
-schedule changes.
-
-Preserve its current segment status and revalidate it against:
-
-```text
-temporal phase
-
-completed-time integrity
-
-other approved status rules
-```
-
-If the preserved status becomes invalid:
-
-```text
-reject the batch safely
-```
-
-Do not silently rewrite status.
-
----
-
-# 16. CUSTOM same-duration move
-
-For a CUSTOM occurrence, compare:
-
-```text
-old parent duration
-
-candidate parent duration
-```
-
-If duration is unchanged and the requested modification is a pure envelope
-translation:
-
-```text
-delta = newStart - oldStart
-```
-
-translate every child by the same delta.
-
----
-
-# 17. CUSTOM move example
-
-Before:
-
-```text
-parent
+Target parent
 08:00–12:00
 
-S1 08:00–09:00
-S2 10:30–12:00
+Target segments:
+08:00–09:00
+11:00–12:00
 ```
 
-Recurring schedule moves to:
+Source:
 
 ```text
-13:00–17:00
+09:30–10:30
 ```
 
-Result:
+Expected:
 
 ```text
-parent
-13:00–17:00
-
-S1 13:00–14:00
-S2 15:30–17:00
+NO conflict
 ```
 
-Preserve:
-
-```text
-segment IDs
-
-segment statuses
-
-individual durations
-
-gaps
-
-relative positions
-```
+The parent envelope is not continuous occupation.
 
 ---
 
-# 18. CUSTOM no-op
+# 8. Single-source engine
 
-If the candidate envelope equals the old envelope:
+The resolution engine in this phase resolves conflicts produced by:
 
 ```text
-do not rewrite segment identities or structure unnecessarily
+one logical source occurrence
 ```
 
-Preserve the graph.
+against one or more target occurrences.
+
+This includes:
+
+```text
+new occurrence insertion
+
+existing occurrence structural move/change
+```
+
+Do NOT generalize this phase into a multi-source recurring-resolution engine.
+
+Apply Week/Future continue to reject conflicts.
 
 ---
 
-# 19. CUSTOM duration-changing recurring resize
+# 9. Source action type
 
-If:
-
-```text
-CUSTOM occurrence
-```
-
-and:
+Every resolvable operation must explicitly identify the source action as:
 
 ```text
-candidate duration != old parent duration
+conflict_insertion
 ```
 
-the recurring mutation must NOT automatically modify its children.
-
-Forbidden:
+or:
 
 ```text
-scale
-
-compress
-
-stretch
-
-trim
-
-merge
-
-reset segmentation
-
-replace with one segment
-
-delete children
-
-invent new gaps
+conflict_move
 ```
+
+Use:
+
+```text
+conflict_insertion
+```
+
+for a newly created source occurrence.
+
+Use:
+
+```text
+conflict_move
+```
+
+for an already-persisted occurrence whose structural position/change causes
+the conflict.
+
+Do not infer an event log.
 
 ---
 
-# 20. Custom resize requires explicit resolution
+# 10. First request never modifies blockers
 
-Reject the recurring operation with a controlled error.
-
-Preferred code:
+When an unconfirmed source mutation encounters blockers:
 
 ```text
-segmented_recurring_resize_requires_resolution
+return controlled 409
 ```
 
-The response should identify every affected occurrence that requires manual
-structural resolution.
+and perform:
+
+```text
+ZERO blocker modifications
+```
+
+No implicit priority behavior.
+
+---
+
+# 11. Preferred first-response code
+
+Use a canonical code such as:
+
+```text
+segment_conflict_resolution_required
+```
+
+unless an already-approved API convention requires a closely equivalent name.
+
+Use the same conflict contract across integrated single-source mutation paths.
+
+---
+
+# 12. Conflict response
+
+Each conflict response must expose the concrete blocker segment.
 
 Conceptually:
 
 ```json
 {
   "status": "error",
-  "code": "segmented_recurring_resize_requires_resolution",
-  "occurrences": [
+  "code": "segment_conflict_resolution_required",
+  "message": "La operación requiere resolver conflictos de horario.",
+  "conflicts": [
     {
-      "occurrenceId": "...",
-      "planItemId": "...",
-      "date": "2026-09-21",
-      "startTime": "08:00",
-      "endTime": "12:00",
-      "requestedStartTime": "08:00",
-      "requestedEndTime": "11:00"
+      "blocker": {
+        "occurrenceId": "<uuid>",
+        "segmentId": "<uuid>",
+        "planItemId": "<uuid>",
+        "date": "2026-09-21",
+        "startTime": "13:00",
+        "endTime": "15:00",
+        "status": "pending"
+      },
+      "requiredAuthorization": "priority_override",
+      "resolutionKind": "<normative-resolution-kind>",
+      "requiresRealizedTimeConfirmation": false
     }
   ]
 }
 ```
 
-Exact naming may follow existing API conventions.
+Exact envelope may follow current API conventions.
 
 ---
 
-# 21. Return all incompatible custom occurrences
+# 13. Blocker snapshot contract
 
-Do not stop after finding the first custom resize incompatibility.
+The approved confirmation granularity is the concrete blocker segment:
 
-Return all relevant targeted occurrences requiring explicit structural
-resolution in deterministic order.
+```text
+occurrenceId
 
-This allows future UX to explain the complete problem.
+segmentId
+
+startTime
+
+endTime
+
+status
+```
+
+Date and PlanItem ID may also be returned for UX, but confirmation validity
+must bind at least to the approved concrete segment snapshot.
+
+Do NOT confirm merely:
+
+```text
+occurrenceId
+```
+
+because one occurrence may contain multiple segments.
 
 ---
 
-# 22. Reject the whole recurring command atomically
+# 14. Confirmation is stateless
 
-If even one targeted occurrence requires explicit resolution:
-
-```text
-DO NOT partially apply the recurring mutation
-```
-
-No:
+Do NOT store pending conflict confirmations in:
 
 ```text
-GenerationSlot update
+memory
 
-occurrence update
+session
 
-segment update
+temporary DB tables
 
-creation
-
-deletion/exclusion side effect
+server cache
 ```
 
-from that command may commit.
+The client retries the original mutation with explicit confirmations.
 
-The user must resolve the incompatible structure first.
+Backend re-derives and revalidates everything.
 
 ---
 
-# 23. Why whole-command rejection
+# 15. Confirmation payload
 
-Do not leave a state where:
+Use one explicit optional object in the mutation request, conceptually:
 
-```text
-recurring config says one schedule
+```json
+{
+  "conflictResolution": {
+    "confirmations": [
+      {
+        "blocker": {
+          "occurrenceId": "<uuid>",
+          "segmentId": "<uuid>",
+          "startTime": "13:00",
+          "endTime": "15:00",
+          "status": "pending"
+        },
+        "confirmed": true
+      }
+    ]
+  }
+}
 ```
 
-but:
+For blockers requiring stronger realized-time confirmation, include the
+smallest explicit additional acknowledgement consistent with the normative
+rules.
+
+Do NOT reuse the old:
 
 ```text
-some targeted occurrences were updated
-and others were silently left behind
+confirmedOccurrenceIds
 ```
 
-unless that partial behavior is already an explicit approved semantic of the
-existing recurrence system.
+contract as the new source of authority.
 
-For segment incompatibility introduced by this phase:
+---
+
+# 16. Do not trust client authorization claims
+
+The backend computes:
 
 ```text
-default to atomic rejection
+priority_override
+```
+
+or:
+
+```text
+user_forced_override
+```
+
+from current persisted priorities.
+
+The client does NOT decide which conflict reason applies.
+
+If the payload contains an authorization label for display/echo purposes:
+
+```text
+recompute and verify it
+```
+
+Do not trust it.
+
+---
+
+# 17. Priority authorization
+
+Canonical rule:
+
+```text
+source.priority > target.priority
+→ priority_override
+```
+
+Otherwise:
+
+```text
+source.priority <= target.priority
+→ user_forced_override
+```
+
+Even when the source has higher priority:
+
+```text
+explicit user awareness/confirmation is still required
+```
+
+Priority does NOT silently modify another occurrence.
+
+---
+
+# 18. Realized-time protection
+
+Segments with:
+
+```text
+completed
+not_finished
+```
+
+represent realized/historical time.
+
+They must NEVER be silently rewritten merely because:
+
+```text
+source priority is higher
+```
+
+Use the stronger explicit confirmation required by the normative conflict
+rules.
+
+If the required target date is frozen:
+
+```text
+do not rewrite frozen history
+```
+
+Return a controlled resolution-unavailable/frozen error.
+
+Do not bypass history immutability.
+
+---
+
+# 19. `in_progress`
+
+`in_progress` conflict handling must follow the exact rule defined in:
+
+```text
+STATUS_CONFLICT_RULES.md
+```
+
+This phase is where that nuanced rule becomes executable.
+
+Do NOT treat:
+
+```text
+in_progress == pending
+```
+
+unless the normative rule explicitly says so.
+
+Do NOT silently convert it.
+
+---
+
+# 20. Non-blocking statuses
+
+Do not produce a conflict for:
+
+```text
+cancelled
+
+not_completed
+```
+
+No confirmation is required merely because time ranges overlap them.
+
+---
+
+# 21. Resolution planner
+
+Create a pure domain layer that transforms:
+
+```text
+target segment
+
+minus
+
+source occupied interval(s)
+```
+
+into the approved final result.
+
+It must not query:
+
+```text
+Flask
+
+PostgreSQL
+
+wall clock
+```
+
+except through explicit inputs.
+
+---
+
+# 22. Conflict subtraction
+
+Canonical structural rule:
+
+```text
+affected target segment
+-
+source occupied interval
+=
+surviving fragments
+```
+
+Possible structural outcomes:
+
+```text
+0 fragments
+
+1 fragment
+
+2 fragments
 ```
 
 ---
 
-# 24. No silent reset
+# 23. One surviving fragment
 
-Especially forbidden:
+For one surviving fragment:
 
 ```text
-custom occurrence
-→ recurring resize
-→ reset to one segment
+trim the existing target segment
 ```
 
-even if doing so would make persistence easier.
+Preserve:
 
-Reset is an explicit user action only.
+```text
+original segment ID
+```
+
+unless a normative status-specific rule explicitly requires a different
+outcome.
 
 ---
 
-# 25. No silent segment-template creation
+# 24. Two surviving fragments
 
-Likewise forbidden:
+For two surviving fragments:
 
 ```text
-custom occurrence
-→ extract runtime segments
-→ save them into GenerationSlot
+split within the SAME logical target occurrence
 ```
 
-No segment templates in this phase.
+Preferred identity rule:
+
+```text
+left/earlier fragment
+→ keeps original segment ID
+
+right/later fragment
+→ new backend UUID v4
+```
+
+Preserve appropriate status according to the normative conflict rules.
 
 ---
 
-# 26. Existing segment identity
+# 25. Zero surviving fragments
 
-When transforming an already-persisted occurrence:
-
-```text
-preserve every surviving segment ID
-```
-
-Simple resize:
+Never create:
 
 ```text
-same one segment ID
+zero-duration segment
 ```
 
-Custom pure move:
+For full coverage:
 
 ```text
-same N segment IDs
+apply the normative status outcome
 ```
 
-Do not replace children merely because times changed.
+defined by `STATUS_CONFLICT_RULES.md`.
+
+Do not invent an empty fragment.
+
+Do not leave an occurrence with an invalid zero-segment graph.
 
 ---
 
-# 27. Existing segment statuses
+# 26. At least one segment
 
-Recurring schedule changes are structural/scheduling operations.
-
-Do NOT reinterpret existing segment statuses.
-
-Preserve them and revalidate.
-
-Do not call:
+Every surviving occurrence must still have:
 
 ```text
-setOccurrenceStatus
-
-advanceOccurrenceStatus
+1..N OccurrenceSegments
 ```
 
-to compensate for schedule changes.
+If the full-overlap rule changes status rather than structure:
+
+```text
+preserve a valid segment according to the normative outcome
+```
+
+If normative documentation defines another exact strategy:
+
+```text
+follow it
+```
+
+Do not improvise.
 
 ---
 
-# 28. Aggregate recalculation
+# 27. Repeated segmentation
 
-After constructing each candidate occurrence segment graph:
+The engine must support already-segmented targets.
 
-```text
-derive_occurrence_status(final segment statuses, temporal phase)
-```
-
-Persist the resulting:
+Example:
 
 ```text
-Occurrence.status
+Target occurrence
+
+S1
+08:00–09:00
+
+S2
+10:00–12:00
 ```
 
-with the segment/envelope changes.
+A later confirmed conflict may further trim/split:
 
-Do not independently choose the parent aggregate.
+```text
+S2
+```
+
+Repeated conflict resolution is valid.
+
+Do not assume:
+
+```text
+target originally had one segment
+```
 
 ---
 
-# 29. Temporal validation
+# 28. Multiple source segments
 
-Reuse existing temporal-domain behavior.
+A custom source occurrence may itself contain:
 
-Do not duplicate another matrix for:
+```text
+multiple blocking segments
+```
+
+Resolution must consider every occupied source interval.
+
+Do not treat the source parent envelope as occupation.
+
+---
+
+# 29. Deterministic subtraction
+
+When multiple source intervals affect one target:
+
+```text
+sort/process deterministically
+```
+
+The final target graph must not depend on incidental query ordering.
+
+Existing original ID should remain attached to the earliest surviving fragment
+where the approved identity rule allows it.
+
+New fragments receive independent backend UUIDs.
+
+---
+
+# 30. Candidate target graph validation
+
+After resolution, every affected target occurrence must satisfy:
+
+```text
+at least one segment
+
+positive duration
+
+inside parent envelope or approved updated envelope
+
+sibling non-overlap
+
+canonical ordering
+
+valid statuses
+
+temporal integrity
+```
+
+Reuse the existing structural/domain validators.
+
+Do not create a parallel validator.
+
+---
+
+# 31. Target parent envelope
+
+Do NOT automatically shrink the target occurrence general envelope merely
+because its runtime segments were trimmed/split.
+
+Recall:
+
+```text
+Occurrence.start/end
+=
+general/planned envelope
+```
+
+Segments may leave gaps inside it.
+
+Unless normative documentation explicitly requires an envelope change for a
+specific resolution:
+
+```text
+preserve parent envelope
+```
+
+---
+
+# 32. Structural duration
+
+Conflict segmentation does not change the duration definition:
+
+```text
+sum of ALL final segment durations
+```
+
+regardless of status.
+
+No realized analytics in this phase.
+
+---
+
+# 33. Aggregate recalculation
+
+After target segment resolution:
+
+```text
+derive_occurrence_status(
+    all final target segments,
+    target temporal phase
+)
+```
+
+Persist the target parent aggregate in the same transaction.
+
+Never manually choose the target parent status.
+
+---
+
+# 34. Source aggregate
+
+The source occurrence also remains governed by:
+
+```text
+derive_occurrence_status(...)
+```
+
+Do not mutate its parent status independently.
+
+---
+
+# 35. Temporal phase
+
+Use explicit:
 
 ```text
 future
@@ -950,422 +1021,229 @@ previous_editable_day
 frozen_history
 ```
 
----
-
-# 30. Frozen history
-
-Apply Week / Apply Future must not structurally mutate:
-
-```text
-FROZEN_HISTORY
-```
-
-If the existing target-selection semantics already exclude frozen history,
-preserve that behavior.
-
-If a command unexpectedly includes frozen persisted occurrences:
-
-```text
-reject rather than modify them
-```
-
-Do not silently alter historical structure.
+Do not use ambiguous historical booleans.
 
 ---
 
-# 31. Yesterday transient state
+# 36. One authoritative `now`
 
-If a targeted editable historical occurrence contains:
+Capture one backend `now` for the operation.
 
-```text
-pending
-
-in_progress
-```
-
-when a structural recurring transformation requires stable history:
+Use it consistently for:
 
 ```text
-temporal_reconciliation_required
+source validation
+
+target temporal phase
+
+completed-time validation
+
+historical protection
 ```
 
-Do not reconcile statuses inside the recurring mutation.
+Do not accept clock values from public requests.
 
 ---
 
-# 32. Completed-time integrity
+# 37. Conflict metadata — target
 
-If an existing segment status is:
-
-```text
-completed
-```
-
-and a recurring move/resize would place:
+When a confirmed conflict modifies the TARGET occurrence's:
 
 ```text
-segment.endDateTime > now
+segment status
+
+or
+
+temporal structure
 ```
 
-reject the command.
-
-Do not silently change:
+persist:
 
 ```text
-completed → pending
+conflict_reason
+=
+priority_override
+or
+user_forced_override
 ```
+
+and:
+
+```text
+source_occurrence_id
+=
+current source occurrence ID
+```
+
+The latest confirmed modifying conflict wins.
 
 ---
 
-# 33. One authoritative now
+# 38. Historical conflict context does not auto-clear
 
-Capture one backend `now` per recurring operation.
-
-Reuse the existing injected clock/time architecture.
-
-Do not accept:
+Later source movement or cancellation does NOT automatically clear:
 
 ```text
-now
+target.conflict_reason
 
-today
-
-temporalPhase
+target.source_occurrence_id
 ```
 
-from public payloads.
+Those fields describe historical context.
+
+Current blockers are always derived from current segment graph/status.
 
 ---
 
-# 34. Occurrence date semantics
+# 39. Source creation metadata
 
-Do NOT invent new occurrence-date movement in this phase.
-
-Preserve whatever date-targeting behavior Apply Week / Apply Future already
-have.
-
-If the existing recurring mutation changes `occurrence_date` for persisted
-occurrences:
+If a newly created occurrence successfully causes confirmed modifications to
+another occurrence:
 
 ```text
-audit it explicitly
+source.origin_reason = conflict_insertion
 ```
 
-before adapting it.
+and use the approved insertion conflict-action metadata.
 
-For CUSTOM segmented occurrences, do NOT translate a runtime segmented graph
-across dates unless that behavior is already explicitly supported by the
-approved model.
-
-If a custom segmented occurrence would require date movement and the model is
-ambiguous:
+Normal creation with no blocker modification keeps:
 
 ```text
-reject/report instead of guessing
+origin_reason = NULL
 ```
+
+`origin_reason` never changes after birth.
 
 ---
 
-# 35. Single-date invariant
+# 40. Existing source move metadata
 
-No transformed segment may wrap across midnight.
-
-Continue respecting:
+If an already-existing source occurrence is structurally moved/changed and
+confirmed resolution modifies another occurrence:
 
 ```text
-OccurrenceSegment v1 = one local occurrence date
+preserve source.origin_reason
 ```
 
-Reject transformations that cannot fit that model.
+and record the approved:
+
+```text
+conflict_move
+```
+
+action metadata.
+
+Do not rewrite its origin.
 
 ---
 
-# 36. Candidate graph validation
+# 41. `last_conflict_action`
 
-For every transformed occurrence validate:
+Follow the exact placement/semantics already documented in
+`OCCURRENCE_SEGMENT_V1` / `DECISIONS`.
 
-```text
-at least one segment
-
-positive segment duration
-
-segment bounds inside parent
-
-sibling non-overlap
-
-canonical ordering
-
-status temporal validity
-
-completed-time rule
-```
-
-Reuse:
+At minimum preserve the approved values:
 
 ```text
-occurrence_structure_domain
+conflict_insertion
+
+conflict_move
 ```
 
-where appropriate.
+Do NOT invent:
 
-Do not create duplicate structural validation logic.
+```text
+conflict_status_activation
+
+conflict_week
+
+conflict_future
+```
+
+in this phase.
 
 ---
 
-# 37. Reuse structural transformation helpers
+# 42. Metadata is not an event log
 
-Prefer reusing existing tested behavior for:
+Do NOT add:
 
 ```text
-translate segment set
+conflict history table
 
-validate candidate segment set
+conflict count
 
-bounds
+conflictSources[]
 
-sibling overlap
-
-aggregate derivation
+event stream
 ```
 
-Do not implement one translation algorithm for structural editor and another
-unrelated translation algorithm for recurrence.
+The current model records latest relevant context only.
 
 ---
 
-# 38. Recurring batch candidate set
+# 43. Latest conflict wins
 
-Build the full batch candidate state before writes where practical.
-
-Conceptually:
+If a target was previously modified by another conflict and a new confirmed
+source modifies it again:
 
 ```text
-resolve targets
+conflict_reason
 
-lock relevant schedule rows
-
-lock target parents
-
-lock target segments
-
-classify simple/custom
-
-build all candidate structures
-
-validate temporal rules
-
-validate custom resize compatibility
-
-validate conflicts
-
-only then write
+source_occurrence_id
 ```
+
+must describe the NEW latest conflict.
+
+Do not preserve the first cause as if it were permanent genealogy.
 
 ---
 
-# 39. Conflict detection uses actual segments
+# 44. Source delete policy
 
-Recurring mutations must no longer detect occupancy solely from:
-
-```text
-Occurrence.start_time
-
-Occurrence.end_time
-```
-
-Use candidate:
+Preserve:
 
 ```text
-OccurrenceSegments
+source_occurrence_id
+ON DELETE NO ACTION
 ```
+
+A referenced source still cannot be deleted.
+
+Do not weaken provenance.
 
 ---
 
-# 40. Canonical blocking statuses
+# 45. Source movement
 
-Reuse the existing shared backend definition:
-
-```text
-pending
-
-in_progress
-
-completed
-
-not_finished
-```
-
-Non-blocking:
+Do NOT reintroduce:
 
 ```text
-not_completed
-
-cancelled
+referenced source cannot move
 ```
 
-Do not duplicate another list.
+A referenced source may move.
+
+Historical target metadata remains valid historical context.
 
 ---
 
-# 41. Gap-aware recurring conflicts
+# 46. Snapshot revalidation
 
-Example candidate target:
-
-```text
-parent
-08:00–12:00
-
-segments
-08:00–09:00 pending
-11:00–12:00 pending
-```
-
-External blocker:
+On confirmation retry:
 
 ```text
-09:30–10:30 pending
+lock blocker rows
 ```
 
-Result:
+and compare the current blocker to the submitted snapshot.
 
-```text
-NO conflict
-```
-
-The parent envelope gap is free.
-
----
-
-# 42. Exclude all batch targets from persisted blocker query
-
-When validating a recurring batch:
-
-```text
-old persisted segments of every occurrence being replaced
-```
-
-must not block their own candidate state.
-
-Do not exclude only one target at a time if that causes another old batch
-member to be seen incorrectly as an external blocker.
-
----
-
-# 43. Candidate-vs-candidate conflicts
-
-After excluding the old persisted target graphs, validate:
-
-```text
-candidate blocking segments
-against
-other candidate blocking segments
-```
-
-within the same recurring batch.
-
-The batch itself must not create unresolved overlaps.
-
----
-
-# 44. Candidate-vs-external conflicts
-
-Also validate all candidate blocking segments against:
-
-```text
-persisted blocking segments
-belonging to occurrences outside the batch
-```
-
-on the relevant dates.
-
----
-
-# 45. Half-open interval semantics
-
-Use:
-
-```text
-[start, end)
-```
-
-Adjacency is allowed.
-
-Example:
-
-```text
-08:00–09:00
-
-09:00–10:00
-```
-
-is not conflict.
-
----
-
-# 46. Conflict resolution remains out of scope
-
-If Apply Week / Apply Future would create a segment conflict:
-
-```text
-REJECT
-```
-
-Do NOT:
-
-```text
-cancel blocker
-
-change blocker status
-
-move blocker
-
-split blocker
-
-trim blocker
-
-priority override
-
-user-forced override
-```
-
-The segment-aware conflict engine is the next dedicated phase.
-
----
-
-# 47. Do not call legacy priority override
-
-No schema-004 recurring path may invoke the old parent-level:
-
-```text
-apply_priority_overrides()
-```
-
-or equivalent behavior.
-
-Guard/remove it from active Apply Week/Future execution.
-
----
-
-# 48. Recurring conflict error
-
-Use a controlled segment-aware recurring conflict response.
-
-Preferred code:
-
-```text
-recurring_schedule_conflict
-```
-
-Return blockers including:
+At minimum verify exact:
 
 ```text
 occurrenceId
 
 segmentId
-
-planItemId
-
-date
 
 startTime
 
@@ -1374,204 +1252,146 @@ endTime
 status
 ```
 
-If multiple blockers exist:
+---
+
+# 47. Changed blocker invalidates confirmation
+
+If a blocker changed between:
 
 ```text
-return all relevant blockers
+first 409
 ```
 
-in deterministic order.
+and:
+
+```text
+confirmation retry
+```
+
+the prior authorization is invalid.
+
+Do NOT apply it to the changed segment.
+
+Return a controlled stale/fresh-conflict response.
+
+Preferred code:
+
+```text
+conflict_resolution_stale
+```
+
+or an equivalent explicit code.
 
 ---
 
-# 49. Conflict metadata
+# 48. Removed blocker
 
-Because this phase only rejects unresolved conflicts, successful Apply Week /
-Apply Future operations do NOT represent conflict-resolution events.
-
-Therefore preserve:
+If a previously confirmed blocker disappeared or became materially different
+before confirmation:
 
 ```text
-conflict_reason
-
-source_occurrence_id
-
-origin_reason
-
-last_conflict_action
+do not blindly reuse old authorization
 ```
 
-on existing occurrences.
+Treat the prior snapshot as stale.
 
-Do not set:
+Re-evaluate the operation.
 
-```text
-last_conflict_action = conflict_move
-```
-
-merely because a recurring schedule moved normally.
+No silent destructive action based on obsolete confirmation.
 
 ---
 
-# 50. `source_generation_slot_id`
+# 49. New blocker
 
-Existing occurrences must preserve valid generation provenance.
-
-If the existing recurring rewrite deliberately replaces/rebinds GenerationSlot
-identity according to already-approved semantics:
+If a new blocker appears before confirmation:
 
 ```text
-preserve that existing behavior
+do not modify it without explicit confirmation
 ```
 
-but keep every occurrence correctly linked to its resulting slot.
-
-Do not clear provenance accidentally.
+Return the fresh conflict set.
 
 ---
 
-# 51. New occurrence creation
+# 50. Missing confirmation
 
-If the existing Apply Week / Apply Future command creates an occurrence:
-
-```text
-create parent + default segment atomically
-```
-
-Use:
+If a current blocker requiring resolution has no matching confirmation:
 
 ```text
-backend-generated UUID v4
+return resolution required
 ```
 
-for the segment.
-
-Do not create parent-only occurrences.
+No partial resolution.
 
 ---
 
-# 52. New occurrence status
+# 51. Extra/invalid confirmations
 
-Use the same initial-status rules already approved for occurrence creation.
+Reject malformed or duplicate confirmation entries.
 
-Do not invent recurring-specific status semantics.
-
-The parent aggregate must be derived from the created segment.
-
----
-
-# 53. Missing-occurrence generation
-
-If the existing recurring implementation fills missing occurrences:
+Do not allow a confirmation for:
 
 ```text
-continue doing so
+one segment
 ```
 
-but every newly created occurrence must satisfy schema 004 immediately.
-
-Do not depend on migration backfill for runtime writes.
-
----
-
-# 54. GenerationSlot remains envelope-only
-
-Updating a slot may change:
+to authorize:
 
 ```text
-recurring start time
-
-recurring end time
-
-weekday/date configuration
-```
-
-according to existing behavior.
-
-It must NOT store:
-
-```text
-runtime segment IDs
-
-runtime gaps
-
-runtime child statuses
-
-runtime segment count
+another segment
 ```
 
 ---
 
-# 55. Runtime customization remains local
+# 52. Strong confirmation
 
-After successful recurring mutation:
-
-```text
-custom segmentation of a translated occurrence remains custom
-```
-
-It must not disappear.
-
-Example:
+If the normative rules require stronger acknowledgement for:
 
 ```text
-before
-08:00–12:00
-08:00–09:00
-10:30–12:00
+completed
 
-after schedule pure move
-13:00–17:00
-13:00–14:00
-15:30–17:00
+not_finished
 ```
 
-The gaps survive.
+that acknowledgement must also be bound to the exact blocker snapshot.
+
+Do not treat a generic:
+
+```text
+"yes"
+```
+
+from an earlier state as authorization for changed realized time.
 
 ---
 
-# 56. Future newly generated instances remain simple
+# 53. Atomic operation
 
-Even if one existing occurrence retains translated custom segmentation:
-
-```text
-future instances generated later from GenerationSlot
-```
-
-still begin with:
+A confirmed source mutation and every affected target mutation must commit:
 
 ```text
-one segment equal envelope
+together
 ```
 
-This distinction must have explicit test coverage.
+or:
+
+```text
+not at all
+```
+
+No:
+
+```text
+source saved
+
+target resolution failed
+```
+
+state may survive.
 
 ---
 
-# 57. Transactional unit
-
-Recurring mutation must atomically coordinate, as applicable:
-
-```text
-generation config
-
-generation slots
-
-slot weekdays/dates/exclusions
-
-affected occurrences
-
-affected occurrence segments
-
-parent aggregates
-```
-
-Do not commit recurrence configuration separately from required occurrence
-segment updates.
-
----
-
-# 58. Isolation level
+# 54. Transaction isolation
 
 Use:
 
@@ -1579,773 +1399,528 @@ Use:
 SERIALIZABLE
 ```
 
-consistent with the existing recurring mutation architecture.
+consistent with current write architecture.
 
 ---
 
-# 59. Deterministic locks
+# 55. Deterministic locks
 
-Preserve/establish deterministic ordering for:
+Establish one lock order consistent with existing services.
 
-```text
-generation rows
-
-target occurrences
-
-target segments
-
-external blockers
-```
-
-Avoid deadlock-prone lock-order divergence from:
+Conceptually:
 
 ```text
-segment status mutation
-
-structure mutation
+1. source parent when persisted
+2. source segments when persisted
+3. target parents ordered deterministically
+4. target blocker segments ordered deterministically
+5. remaining target siblings needed for final graph
+6. validate
+7. write
 ```
+
+For a new source, generate required IDs/candidate graph without exposing
+partial persistence.
+
+Avoid deadlock-prone ordering divergence.
 
 ---
 
-# 60. Concurrency
+# 56. Source candidate validation first
 
-If the schedule or target occurrence graph changes between:
-
-```text
-read
-
-validation
-
-commit
-```
-
-do not overwrite blindly.
-
-Use existing serialization/concurrency handling.
-
-Preferred controlled error may remain:
+Before modifying targets, validate the source candidate itself:
 
 ```text
-concurrent_conflict
+valid temporal phase
+
+valid statuses
+
+valid structure
+
+completed-time
+
+no sibling overlap
+
+bounds
 ```
 
-if already standardized.
-
-Do not auto-retry an ambiguous batch mutation internally unless existing
-transaction infrastructure already safely does so.
+Do not resolve blockers for an invalid source mutation.
 
 ---
 
-# 61. All-or-nothing segment compatibility
+# 57. Blocker discovery and locking
 
-Before applying a recurring batch, confirm every affected persisted occurrence
-can be transformed under these rules.
+Do not rely on an unlocked conflict list from a prior request.
 
-If one cannot:
+On confirmation:
 
 ```text
-reject before commit
+discover/lock authoritative blockers again
 ```
 
-Do not transform the easy ones and leave custom incompatible ones behind
-silently.
+under the current transaction.
 
 ---
 
-# 62. Apply Week backend
+# 58. No global schedule shift
 
-Make the existing Apply Week service/repository path segment-aware.
-
-Preserve its existing definition of:
+Forbidden:
 
 ```text
-week scope
+move every later occurrence
+
+push schedule forward
+
+cascade offsets globally
 ```
 
-and its recurrence configuration semantics.
-
-For each targeted persisted occurrence:
-
-```text
-simple
-→ follow new envelope
-
-custom + same-duration pure move
-→ translate segments
-
-custom + duration resize
-→ resolution required
-```
-
-New occurrences:
-
-```text
-one default segment
-```
+Conflict resolution modifies only the specifically affected target structures
+according to approved rules.
 
 ---
 
-# 63. Apply Future backend
+# 59. PlanItem creation integration
 
-Make the existing Apply Future service/repository path segment-aware.
+Replace the old PlanItem creation conflict override behavior with the new
+segment-aware protocol.
 
-Preserve its existing definition of:
+First request:
 
 ```text
-future scope
+detect real segment blockers
+→ 409 resolution required
+→ zero target writes
 ```
 
-and GenerationSlot rewrite semantics.
-
-Use the same structural classification rules as Apply Week.
-
-Do NOT create separate incompatible transformation behavior.
-
----
-
-# 64. Shared recurring structural policy
-
-Apply Week and Apply Future should reuse one shared policy/helper for deciding:
+Confirmed request:
 
 ```text
-simple follow-envelope
-
-custom translate
-
-custom resize reject
-```
-
-Do not duplicate the rules in two independent services.
-
----
-
-# 65. No client-side structural authority
-
-Frontend must NOT decide how every affected occurrence segment graph should
-change.
-
-Frontend expresses:
-
-```text
-Apply Week
-
-or
-
-Apply Future
-```
-
-Backend determines the candidate graphs.
-
----
-
-# 66. Existing frontend interaction
-
-Preserve the existing user-facing distinction between:
-
-```text
-this occurrence
-
-Apply Week
-
-Apply Future
-```
-
-where already present.
-
-Do not redesign the entire recurring editor.
-
----
-
-# 67. Frontend success flow
-
-After successful Apply Week / Apply Future:
-
-```text
-command
-→ GET planner-state
-→ hydrate authoritative state
-```
-
-Do not reconstruct all affected segment graphs locally.
-
----
-
-# 68. Confirmed command + failed GET
-
-Use the established mutation safety pattern.
-
-If:
-
-```text
-Apply Week/Future command succeeded
-```
-
-but:
-
-```text
-GET planner-state failed
-```
-
-retry/recovery must perform:
-
-```text
-GET only
-```
-
-Do NOT resend the recurring mutation.
-
----
-
-# 69. Double-submit protection
-
-While Apply Week / Apply Future is pending:
-
-```text
-prevent duplicate submission
-```
-
-Do not send the same batch command twice from rapid clicking.
-
----
-
-# 70. Custom resize frontend error
-
-Handle:
-
-```text
-segmented_recurring_resize_requires_resolution
-```
-
-without modifying planner state.
-
-Explain clearly that one or more customized occurrences cannot be resized
-automatically.
-
-Do not silently reset them.
-
----
-
-# 71. Resolution-required occurrence information
-
-If the backend returns affected occurrences, display enough context for the
-user to understand:
-
-```text
-which date
-
-current range
-
-requested range
-```
-
-A concise message/list is sufficient.
-
-Do NOT build the final guided conflict/resolution wizard in this phase.
-
----
-
-# 72. Structural resolution remains explicit
-
-The user may later manually edit those occurrences using the structural editor
-already implemented.
-
-Do NOT automatically open/edit/save every incompatible occurrence as part of
-Apply Week/Future.
-
-Keep this first implementation simple.
-
----
-
-# 73. Recurring conflict frontend behavior
-
-For:
-
-```text
-recurring_schedule_conflict
-```
-
-frontend should:
-
-```text
-show blocker information
-
-leave authoritative planner unchanged
-
-not modify blockers
-
-not invoke legacy override
-
-not automatically retry
+revalidate
+→ resolve target segments
+→ create source PlanItem/occurrence/segment graph
+→ write metadata
+→ commit atomically
 ```
 
 ---
 
-# 74. `temporal_reconciliation_required`
+# 60. No legacy PlanItem override
 
-Do NOT locally reconcile statuses.
-
-Do NOT automatically resend Apply Week / Apply Future afterward.
-
-Use the established reconciliation/reload recovery pattern.
-
----
-
-# 75. Concurrency frontend behavior
-
-For:
+The schema-004 PlanItem creation path must never call:
 
 ```text
-concurrent_conflict
+apply_priority_overrides()
 ```
 
-do not automatically replay the batch.
+or legacy parent-level equivalent.
 
-Refresh authoritative state according to existing mutation recovery behavior.
+The temporary guard introduced in earlier phases can be replaced by the new
+engine only when the new engine is valid.
 
-The user must review/retry.
+Do not reopen the old mutation path.
 
 ---
 
-# 76. Preserve structural editor
+# 61. New source IDs
 
-This phase must not regress:
+When conflict metadata needs:
 
 ```text
-single-occurrence structural draft editor
+source_occurrence_id
+```
 
+for a newly created source:
+
+```text
+generate the final source occurrence ID inside the authoritative operation
+```
+
+and use that same ID for:
+
+```text
+source persistence
+
+target.source_occurrence_id
+```
+
+Do not write a temporary/fake source ID.
+
+---
+
+# 62. Structural mutation integration
+
+Integrate the new engine into single-occurrence structural mutations:
+
+```text
 translate
 
-PUT structure
+replace structure
 
 reset segmentation
 ```
 
-Apply Week/Future should not route through the local structural draft for every
-target occurrence.
+when they produce blocking conflicts.
+
+Unconfirmed:
+
+```text
+409 resolution required
+```
+
+Confirmed:
+
+```text
+revalidate
+resolve blockers
+persist source structure
+persist target structures
+commit
+```
 
 ---
 
-# 77. Preserve segment status mutation
+# 63. Structural target draft remains source-only
 
-Do not regress:
+The source structural command continues to describe:
+
+```text
+the source occurrence candidate
+```
+
+Conflict resolution modifies blocker targets in backend domain logic.
+
+Do not require the source structural payload to include manually edited target
+graphs.
+
+---
+
+# 64. `conflict_move`
+
+A confirmed structural mutation of an existing source that modifies blockers
+uses:
+
+```text
+conflict_move
+```
+
+for the approved source conflict-action metadata.
+
+A normal structural change with no blocker modifications does NOT.
+
+---
+
+# 65. Reset conflict
+
+Reset segmentation may also produce a conflict.
+
+It follows the same confirmation/revalidation engine.
+
+Do not create a separate reset-specific override model.
+
+---
+
+# 66. Segment-status mutation remains rejection-only
+
+Do NOT make:
 
 ```text
 PATCH /api/occurrence-segments/<id>/status
 ```
 
-Recurring schedule mutation does not replace segment status mutation.
+modify blocker structures in this phase.
+
+It continues to return:
+
+```text
+segment_status_conflict
+```
+
+when activation overlaps blockers.
+
+Reason:
+
+```text
+the approved conflict-action metadata currently models insertion/move
+```
+
+and status-activation conflict semantics are not being expanded here.
 
 ---
 
-# 78. Preserve reconciliation bootstrap
+# 67. Apply Week/Future remain rejection-only
 
-Startup remains:
+Do NOT make recurring batch conflicts destructive in this phase.
+
+They continue to return:
 
 ```text
-POST reconcile
-→ GET planner-state
-→ hydrate
+recurring_schedule_conflict
 ```
 
-Do not change that order.
+with blockers.
+
+The recurring segment-aware work from 05.7.5.9 must remain intact.
 
 ---
 
-# 79. Legacy recurring local writes must retire
+# 68. Ad-hoc occurrence addition audit
 
-After this phase, active Apply Week and Apply Future frontend paths must NOT
-perform local persisted-domain writes such as:
+Audit:
 
 ```text
-Occurrence.status = ...
+edit_without_occurrence
 
-Occurrence.startTime = ...
+prepareOccurrenceAddition
 
-Occurrence.endTime = ...
-
-blocker.status = ...
+commitPreparedScheduleChange
 ```
 
-as authoritative state.
+Determine which backend mutation should eventually own ad-hoc occurrence
+insertion conflict resolution.
 
-Mutation success is followed by authoritative GET.
+Do NOT preserve a local parent-status conflict writer merely because it already
+exists.
+
+If safely integrating the backend engine requires frontend UX work reserved for
+05.7.5.11:
+
+```text
+keep that legacy frontend path guarded
+```
+
+and report it precisely.
+
+Do not silently expand the UI scope.
 
 ---
 
-# 80. `edit_without_occurrence`
+# 69. Legacy backend override retirement
 
-Audit how this legacy path interacts with Apply Week/Future.
-
-If its recurring branches are the active old mechanism:
+After the new engine is integrated, no active schema-004 backend insertion or
+single-occurrence move path may perform:
 
 ```text
-remove/bypass those recurring branches
+pending parent → cancelled
+
+in_progress parent → not_finished
+
+status_reason write
+
+parent-envelope split logic
 ```
 
-in favor of the segment-aware backend flow.
+through the old override implementation.
 
-Do NOT necessarily remove the entire helper if another legacy conflict path
-still uses it.
+Old helpers may remain physically only if completely unreachable and clearly
+documented for later cleanup.
 
-At completion classify what remains.
+Prefer removing dead code when safe.
 
 ---
 
-# 81. `commitPreparedScheduleChange`
+# 70. `status_reason`
 
-No Apply Week/Future path may use it to perform incompatible parent-only
-segment-unaware writes after this phase.
-
-If the helper remains for the future conflict-engine migration:
+Do not reintroduce:
 
 ```text
-leave it isolated/dormant/limited
+status_reason
 ```
 
-and report its remaining callers.
+Schema-004 writes use:
+
+```text
+conflict_reason
+```
+
+according to the new model.
 
 ---
 
-# 82. Legacy conflict resolution
+# 71. `statusContext`
 
-Do NOT migrate the entire conflict engine in this phase.
-
-If an Apply Week/Future operation encounters a conflict:
+Do not reintroduce frontend/backend dependency on:
 
 ```text
-new segment-aware backend detection
-→ reject
+statusContext
 ```
 
-Do not fall back to the legacy resolution mechanism.
-
----
-
-# 83. Deletion/exclusion semantics
-
-Preserve existing recurring deletion/exclusion semantics if Apply Week/Future
-uses them.
-
-Any surviving or newly created occurrence must maintain valid segments.
-
-Do not create:
+The canonical read model remains:
 
 ```text
-zero-segment surviving occurrence
-```
-
----
-
-# 84. Occurrence deletion
-
-If existing approved recurring behavior deletes an occurrence entirely:
-
-```text
-ON DELETE CASCADE
-```
-
-may remove its segments as already defined by schema 004.
-
-Do not manually orphan/delete children outside the parent transaction.
-
----
-
-# 85. Historical provenance references
-
-Remember:
-
-```text
-source_occurrence_id
-ON DELETE NO ACTION
-```
-
-If existing recurring mutation attempts to delete a referenced occurrence:
-
-```text
-preserve the current deletion restriction
-```
-
-Do not weaken historical provenance to make the batch succeed.
-
----
-
-# 86. No movement lock
-
-Conversely, a referenced source occurrence may still move when allowed.
-
-Do not restore the old:
-
-```text
-referenced source cannot move
-```
-
-rule.
-
----
-
-# 87. Pure domain tests
-
-Add focused tests for recurring transformation classification:
-
-```text
-simple full-envelope detection
-
-one trimmed child classified custom
-
-multi-segment classified custom
-
-simple resize follows envelope
-
-simple move follows envelope
-
-custom same-duration move translates
-
-custom move preserves IDs
-
-custom move preserves statuses
-
-custom move preserves gaps
-
-custom resize rejected
+conflictContext
 ```
 
 ---
 
-# 88. No segment inheritance test
+# 72. Pure domain tests — authorization
 
-Explicitly verify:
-
-```text
-existing occurrence has custom segmentation
-```
-
-then Apply Future changes recurring schedule / produces a new generated
-occurrence.
-
-Expected new occurrence:
+Test:
 
 ```text
-exactly one default segment
-```
-
-NOT the custom runtime segment set.
-
----
-
-# 89. Simple recurring resize test
-
-Persist:
-
-```text
-parent 08:00–09:00
-
-S1 08:00–09:00 pending
-```
-
-Recurring candidate:
-
-```text
-10:00–11:30
-```
-
-Expected:
-
-```text
-same S1 ID
-
-S1 10:00–11:30
-
-same status
-```
-
-assuming temporal/conflict validation passes.
-
----
-
-# 90. Custom pure move test
-
-Persist:
-
-```text
-parent 08:00–12:00
-
-S1 08:00–09:00
-
-S2 10:30–12:00
-```
-
-Candidate:
-
-```text
-13:00–17:00
-```
-
-Verify:
-
-```text
-S1/S2 IDs unchanged
-
-statuses unchanged
-
-gaps unchanged
-
-durations unchanged
-```
-
----
-
-# 91. Custom resize rejection test
-
-Same custom occurrence:
-
-```text
-08:00–12:00
-```
-
-candidate:
-
-```text
-08:00–11:00
-```
-
-Expected:
-
-```text
-segmented_recurring_resize_requires_resolution
+source priority > target
+→ priority_override
 ```
 
 and:
 
 ```text
-zero writes
+source priority == target
+→ user_forced_override
+
+source priority < target
+→ user_forced_override
 ```
 
-to schedule/occurrences/segments.
+All still require explicit confirmation.
 
 ---
 
-# 92. Multiple custom resize test
+# 73. Pure domain tests — snapshots
 
-If several targeted occurrences are incompatible:
+Test exact blocker snapshot comparison.
+
+Changes to:
 
 ```text
-return all of them
+segment ID
+
+start
+
+end
+
+status
 ```
 
-deterministically.
+must invalidate previous confirmation.
 
-Still:
+---
+
+# 74. Pure domain tests — subtraction
+
+Cover at minimum:
 
 ```text
-zero writes
+source covers middle
+→ 2 fragments
+
+source overlaps left edge
+→ 1 right fragment
+
+source overlaps right edge
+→ 1 left fragment
+
+source covers entire target
+→ normative 0-fragment outcome
+
+adjacency
+→ no subtraction
 ```
 
 ---
 
-# 93. Completed-time recurring test
+# 75. Split identity test
 
-Current-day completed segment translated so its end becomes future:
+For:
 
 ```text
-reject
+2 fragments
 ```
 
-No status rewrite.
+verify:
+
+```text
+left keeps original ID
+
+right gets backend UUID v4
+```
 
 ---
 
-# 94. Frozen recurring test
+# 76. Repeated segmentation test
 
-Prove frozen occurrences are not structurally rewritten.
+Resolve a conflict against an occurrence that already has multiple segments.
 
-Follow existing target semantics:
-
-```text
-excluded if they should never be targets
-```
-
-or:
+Verify:
 
 ```text
-controlled rejection if unexpectedly targeted
-```
+existing unrelated sibling IDs unchanged
 
-but never mutate them.
+affected segment follows identity rule
+
+no sibling overlap
+
+aggregate coherent
+```
 
 ---
 
-# 95. Yesterday reconciliation test
+# 77. Multiple source interval test
 
-Historical editable target with transient segment:
+Use a custom source with more than one blocking segment.
+
+Verify target subtraction uses:
 
 ```text
-pending
-or
+actual source segments
+```
+
+not source parent envelope.
+
+---
+
+# 78. Pending tests
+
+Implement the exact `pending` outcomes defined by
+`STATUS_CONFLICT_RULES.md`.
+
+Cover:
+
+```text
+partial overlap
+
+middle overlap
+
+full overlap
+```
+
+---
+
+# 79. In-progress tests
+
+Implement and test the exact nuanced:
+
+```text
 in_progress
 ```
 
-Expected:
+rule from the normative conflict document.
+
+If that rule is not actually complete enough to implement:
 
 ```text
-temporal_reconciliation_required
-```
-
-No silent normalization.
-
----
-
-# 96. Gap-aware recurring conflict test
-
-Candidate parent envelopes may overlap another occurrence.
-
-If actual candidate segments do not overlap:
-
-```text
-allow
+STOP
+report before inventing behavior
 ```
 
 ---
 
-# 97. Batch self-conflict test
+# 80. Completed / not_finished tests
 
-Two candidate occurrences in the same recurring batch become blocking and
-overlap.
-
-Expected:
+Verify:
 
 ```text
-recurring_schedule_conflict
+no silent modification
 ```
 
-No partial writes.
+without the required strong explicit confirmation.
+
+Also verify frozen realized history remains protected.
 
 ---
 
-# 98. External conflict test
+# 81. Non-blocking tests
 
-Candidate segment overlaps an unaffected external blocker.
-
-Expected:
-
-```text
-recurring_schedule_conflict
-```
-
-with actual blocker segment data.
-
-No blocker mutation.
-
----
-
-# 99. Multiple blocker test
-
-Return all relevant blockers deterministically.
-
----
-
-# 100. Non-blocking candidate test
-
-Segments with:
+Overlapping:
 
 ```text
 cancelled
@@ -2353,587 +1928,557 @@ cancelled
 not_completed
 ```
 
-must not block other schedules.
-
-Use shared blocking policy.
+must not require conflict resolution.
 
 ---
 
-# 101. Metadata preservation test
+# 82. Aggregate tests
 
-Recurring transformations preserve:
+After each approved target resolution:
 
 ```text
-conflict_reason
-
-source_occurrence_id
-
-origin_reason
-
-last_conflict_action
+derive aggregate from all target segments
 ```
 
-on existing occurrences.
-
----
-
-# 102. `source_generation_slot_id` test
-
-Verify existing and newly generated occurrences maintain correct generation
-slot provenance after:
+Test both:
 
 ```text
-Apply Week
+single-segment target
 
-Apply Future
+multi-segment target
 ```
 
 ---
 
-# 103. Referenced source movement test
+# 83. Metadata tests
 
-A source occurrence referenced by another occurrence may be translated through
-an allowed recurring move.
+Verify confirmed resolution updates exactly the approved fields.
+
+At minimum test:
+
+```text
+target conflict_reason
+
+target source_occurrence_id
+
+source origin_reason for conflict insertion
+
+source conflict-action metadata for insertion/move
+```
+
+and preservation of unrelated metadata.
+
+---
+
+# 84. Latest conflict test
+
+Resolve target with Source A.
+
+Later resolve same target with Source B.
 
 Expected:
 
 ```text
-movement succeeds if all current constraints pass
-
-historical source link remains
+latest target conflict metadata
+→ Source B
 ```
+
+No multi-source genealogy.
+
+---
+
+# 85. Metadata persistence after source move
+
+After a confirmed conflict:
+
+```text
+move source away without another conflict
+```
+
+Expected:
+
+```text
+target historical conflict metadata remains
+```
+
+Current blocking relationship disappears because segments no longer overlap,
+not because metadata was cleared.
+
+---
+
+# 86. Referenced source movement regression
+
+A source referenced through:
+
+```text
+source_occurrence_id
+```
+
+may still move.
 
 No legacy movement lock.
 
 ---
 
-# 104. New occurrence graph test
+# 87. Referenced source delete regression
 
-Every occurrence created by recurring mutation must immediately contain:
+Deletion remains restricted by:
 
 ```text
-1 parent
-
-1 default segment
+ON DELETE NO ACTION
 ```
 
-with:
+Do not weaken it.
+
+---
+
+# 88. First-request PostgreSQL test
+
+Real schema 004:
 
 ```text
-stable UUID
+source insertion/move
+→ blocker
+```
 
-matching envelope
+Expected:
 
-valid initial status
+```text
+409 resolution required
 
-derived parent aggregate
+source unchanged/uncreated as appropriate
+
+target unchanged
+
+metadata unchanged
 ```
 
 ---
 
-# 105. Atomicity tests
+# 89. Confirmed insertion round trip
 
-Force failures during:
+Real PostgreSQL:
 
 ```text
-GenerationSlot update
-
-existing segment update
-
-new occurrence insert
-
-new segment insert
-
-parent aggregate update
+POST source insertion
+→ 409
+→ retry with blocker confirmation
+→ success
+→ GET planner-state
 ```
 
-Verify the recurring transaction leaves no partial schedule rewrite.
+Verify:
+
+```text
+source exists
+
+target segmentation resolved
+
+target aggregate correct
+
+target conflict metadata correct
+
+source insertion metadata correct
+
+stable IDs
+```
 
 ---
 
-# 106. Concurrency test
+# 90. Confirmed structural move round trip
 
-Where practical, verify concurrent Apply Week/Future or structural/status
-changes cannot produce:
+Real PostgreSQL:
 
 ```text
-lost segment structure
+translate/structure source
+→ 409
+→ confirmed retry
+→ success
+→ GET
+```
+
+Verify:
+
+```text
+source moved
+
+target resolved
+
+target metadata
+
+source conflict_move metadata
+
+unrelated segments unchanged
+```
+
+---
+
+# 91. Stale snapshot PostgreSQL test
+
+Flow:
+
+```text
+first 409
+
+modify blocker legitimately before confirmation
+
+retry old confirmation
+```
+
+Expected:
+
+```text
+conflict_resolution_stale
+or equivalent
+
+zero destructive writes from stale authorization
+```
+
+---
+
+# 92. New blocker PostgreSQL test
+
+Between first request and confirmation:
+
+```text
+new blocker appears
+```
+
+Old confirmation must not authorize it.
+
+Return fresh conflict state.
+
+---
+
+# 93. Removed blocker test
+
+If original blocker disappears/changes before confirmation:
+
+```text
+old snapshot must not be used destructively
+```
+
+Follow the approved stale revalidation behavior.
+
+---
+
+# 94. Wrong segment confirmation test
+
+Confirmation for:
+
+```text
+Occurrence A / Segment X
+```
+
+must not authorize:
+
+```text
+Occurrence A / Segment Y
+```
+
+---
+
+# 95. Priority override integration
+
+Higher-priority source still requires first 409 + explicit confirmation.
+
+After confirmation:
+
+```text
+target conflict_reason = priority_override
+```
+
+if target is actually modified.
+
+---
+
+# 96. User-forced integration
+
+Equal/lower-priority source requires explicit user-forced confirmation.
+
+After confirmed resolution:
+
+```text
+target conflict_reason = user_forced_override
+```
+
+---
+
+# 97. Strong realized-time integration
+
+For editable realized blockers requiring stronger confirmation:
+
+```text
+ordinary confirmation insufficient
+```
+
+Only the explicit stronger acknowledgement defined by the normative rules may
+authorize the correction.
+
+No silent rewrite.
+
+---
+
+# 98. Frozen blocker integration
+
+A blocker in frozen history must not be structurally rewritten through this
+engine.
+
+Return a controlled error requiring source adjustment instead.
+
+---
+
+# 99. Atomic rollback — source write
+
+Force failure after target candidate planning but during source persistence.
+
+Verify target remains unchanged.
+
+---
+
+# 100. Atomic rollback — target update
+
+Force failure while updating a target child.
+
+Verify:
+
+```text
+source unchanged/uncreated
+
+all targets unchanged
+```
+
+---
+
+# 101. Atomic rollback — split insert
+
+Force failure inserting a new right-side split fragment.
+
+Verify the original target graph survives intact.
+
+---
+
+# 102. Atomic rollback — aggregate
+
+Force failure after child changes but before parent aggregate update.
+
+Verify rollback restores complete prior graph.
+
+---
+
+# 103. Atomic rollback — metadata
+
+Force failure after structural resolution but before metadata completion.
+
+No partial conflict context may remain.
+
+---
+
+# 104. Concurrency
+
+Test two competing confirmed source operations where practical.
+
+They must not both commit based on the same stale blocker snapshot.
+
+Expected outcomes may include:
+
+```text
+one success
+
+other concurrent_conflict / stale conflict
+```
+
+but never:
+
+```text
+lost target fragments
+
+invalid sibling overlap
 
 stale aggregate
 
-partial recurrence update
-```
-
-Reuse current SERIALIZABLE/locking infrastructure.
-
----
-
-# 107. Apply Week PostgreSQL round trip
-
-Against isolated PostgreSQL 16:
-
-```text
-001 → 002 → 003 → 004
-```
-
-exercise real Apply Week behavior involving at least:
-
-```text
-simple occurrence
-
-custom pure-move occurrence
-
-newly generated occurrence where applicable
-```
-
-Then:
-
-```text
-GET planner-state
-```
-
-and verify authoritative segment graphs.
-
----
-
-# 108. Apply Future PostgreSQL round trip
-
-Do the equivalent real verification for Apply Future.
-
-Verify:
-
-```text
-GenerationSlot state
-
-existing occurrence segments
-
-new occurrence default segments
-
-sourceGenerationSlotId
-
-parent aggregates
+partial source/target write
 ```
 
 ---
 
-# 109. Custom resize PostgreSQL rollback
+# 105. PlanItem creation regression
 
-Real PostgreSQL test:
-
-```text
-Apply Week/Future includes custom segmented resize
-```
-
-Expected:
+No-conflict creation still produces:
 
 ```text
-controlled rejection
+PlanItem
 
-GenerationSlot unchanged
+Occurrence
 
-parents unchanged
-
-segments unchanged
+one default Segment
 ```
+
+without conflict metadata.
 
 ---
 
-# 110. Recurring conflict PostgreSQL rollback
+# 106. Structural mutation regression
 
-Real PostgreSQL test:
-
-```text
-candidate segment conflict
-```
-
-Expected:
+No-conflict:
 
 ```text
-409/control error
-
-no blocker modification
-
-no target modification
-
-no recurrence configuration partial write
-```
-
----
-
-# 111. Frontend API integration
-
-Use the existing centralized API client.
-
-Do not introduce direct `fetch()` calls from views.
-
-If existing Apply Week/Future API functions already exist:
-
-```text
-adapt them
-```
-
-rather than unnecessarily duplicating them.
-
----
-
-# 112. Frontend authoritative refresh
-
-On success:
-
-```text
-Apply Week/Future
-→ GET planner-state
-→ hydrate
-```
-
-Verify all affected segment structures come from the backend response.
-
----
-
-# 113. Selection after recurring mutation
-
-Preserve:
-
-```text
-selectedOccurrenceId
-```
-
-if that occurrence still exists.
-
-Preserve:
-
-```text
-selectedSegmentId
-```
-
-only if that persisted segment survives.
-
-Clear dangling IDs.
-
-Do not remap by array index.
-
----
-
-# 114. Expansion after recurring mutation
-
-Preserve expanded parent state where the same parent survives.
-
-No chronology redesign.
-
----
-
-# 115. Command-success / GET-failure
-
-Test at least one recurring path:
-
-```text
-command success
-
-GET failure
-```
-
-Then recovery:
-
-```text
-GET only
-```
-
-No repeated Apply Week/Future command.
-
----
-
-# 116. Resolution-required frontend test
-
-Mock:
-
-```text
-segmented_recurring_resize_requires_resolution
-```
-
-Verify:
-
-```text
-no local recurring write
-
-no segment reset
-
-no local scaling
-
-message identifies affected occurrence(s)
-
-no automatic retry
-```
-
----
-
-# 117. Recurring conflict frontend test
-
-Mock:
-
-```text
-recurring_schedule_conflict
-```
-
-Verify:
-
-```text
-blocker context shown
-
-no blocker mutation
-
-no legacy conflict helper invoked
-
-no priority confirmation invented
-```
-
----
-
-# 118. No runtime segment-template test
-
-Frontend must not send:
-
-```text
-segments
-
-segmentIds
-
-segment templates
-```
-
-as part of GenerationSlot recurrence configuration unless the current endpoint
-specifically needs occurrence-level data already approved.
-
-Do not extend recurrence payloads with custom segment patterns.
-
----
-
-# 119. Structural editor regression
-
-Run tests proving the occurrence-local editor still supports:
-
-```text
-draft
+translate
 
 PUT structure
-
-translate
 
 reset
 ```
 
-without being redirected into Apply Week/Future.
+must continue working exactly as before.
 
 ---
 
-# 120. Status regression
+# 107. Segment-status regression
 
-Run tests proving:
+`PATCH segment status` remains:
 
 ```text
-PATCH segment status
+segment-aware
+
+aggregate-aware
+
+conflict rejection only
 ```
 
-still works.
+No new override behavior there.
 
 ---
 
-# 121. Reconciliation regression
+# 108. Reconciliation regression
 
-Run tests proving bootstrap remains:
+`POST /api/planner/reconcile` remains unchanged.
 
-```text
-POST reconcile
-→ GET planner-state
-→ hydrate
-```
+Conflict engine must not become a hidden reconciliation mechanism.
 
 ---
 
-# 122. PlanItem creation regression
+# 109. Apply Week/Future regression
 
-Verify default segment creation still works independently from recurring
-mutation.
+Verify the completed 05.7.5.9 behavior remains:
+
+```text
+SIMPLE segment-aware
+
+CUSTOM translate
+
+CUSTOM resize rejection
+
+real segment conflict rejection
+
+no runtime segment inheritance
+```
+
+No blocker modifications from recurring commands.
 
 ---
 
-# 123. Legacy path audit
+# 110. Planner-state regression
 
-At completion re-audit:
-
-```text
-edit_without_occurrence
-
-commitPreparedScheduleChange
-
-Apply Week
-
-Apply Future
-
-legacy parent-level schedule mutation
-```
-
-Expected after this phase:
+GET remains read-only and correctly returns:
 
 ```text
-Apply Week
-→ segment-aware
+segments[]
 
-Apply Future
-→ segment-aware
-```
+conflictContext
 
-No active Apply Week/Future path may remain:
+originReason
 
-```text
-parent-only
+lastConflictAction
 
-segment-unaware
+sourceGenerationSlotId
 
-local-authoritative
+derived/materialized parent aggregate
 ```
 
 ---
 
-# 124. Conflict path may remain for next phase
+# 111. Frontend scope
 
-It is acceptable if:
+Do NOT build final conflict UI.
+
+Do not add:
 
 ```text
-edit_without_occurrence
+Segmentar y continuar
 
-commitPreparedScheduleChange
+Finalizar y continuar
+
+Cancelar y continuar
+
+Confirmar corrección
 ```
 
-still have remaining callers belonging specifically to the legacy conflict
-resolution workflow.
+as real interactive flows yet.
 
-Those callers must be clearly identified.
-
-Do not use them as fallback for recurring conflicts.
+That is 05.7.5.11.
 
 ---
 
-# 125. CORS
+# 112. Existing frontend safety
 
-If Apply Week/Future routes already have correct browser CORS support:
-
-```text
-do not change it unnecessarily
-```
-
-If integration requires a minimal method/header update:
+If current frontend sees the new backend resolution-required response before
+05.7.5.11:
 
 ```text
-make only that change
+it may surface a controlled generic error
 ```
 
-Preserve:
+but must NOT fall back to old parent-level conflict mutation.
 
-```text
-VCS_ALLOWED_ORIGINS
-```
-
-No wildcard.
+Guard any dangerous legacy confirmation path.
 
 ---
 
-# 126. Browser verification
+# 113. No CORS redesign
 
-Use mocks / isolated backend only.
+Use existing route CORS behavior.
 
-Do NOT use `vcs_dev`.
+Only adjust CORS if a backend route contract change genuinely requires it.
 
-Verify existing recurring UX in:
+No wildcard origins.
+
+---
+
+# 114. Documentation
+
+Update only necessary architecture/API documentation for:
 
 ```text
-desktop 1440×900
+segment blocker snapshot contract
 
-mobile approximately 390×844
+confirmation/revalidation protocol
+
+resolution metadata
+
+remaining rejection-only conflict paths
 ```
 
----
-
-# 127. Browser — simple Apply Week/Future
-
-Verify a normal/simple occurrence can use recurring actions and authoritative
-refresh succeeds.
+Do not create event-log or future template designs.
 
 ---
 
-# 128. Browser — custom pure move
+# 115. PostgreSQL 16
 
-Mock authoritative response showing translated custom segments.
-
-Verify:
+Use isolated PostgreSQL 16:
 
 ```text
-same child IDs
-
-same gaps
-
-new times
+001
+→ 002
+→ 003
+→ 004
 ```
 
-render correctly after GET.
-
-Frontend must not calculate/persist these children itself.
+Do not use `vcs_dev`.
 
 ---
 
-# 129. Browser — custom resize rejection
-
-Verify:
-
-```text
-controlled message
-
-planner unchanged
-
-no hidden reset
-
-no hidden scaling
-```
-
----
-
-# 130. Browser — recurring conflict rejection
-
-Verify blocker message without legacy conflict resolution actions firing.
-
----
-
-# 131. Responsive behavior
-
-Do not redesign recurring UI.
-
-Verify no new global horizontal overflow.
-
----
-
-# 132. Full frontend suite
-
-Run:
-
-```text
-for test_file in modules/gestor_de_habitos/tests/*.test.mjs
-do
-  node "$test_file" || exit 1
-done
-```
-
-Report:
-
-```text
-number of files
-
-number of tests if available
-
-result
-```
-
----
-
-# 133. Full backend suite
+# 116. Full backend suite
 
 Run:
 
@@ -2943,45 +2488,62 @@ Run:
   -p 'test_*.py'
 ```
 
-Report skipped tests honestly.
+Report skips honestly.
 
 ---
 
-# 134. PostgreSQL 16 integration
+# 117. Schema-004 integration suite
 
-Run the existing isolated schema-004 harness.
-
-Verify real:
+Add/reuse real PostgreSQL tests for:
 
 ```text
-001 → 004
+first conflict 409
 
-Apply Week
+confirmed insertion
 
-Apply Future
+confirmed move
 
-custom translation
+trim
 
-new default segment creation
+split
 
-custom resize rollback
+full-overlap normative outcome
 
-segment conflict rollback
+stale blocker
+
+new blocker
+
+priority override
+
+user-forced override
+
+strong realized confirmation
+
+metadata
+
+atomic rollback
+
+concurrency
 ```
-
-Do not use `vcs_dev`.
 
 ---
 
-# 135. Syntax and consistency
+# 118. Frontend regression suite
 
-Run:
+Even though this phase is backend-first, run:
 
 ```text
-node --check
+for test_file in modules/gestor_de_habitos/tests/*.test.mjs
+do
+  node "$test_file" || exit 1
+done
 ```
 
-for every modified JS file.
+The existing UI must not regress.
+
+---
+
+# 119. Syntax / consistency
 
 Run:
 
@@ -2990,7 +2552,9 @@ Run:
   modules/gestor_de_habitos/backend
 ```
 
-and:
+Run `node --check` only for JS modified if any minimal guard is necessary.
+
+Run:
 
 ```text
 git diff --check
@@ -2998,27 +2562,23 @@ git diff --check
 
 ---
 
-# 136. Still no real schema rollout
+# 120. Still no real schema rollout
 
-Even after this phase passes:
+Do NOT apply migration 004 to real `vcs_dev`.
 
-```text
-DO NOT apply migration 004 to vcs_dev
-```
-
-The major remaining blocker is still:
+After this phase the primary remaining work is:
 
 ```text
-segment-aware conflict resolution
-```
+05.7.5.11
+Conflict UX + chronology cleanup + remaining frontend legacy conflict path
 
-plus any legacy active write paths found by the final audit.
+05.7.5.12
+Final writer audit + schema rollout
+```
 
 ---
 
-# 137. Expected architecture after this phase
-
-Expected state:
+# 121. Expected architecture after this phase
 
 ```text
 schema 004
@@ -3030,7 +2590,7 @@ backend read
 frontend read/display
 ✅
 
-PlanItem creation + default segment
+creation + default segment
 ✅
 
 segment status
@@ -3039,31 +2599,37 @@ segment status
 persistent reconciliation
 ✅
 
-frontend segment status
+frontend status
 ✅
 
-backend structural mutations
+backend structure
 ✅
 
-frontend structural editor
+frontend structure
 ✅
 
-Apply Week segment-aware
+Apply Week/Future segment-aware
 ✅
 
-Apply Future segment-aware
+segment conflict detection
 ✅
 
-runtime segment templates
-❌ intentionally
+single-source segment conflict resolution engine
+✅
 
-segment conflict-resolution engine
+snapshot confirmation
+✅
+
+priority/user-forced conflict metadata
+✅
+
+automatic interval subtraction after explicit confirmation
+✅
+
+final conflict UX
 ❌
 
-conflict UX
-❌
-
-planner chronology final cleanup
+planner chronology cleanup
 ❌
 
 real schema rollout
@@ -3072,27 +2638,42 @@ real schema rollout
 
 ---
 
-# 138. Documentation
+# 122. Legacy audit
 
-Update only necessary documentation describing:
+At completion identify every remaining caller of:
 
 ```text
-segment-aware recurring mutation behavior
+edit_without_occurrence
 
-simple vs custom classification
+prepareOccurrenceAddition
 
-custom resize rejection
+commitPreparedScheduleChange
 
-no segment-template inheritance
+commitPreparedChange
 
-remaining conflict-engine incompatibility
+apply_priority_overrides
+
+legacy confirmedOccurrenceIds
 ```
 
-Do not create speculative recurring segment-template docs.
+Classify each as:
+
+```text
+retired
+
+guarded
+
+dormant
+
+active and still incompatible
+```
+
+The report must identify exact remaining active incompatible paths before
+05.7.5.11.
 
 ---
 
-# 139. Git rules
+# 123. Git rules
 
 The user controls Git.
 
@@ -3100,15 +2681,10 @@ Do NOT:
 
 ```text
 commit
-
 push
-
 merge
-
 rebase
-
 switch branch
-
 create branch
 ```
 
@@ -3116,99 +2692,114 @@ Do not revert user work.
 
 ---
 
-# 140. Completion report
+# 124. Completion report
 
 At completion provide:
 
-## Files changed
+## Files
 
-List every created/modified file.
+Every created/modified file.
 
-## Existing recurring behavior audit
+## Conflict domain
 
-Explain exactly what:
+Explain:
 
 ```text
+blocking statuses
+
+segment-vs-segment detection
+
+subtraction
+
+0 / 1 / 2 fragment outcomes
+
+repeated segmentation
+
+multi-segment source
+```
+
+## Confirmation contract
+
+Report exact:
+
+```text
+first 409 payload
+
+confirmation payload
+
+snapshot fields
+
+stale error
+
+strong realized-time acknowledgement
+```
+
+## Authorization
+
+Explain:
+
+```text
+priority_override
+
+user_forced_override
+
+how backend computes each
+```
+
+## Status behavior
+
+Explain exact normative outcomes for:
+
+```text
+pending
+
+in_progress
+
+completed
+
+not_finished
+```
+
+and identify non-blockers.
+
+## Metadata
+
+Explain exactly where and when:
+
+```text
+conflict_reason
+
+source_occurrence_id
+
+origin_reason
+
+last_conflict_action
+```
+
+change.
+
+## Integration
+
+Report behavior for:
+
+```text
+PlanItem creation
+
+translate
+
+structure replacement
+
+reset
+```
+
+and which paths remain rejection-only:
+
+```text
+segment status
+
 Apply Week
 
 Apply Future
-```
-
-currently target and mutate.
-
-## Classification
-
-Explain:
-
-```text
-SIMPLE
-
-CUSTOM
-```
-
-including why one trimmed child is custom.
-
-## Simple behavior
-
-Explain:
-
-```text
-envelope update
-
-segment ID preservation
-
-status preservation
-
-aggregate validation
-```
-
-## Custom behavior
-
-Explain:
-
-```text
-same-duration translate
-
-ID/status/gap preservation
-
-duration-changing rejection
-```
-
-## New occurrences
-
-Explain:
-
-```text
-default single segment creation
-
-UUID generation
-
-status/aggregate
-
-sourceGenerationSlotId
-```
-
-## No inheritance
-
-Explicitly confirm runtime custom segmentation is NOT copied into GenerationSlot
-or future generated occurrences.
-
-## Conflict guard
-
-Explain:
-
-```text
-batch target exclusion
-
-candidate-vs-candidate
-
-candidate-vs-external
-
-gap awareness
-
-blocking statuses
-
-rejection-only behavior
 ```
 
 ## Transactions
@@ -3220,94 +2811,76 @@ SERIALIZABLE
 
 lock order
 
-schedule + occurrence + segment atomicity
+atomic source + targets
+
+snapshot revalidation
 ```
 
-## Frontend integration
+## PostgreSQL
 
-Explain:
+Describe actual schema-004 tests for:
 
 ```text
-Apply Week
+confirmed insertion
 
-Apply Future
+confirmed move
 
-GET-after-success
+trim
 
-GET-only recovery
+split
 
-resolution-required UX
+full overlap
 
-conflict UX
+stale confirmation
+
+priority
+
+user-forced
+
+realized-time confirmation
+
+metadata
+
+rollback
+
+concurrency
 ```
 
 ## Legacy paths
 
-Classify remaining:
-
-```text
-edit_without_occurrence
-
-commitPreparedScheduleChange
-
-other parent-only writers
-```
-
-and identify exact remaining callers.
-
-## PostgreSQL verification
-
-Describe actual:
-
-```text
-001 → 004
-
-Apply Week round trip
-
-Apply Future round trip
-
-custom move
-
-new occurrence
-
-custom resize rollback
-
-conflict rollback
-```
+List exact callers remaining.
 
 ## Tests
 
-Give exact commands and results.
-
-## Browser
-
-Report desktop/mobile findings.
+Give exact commands/results.
 
 ## Safety
 
 Confirm:
 
 ```text
-vcs_dev not queried or modified
+vcs_dev untouched
 
-legacy PlanItems preserved
+PlanItems preserved
 
 migrations unchanged
 
-no runtime segment templates
+no recurring conflict resolution
 
-no priority/user-forced conflict resolution
+no segment-status conflict resolution
 
-no automatic conflict split/trim
+no global shifting
 
-no planner chronology redesign
+no event log
 
-no pause/resume
+no final conflict UX
+
+no chronology redesign
 ```
 
 ## Remaining incompatibilities
 
-List exactly what still prevents schema 004 rollout.
+List exactly what still blocks schema-004 rollout.
 
 ## Git
 
@@ -3325,56 +2898,58 @@ No push.
 
 ---
 
-# 141. Definition of done
+# 125. Definition of done
 
-This task is complete when:
+This phase is complete when:
 
 ```text
-Apply Week is segment-aware
+conflicts are detected by concrete segment
 
-Apply Future is segment-aware
+first conflict request performs zero blocker writes
 
-simple occurrences follow recurring envelope changes
+confirmation is bound to exact blocker snapshot
 
-simple segment IDs/statuses are preserved
+changed blocker invalidates authorization
 
-custom occurrences translate only on same-duration pure moves
+priority does not imply silent mutation
 
-custom segment IDs/statuses/gaps/durations are preserved
+equal/lower priority requires user-forced authorization
 
-custom recurring resize is rejected explicitly
+realized time is strongly protected
 
-no custom segmentation is silently reset
+pending/in-progress outcomes follow normative rules
 
-no runtime segmentation is copied into GenerationSlot
+conflict subtraction supports 0/1/2 fragments
 
-new generated occurrences receive one default segment
+split preserves left ID and creates right UUID
 
-parent aggregates remain derived
+already-segmented targets can be segmented again
 
-temporal rules remain enforced
+source custom gaps are respected
 
-completed-time integrity remains enforced
+target aggregate is recalculated
 
-recurring conflicts use real segments
+target latest conflict metadata is correct
 
-batch self-conflicts are detected
+source insertion/move metadata is correct
 
-external segment conflicts are detected
+metadata does not auto-clear
 
-conflicts are rejected, not resolved
+PlanItem insertion uses the new engine
 
-GenerationSlot + occurrence + segment writes are atomic
+single-occurrence structural moves use the new engine
 
-Apply Week/Future frontend uses authoritative GET after success
+legacy parent-level backend override is not reachable
 
-confirmed batch commands are not repeated after GET failure
+Apply Week/Future remain safe rejection-only
 
-legacy Apply Week/Future parent-only writes are retired
+segment status remains safe rejection-only
 
-full frontend/backend tests pass
+all source + target writes are atomic
 
-real PostgreSQL 16 schema-004 recurring paths are verified
+stale confirmations cannot mutate data
+
+real PostgreSQL 16 verification passes
 
 vcs_dev remains untouched
 ```
@@ -3383,52 +2958,58 @@ vcs_dev remains untouched
 
 # Final principle
 
-Recurring schedule intent and runtime temporal structure are related, but they
-are not the same thing.
+Priority is not permission to silently rewrite history.
+
+The backend may determine:
 
 ```text
-GenerationSlot
-=
-general recurring schedule
+priority_override
 ```
+
+but the user still authorizes the concrete effect.
+
+The authorization is not:
 
 ```text
-Occurrence
-=
-one concrete generated instance
+"yes, modify that occurrence"
 ```
+
+It is tied to:
 
 ```text
-OccurrenceSegment
-=
-the actual structural pieces of that concrete instance
+THIS occurrence
+THIS segment
+THIS start/end
+THIS status
 ```
 
-Therefore:
+If that blocker changes:
 
 ```text
-simple runtime instance
-→ can follow recurring envelope changes
+the authorization expires
 ```
+
+The engine operates on actual occupied time:
 
 ```text
-custom runtime instance + pure move
-→ preserve customization by translation
+SOURCE SEGMENTS
+        ↓
+TARGET SEGMENT
+        ↓
+SUBTRACT OCCUPIED INTERVAL
+        ↓
+0 / 1 / 2 SURVIVING FRAGMENTS
+        ↓
+STATUS + STRUCTURE + AGGREGATE
+        ↓
+ATOMIC COMMIT
 ```
 
-```text
-custom runtime instance + resize
-→ do not guess
-→ require explicit structural resolution
-```
+No parent envelope is treated as continuous occupation.
 
-And:
+No priority silently rewrites realized time.
 
-```text
-CUSTOM RUNTIME SEGMENTATION
-≠
-RECURRING SEGMENT TEMPLATE
-```
+No conflict operation guesses what happened.
 
-VCS must preserve the user's concrete history and custom structure without
-silently turning it into a recurrence rule.
+And no target is modified until the user has explicitly confirmed the current
+concrete blocker.

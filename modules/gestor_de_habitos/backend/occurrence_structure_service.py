@@ -21,7 +21,6 @@ from occurrence_segment_domain import (
 from occurrence_segment_service import (
     OccurrenceSegmentConsistencyError,
     _authoritative_now,
-    _serialize_blockers,
     _validated_occurrence,
     _validated_segments,
 )
@@ -31,7 +30,14 @@ from occurrence_structure_domain import (
     validate_final_segments,
 )
 from repositories import occurrence_segment_repository as repository
-from scheduling_policy import BLOCKING_STATUSES, HISTORY_EDIT_WINDOW_DAYS
+from repositories import segment_conflict_repository
+from scheduling_policy import HISTORY_EDIT_WINDOW_DAYS, scheduling_priority
+from segment_conflict_service import (
+    SegmentConflictError,
+    SegmentConflictValidationError,
+    resolve_source_conflicts,
+    validate_confirmations,
+)
 
 
 class OccurrenceStructureError(RuntimeError):
@@ -49,10 +55,11 @@ class OccurrenceStructureNotFoundError(OccurrenceStructureError):
 
 
 class OccurrenceStructureConflictError(OccurrenceStructureError):
-    def __init__(self, code, message, blockers=None):
+    def __init__(self, code, message, blockers=None, conflicts=None):
         super().__init__(message)
         self.code = code
         self.blockers = blockers
+        self.conflicts = conflicts
 
 
 class OccurrenceStructureConsistencyError(OccurrenceStructureError):
@@ -87,7 +94,7 @@ def _time(value):
 
 def _envelope(payload, structure=False):
     keys = {"startTime", "endTime", "segments"} if structure else {"startTime", "endTime"}
-    if not isinstance(payload, dict) or set(payload) != keys:
+    if not isinstance(payload, dict) or set(payload) not in (keys, keys | {"conflictResolution"}):
         _invalid("El payload no contiene exactamente los campos requeridos.")
     return _time(payload["startTime"]), _time(payload["endTime"])
 
@@ -205,6 +212,12 @@ def _execute(operation, occurrence_id, payload, now=None):
     # La validación de forma ocurre antes de abrir conexión; las identidades se
     # validan contra children bloqueados dentro de la transacción.
     _envelope(payload, structure=operation == "structure")
+    if "conflictResolution" in payload and payload["conflictResolution"] is None:
+        _invalid("conflictResolution no puede ser null.")
+    try:
+        confirmations = validate_confirmations(payload.get("conflictResolution"))
+    except SegmentConflictValidationError as error:
+        raise OccurrenceStructureValidationError("invalid_payload", str(error)) from None
     current = _authoritative_now(now)
     try:
         with database.get_connection() as connection:
@@ -222,18 +235,31 @@ def _execute(operation, occurrence_id, payload, now=None):
                     operation, payload, occurrence, persisted
                 )
                 aggregate = _validate_temporal(occurrence, persisted, candidates, current)
-                blockers = repository.lock_external_blockers_for_candidates(
-                    connection, parsed_id, occurrence["date"],
-                    [segment for segment in candidates if segment["status"] in BLOCKING_STATUSES],
-                    BLOCKING_STATUSES,
+                priority_fields = segment_conflict_repository.get_plan_item_priority_fields(
+                    connection, occurrence["planItemId"]
                 )
-                if blockers:
-                    raise OccurrenceStructureConflictError(
-                        "occurrence_structure_conflict",
-                        "La estructura solicitada solapa otros segments ocupantes.",
-                        _serialize_blockers(blockers),
+                if priority_fields is None:
+                    raise OccurrenceStructureConsistencyError("El PlanItem no existe.")
+                priority = scheduling_priority(
+                    priority_fields["kind"], priority_fields["subtype"]
+                )
+                if confirmations is None:
+                    resolve_source_conflicts(
+                        connection, source_id=parsed_id, source_date=occurrence["date"],
+                        source_segments=candidates, source_priority=priority,
+                        confirmations=None, action="conflict_move", now=current,
                     )
                 _persist(connection, occurrence, persisted, candidates, start, end, aggregate)
+                if confirmations is not None:
+                    resolve_source_conflicts(
+                        connection, source_id=parsed_id, source_date=occurrence["date"],
+                        source_segments=candidates, source_priority=priority,
+                        confirmations=confirmations, action="conflict_move", now=current,
+                    )
+    except SegmentConflictError as error:
+        raise OccurrenceStructureConflictError(
+            error.code, str(error), conflicts=error.conflicts
+        ) from None
     except (OccurrenceStructureError,):
         raise
     except OccurrenceStructureDomainError as error:

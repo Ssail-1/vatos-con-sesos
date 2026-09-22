@@ -130,38 +130,52 @@ class PayloadValidationTests(unittest.TestCase):
                     payload["generationConfig"]["mode"],
                 )
 
-    def test_priority_override_is_optional_command_metadata(self):
+    def test_segment_conflict_resolution_is_optional_command_metadata(self):
         occurrence_id = str(UUID(int=700))
+        segment_id = str(UUID(int=701))
         payload = {
             **activity_payload(),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [occurrence_id],
+            "conflictResolution": {
+                "confirmations": [{
+                    "blocker": {
+                        "occurrenceId": occurrence_id,
+                        "segmentId": segment_id,
+                        "startTime": "10:00",
+                        "endTime": "11:00",
+                        "status": "pending",
+                    },
+                    "confirmed": True,
+                }],
             },
         }
         normalized, confirmed = creation_service.validate_plan_item_command(payload)
-        self.assertNotIn("priorityOverride", normalized)
-        self.assertEqual(confirmed, frozenset({occurrence_id}))
+        self.assertNotIn("conflictResolution", normalized)
+        self.assertEqual(set(confirmed), {(UUID(occurrence_id), UUID(segment_id))})
         self.assertIsNone(
             creation_service.validate_plan_item_command(activity_payload())[1]
         )
 
-    def test_rejects_invalid_priority_override_metadata(self):
-        occurrence_id = str(UUID(int=701))
+    def test_rejects_legacy_priority_override_and_invalid_confirmations(self):
+        with self.assertRaises(creation_service.PlanItemValidationError):
+            creation_service.validate_plan_item_command({
+                **activity_payload(),
+                "priorityOverride": {"confirmedOccurrenceIds": [str(UUID(int=701))]},
+            })
         invalid_values = (
+            None,
             {},
-            {"confirmedOccurrenceIds": "not-a-list"},
-            {"confirmedOccurrenceIds": ["not-a-uuid"]},
-            {"confirmedOccurrenceIds": [occurrence_id, occurrence_id]},
-            {"confirmedOccurrenceIds": [], "unexpected": True},
+            {"confirmations": "not-a-list"},
+            {"confirmations": [{"blocker": {}, "confirmed": True}]},
+            {"confirmations": [], "unexpected": True},
         )
-        for priority_override in invalid_values:
-            with self.subTest(priority_override=priority_override), self.assertRaises(
+        for conflict_resolution in invalid_values:
+            with self.subTest(conflict_resolution=conflict_resolution), self.assertRaises(
                 creation_service.PlanItemValidationError
             ):
                 creation_service.validate_plan_item_command(
                     {
                         **activity_payload(),
-                        "priorityOverride": priority_override,
+                        "conflictResolution": conflict_resolution,
                     }
                 )
 
@@ -613,152 +627,6 @@ class ConflictTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "history_frozen")
         connect.assert_not_called()
 
-    def test_existing_priority_conflicts_are_classified(self):
-        existing = self._existing()
-        for subtype, expected_code in (
-            ("periodic", "priority_conflict"),
-            ("event", "priority_override_required"),
-        ):
-            with self.subTest(subtype=subtype), patch.object(
-                database, "get_connection"
-            ) as connect, patch.object(
-                plan_item_repository,
-                "list_blocking_occurrences",
-                return_value=[existing],
-            ), patch.object(plan_item_repository, "insert_plan_item_graph") as insert:
-                connection = connect.return_value
-                connection.__enter__.return_value = connection
-                with self.assertRaises(
-                    creation_service.PlanItemConflictError
-                ) as error:
-                    creation_service.create_plan_item(
-                        activity_payload(subtype=subtype),
-                        reference_date=REFERENCE_DATE,
-                    )
-                self.assertEqual(error.exception.code, expected_code)
-                if expected_code == "priority_override_required":
-                    self.assertEqual(
-                        error.exception.conflicts,
-                        [
-                            {
-                                "occurrenceId": str(existing["id"]),
-                                "planItemId": str(existing["plan_item_id"]),
-                                "date": "2026-09-11",
-                                "startTime": "10:30",
-                                "endTime": "11:30",
-                                "status": "pending",
-                            }
-                        ],
-                    )
-                insert.assert_not_called()
-
-    def test_confirmed_current_conflicts_are_guarded_before_legacy_override(self):
-        existing = self._existing()
-        payload = {
-            **activity_payload(subtype="event"),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [str(existing["id"])],
-            },
-        }
-        generated_ids = iter((UUID(int=1), UUID(int=2), UUID(int=3)))
-        with patch.object(database, "get_connection") as connect, patch.object(
-            plan_item_repository,
-            "list_blocking_occurrences",
-            return_value=[existing],
-        ), patch.object(
-            plan_item_repository, "insert_plan_item_graph"
-        ) as insert, patch.object(
-            plan_item_repository, "apply_priority_overrides"
-        ) as apply:
-            connection = connect.return_value.__enter__.return_value
-            with self.assertRaises(creation_service.PlanItemConflictError) as error:
-                creation_service.create_plan_item(
-                    payload,
-                    reference_date=REFERENCE_DATE,
-                    uuid_factory=lambda: next(generated_ids),
-                )
-
-        self.assertEqual(
-            error.exception.code, "segment_conflict_resolution_unavailable"
-        )
-        self.assertEqual(
-            error.exception.conflicts,
-            [
-                {
-                    "occurrenceId": str(existing["id"]),
-                    "planItemId": str(existing["plan_item_id"]),
-                    "date": "2026-09-11",
-                    "startTime": "10:30",
-                    "endTime": "11:30",
-                    "status": "pending",
-                }
-            ],
-        )
-        insert.assert_not_called()
-        apply.assert_not_called()
-
-    def test_new_conflict_requires_another_confirmation(self):
-        confirmed = self._existing(900, start=time(10, 15))
-        new_conflict = self._existing(901, start=time(10, 45))
-        payload = {
-            **activity_payload(subtype="event"),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [str(confirmed["id"])],
-            },
-        }
-        with patch.object(database, "get_connection") as connect, patch.object(
-            plan_item_repository,
-            "list_blocking_occurrences",
-            return_value=[confirmed, new_conflict],
-        ), patch.object(
-            plan_item_repository, "insert_plan_item_graph"
-        ) as insert:
-            connection = connect.return_value.__enter__.return_value
-            with self.assertRaises(creation_service.PlanItemConflictError) as error:
-                creation_service.create_plan_item(
-                    payload, reference_date=REFERENCE_DATE
-                )
-        self.assertEqual(error.exception.code, "priority_override_required")
-        self.assertEqual(
-            {item["occurrenceId"] for item in error.exception.conflicts},
-            {str(confirmed["id"]), str(new_conflict["id"])},
-        )
-        insert.assert_not_called()
-
-    def test_disappeared_confirmed_conflict_does_not_block(self):
-        payload = {
-            **activity_payload(subtype="event"),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [str(UUID(int=900))],
-            },
-        }
-        result, _connection, insert = create_without_database(payload)
-        self.assertEqual(result["planItem"]["activityType"], "event")
-        insert.assert_called_once()
-
-    def test_completed_conflict_stays_protected_when_confirmed(self):
-        existing = self._existing(status="completed")
-        payload = {
-            **activity_payload(subtype="event"),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [str(existing["id"])],
-            },
-        }
-        with patch.object(database, "get_connection") as connect, patch.object(
-            plan_item_repository,
-            "list_blocking_occurrences",
-            return_value=[existing],
-        ), patch.object(
-            plan_item_repository, "insert_plan_item_graph"
-        ) as insert:
-            connection = connect.return_value.__enter__.return_value
-            with self.assertRaises(creation_service.PlanItemConflictError) as error:
-                creation_service.create_plan_item(
-                    payload, reference_date=REFERENCE_DATE
-                )
-        self.assertEqual(error.exception.code, "completed_conflict")
-        insert.assert_not_called()
-
 
 class RepositoryWriteTests(unittest.TestCase):
     def test_weekly_graph_includes_slots_details_exclusions_and_occurrences(self):
@@ -1010,39 +878,6 @@ class TransactionTests(unittest.TestCase):
         self.assertIs(persisted_connection, connection)
         self.assertEqual(plan_item, result["planItem"])
         self.assertEqual(occurrences, result["occurrences"])
-
-    def test_confirmed_conflict_never_starts_legacy_override_or_insert(self):
-        existing = ConflictTests._existing()
-        payload = {
-            **activity_payload(subtype="event"),
-            "priorityOverride": {
-                "confirmedOccurrenceIds": [str(existing["id"])],
-            },
-        }
-        connection = MagicMock()
-        connection.__enter__.return_value = connection
-        transaction = connection.transaction.return_value
-        with patch.object(
-            database, "get_connection", return_value=connection
-        ), patch.object(
-            plan_item_repository,
-            "list_blocking_occurrences",
-            return_value=[existing],
-        ), patch.object(
-            plan_item_repository, "insert_plan_item_graph"
-        ) as insert, patch.object(
-            plan_item_repository, "apply_priority_overrides"
-        ) as apply:
-            with self.assertRaises(creation_service.PlanItemConflictError) as error:
-                creation_service.create_plan_item(
-                    payload, reference_date=REFERENCE_DATE
-                )
-        self.assertEqual(
-            error.exception.code, "segment_conflict_resolution_unavailable"
-        )
-        insert.assert_not_called()
-        apply.assert_not_called()
-        self.assertIsNotNone(transaction.__exit__.call_args.args[0])
 
 
 class EndpointTests(unittest.TestCase):

@@ -32,7 +32,7 @@ def list_plan_items():
 
 
 def list_blocking_occurrences(connection, occurrence_dates):
-    """Bloquea y devuelve occurrences que pueden impedir la creación."""
+    """Legacy parent-envelope helper; no writer schema-004 debe invocarlo."""
     if not occurrence_dates:
         return []
     with connection.cursor(row_factory=dict_row) as cursor:
@@ -255,7 +255,11 @@ def insert_plan_item_graph(connection, plan_item, occurrences):
 
 
 def apply_priority_overrides(connection, overrides):
-    """Desplaza únicamente occurrences bloqueadas y autorizadas por el servicio."""
+    """Legacy schema-003 helper, conservado solo para pruebas históricas.
+
+    La creación schema-004 usa segment_conflict_service; esta función es
+    deliberadamente inalcanzable desde rutas HTTP activas.
+    """
     if not overrides:
         return
     with connection.cursor() as cursor:

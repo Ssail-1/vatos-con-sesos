@@ -271,13 +271,6 @@ const deletionDialogView = createDeletionDialogView({
     fallbackFocusElement: elements.addActivityButton,
 });
 
-function commitPreparedChange(prepared, context) {
-    const result = plannerStore.commitPreparedScheduleChange(prepared);
-    selectPlanItemSummary(result.planItem?.id ?? context.planItemId);
-    render();
-    return result;
-}
-
 const planItemCreationMutation = createPlanItemMutationCoordinator({
     postPlanItem: createPlanItem,
     loadPlannerState: fetchPlannerState,
@@ -588,7 +581,6 @@ const planItemFormView = createPlanItemFormView({
     savingStatus: elements.formSavingStatus,
     fallbackFocusElement: elements.addActivityButton, onValidate: () => [],
     onSubmit: async (result, context) => {
-        let prepared;
         if (
             ["edit", "edit_schedule", "edit_without_occurrence"].includes(context.mode) &&
             result.recurrenceChanged &&
@@ -620,8 +612,9 @@ const planItemFormView = createPlanItemFormView({
         } else if (context.mode === "edit_schedule") {
             selectPlanItemSummary(context.planItemId);
         } else if (context.mode === "edit_without_occurrence") {
-            prepared = plannerStore.prepareOccurrenceAddition(context.planItemId, result.occurrence);
-            selectPlanItemSummary(context.planItemId);
+            // Aún no existe el flujo persistente ad-hoc/UX segmentario. El
+            // escritor local legacy modificaría el status del parent.
+            throw new Error("Agregar una occurrence a un PlanItem existente requiere la próxima integración persistente de conflictos.");
         } else {
             const payload = {
                 ...result.planItem,
@@ -629,22 +622,12 @@ const planItemFormView = createPlanItemFormView({
             };
             const outcome = await planItemCreationMutation.submit(payload);
             if (outcome.status === "override_required") {
-                openPersistentOverride(payload, outcome.conflicts);
-                return { pendingConfirmation: true };
+                return {
+                    keepOpen: true,
+                    message: "Esta versión aún no confirma conflictos segmentarios desde la interfaz.",
+                };
             }
             return settlePersistentCreation(outcome);
-        }
-
-        if (prepared?.type === "ready") {
-            commitPreparedChange(prepared, context);
-            return;
-        }
-        if (prepared?.type === "override_required") {
-            overrideConfirmationView.open(prepared, {
-                onConfirm: () => commitPreparedChange(prepared, context),
-                onComplete: () => planItemFormView.completePendingSubmission(),
-            });
-            return { pendingConfirmation: true };
         }
 
         render();

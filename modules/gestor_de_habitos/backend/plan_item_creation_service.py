@@ -9,9 +9,13 @@ from psycopg import IsolationLevel
 
 import database
 from occurrence_segment_domain import (
+    OccurrenceSegmentStatusError,
     derive_occurrence_status,
     temporal_phase_for_date,
+    validate_segment_status_for_phase,
 )
+from occurrence_segment_service import OccurrenceSegmentConsistencyError
+from occurrence_structure_domain import OccurrenceStructureDomainError, validate_final_segments
 from plan_item_materializer import (
     get_materialization_range,
     materialize_occurrence_drafts,
@@ -22,6 +26,13 @@ from scheduling_policy import (
     occurrence_items_overlap,
     scheduling_priority,
 )
+from segment_conflict_service import (
+    SegmentConflictError,
+    SegmentConflictValidationError,
+    resolve_source_conflicts,
+    validate_confirmations,
+)
+from segment_conflict_domain import same_snapshot
 
 
 ACTIVITY_TYPES = frozenset({"anchor", "periodic", "event", "unexpected"})
@@ -387,45 +398,21 @@ def validate_plan_item_payload(payload):
     }
 
 
-def _normalize_priority_override(value):
-    _require_exact_fields(
-        value,
-        {"confirmedOccurrenceIds"},
-        set(),
-        "priorityOverride",
-    )
-    occurrence_ids = value["confirmedOccurrenceIds"]
-    if not isinstance(occurrence_ids, list):
-        _invalid("confirmedOccurrenceIds debe ser una lista.")
-    normalized = []
-    for occurrence_id in occurrence_ids:
-        if not isinstance(occurrence_id, str):
-            _invalid("Cada confirmedOccurrenceId debe ser un UUID válido.")
-        try:
-            parsed = UUID(occurrence_id)
-        except (ValueError, AttributeError):
-            _invalid("Cada confirmedOccurrenceId debe ser un UUID válido.")
-        if str(parsed) != occurrence_id:
-            _invalid("Cada confirmedOccurrenceId debe ser un UUID canónico.")
-        normalized.append(occurrence_id)
-    if len(set(normalized)) != len(normalized):
-        _invalid("confirmedOccurrenceIds no admite IDs duplicados.")
-    return frozenset(normalized)
-
-
 def validate_plan_item_command(payload):
     """Separa el PlanItem canónico de la metadata opcional de la request."""
     if not isinstance(payload, dict):
         _invalid("El cuerpo JSON debe ser un objeto.")
     plan_item_payload = dict(payload)
-    priority_override = plan_item_payload.pop("priorityOverride", None)
+    has_conflict_resolution = "conflictResolution" in plan_item_payload
+    conflict_resolution = plan_item_payload.pop("conflictResolution", None)
     normalized = validate_plan_item_payload(plan_item_payload)
-    confirmed_ids = (
-        None
-        if priority_override is None
-        else _normalize_priority_override(priority_override)
-    )
-    return normalized, confirmed_ids
+    if has_conflict_resolution and conflict_resolution is None:
+        _invalid("conflictResolution no puede ser null.")
+    try:
+        confirmations = validate_confirmations(conflict_resolution)
+    except SegmentConflictValidationError as error:
+        _invalid(str(error))
+    return normalized, confirmations
 
 
 def _overlaps(first, second):
@@ -441,110 +428,6 @@ def _validate_internal_conflicts(drafts):
                 "La creación contiene horarios que se superponen entre sí.",
             )
         accepted.append(draft)
-
-
-def _existing_occurrence(row):
-    occurrence_date = row["occurrence_date"]
-    if isinstance(occurrence_date, datetime) or not isinstance(
-        occurrence_date, date
-    ):
-        raise PlanItemCreationUnavailableError(
-            "PostgreSQL devolvió una occurrence no válida."
-        )
-    start_time = row["start_time"]
-    end_time = row["end_time"]
-    if (
-        not isinstance(start_time, time)
-        or not isinstance(end_time, time)
-        or start_time.second != 0
-        or start_time.microsecond != 0
-        or end_time.second != 0
-        or end_time.microsecond != 0
-    ):
-        raise PlanItemCreationUnavailableError(
-            "PostgreSQL devolvió una occurrence no válida."
-        )
-    return {
-        "id": str(row["id"]),
-        "planItemId": str(row["plan_item_id"]),
-        "date": occurrence_date.isoformat(),
-        "startTime": start_time.strftime("%H:%M"),
-        "endTime": end_time.strftime("%H:%M"),
-        "status": row["status"],
-    }
-
-
-def _current_conflicts(drafts, occurrences, rows):
-    conflicts = []
-    for row in rows:
-        existing = _existing_occurrence(row)
-        source = next(
-            (
-                occurrence
-                for draft, occurrence in zip(drafts, occurrences, strict=True)
-                if _overlaps(draft, existing)
-            ),
-            None,
-        )
-        if source is not None:
-            conflicts.append((row, existing, source))
-    return conflicts
-
-
-def _public_conflicts(conflicts):
-    return [
-        {
-            "occurrenceId": existing["id"],
-            "planItemId": existing["planItemId"],
-            "date": existing["date"],
-            "startTime": existing["startTime"],
-            "endTime": existing["endTime"],
-            "status": existing["status"],
-        }
-        for _row, existing, _source in conflicts
-    ]
-
-
-def _validate_existing_conflicts(
-    plan_item,
-    drafts,
-    occurrences,
-    rows,
-    confirmed_occurrence_ids,
-):
-    conflicts = _current_conflicts(drafts, occurrences, rows)
-    if not conflicts:
-        return []
-    if any(row["status"] == "completed" for row, _existing, _source in conflicts):
-        raise PlanItemConflictError(
-            "completed_conflict",
-            "El intervalo contiene un registro completado y protegido.",
-        )
-    subtype = plan_item.get("activityType") or plan_item.get("habitType")
-    candidate_priority = scheduling_priority(plan_item["kind"], subtype)
-    if any(
-        candidate_priority <= scheduling_priority(row["kind"], row["subtype"])
-        for row, _existing, _source in conflicts
-    ):
-        raise PlanItemConflictError(
-            "priority_conflict",
-            "La prioridad del PlanItem no permite desplazar los conflictos.",
-        )
-    current_ids = {existing["id"] for _row, existing, _source in conflicts}
-    if (
-        confirmed_occurrence_ids is None
-        or not current_ids.issubset(confirmed_occurrence_ids)
-    ):
-        raise PlanItemConflictError(
-            "priority_override_required",
-            "La creación requiere confirmar un desplazamiento por prioridad.",
-            _public_conflicts(conflicts),
-        )
-    raise PlanItemConflictError(
-        "segment_conflict_resolution_unavailable",
-        "El conflicto requiere la futura resolución basada en segmentos.",
-        _public_conflicts(conflicts),
-    )
 
 
 def _assign_ids(plan_item, drafts, current_date, uuid_factory):
@@ -602,7 +485,7 @@ def _validate_generated_ids(plan_item, occurrences):
 
 def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
     """Valida, materializa y persiste todo o nada en una transacción."""
-    normalized, confirmed_occurrence_ids = validate_plan_item_command(payload)
+    normalized, confirmations = validate_plan_item_command(payload)
     current_date = reference_date or _today()
     if isinstance(current_date, datetime) or not isinstance(current_date, date):
         raise TypeError("reference_date debe ser date.")
@@ -622,29 +505,139 @@ def create_plan_item(payload, reference_date=None, uuid_factory=uuid4):
     )
     _validate_generated_ids(plan_item, occurrences)
 
+    subtype = normalized.get("activityType") or normalized.get("habitType")
+    source_priority = scheduling_priority(normalized["kind"], subtype)
+    # Una sola marca temporal coherente con la fecha local de la operación.
+    operation_now = datetime.combine(current_date, datetime.now().time())
+    sources = [
+        {
+            "id": UUID(item["id"]),
+            "date": date.fromisoformat(item["date"]),
+            "segments": [{
+                **segment,
+                "id": UUID(segment["id"]),
+                "startTime": time.fromisoformat(segment["startTime"]),
+                "endTime": time.fromisoformat(segment["endTime"]),
+            } for segment in item["segments"]],
+        }
+        for item in occurrences
+    ]
+    for source, occurrence in zip(sources, occurrences, strict=True):
+        phase = temporal_phase_for_date(
+            source["date"], operation_now.date(), HISTORY_EDIT_WINDOW_DAYS
+        )
+        try:
+            source["segments"] = validate_final_segments(
+                time.fromisoformat(occurrence["startTime"]),
+                time.fromisoformat(occurrence["endTime"]),
+                source["segments"],
+            )
+            for segment in source["segments"]:
+                validate_segment_status_for_phase(
+                    segment["status"], phase,
+                    datetime.combine(source["date"], segment["endTime"]),
+                    operation_now,
+                )
+        except OccurrenceStructureDomainError as error:
+            raise PlanItemConflictError(error.code, str(error)) from None
+        except OccurrenceSegmentStatusError as error:
+            raise PlanItemConflictError(error.code, str(error)) from None
+
     try:
         with database.get_connection() as connection:
             connection.isolation_level = IsolationLevel.SERIALIZABLE
             with connection.transaction():
-                blocking_rows = plan_item_repository.list_blocking_occurrences(
-                    connection,
-                    sorted({draft["date"] for draft in drafts}),
-                )
-                _validate_existing_conflicts(
-                    plan_item,
-                    drafts,
-                    occurrences,
-                    blocking_rows,
-                    confirmed_occurrence_ids,
-                )
+                # Preflight completo: la primera request no inserta ni modifica
+                # ninguna fila. La misma transacción revalida al confirmar.
+                first_conflicts = []
+                source_keys = {}
+                target_sources = {}
+                for source in sources:
+                    try:
+                        resolve_source_conflicts(
+                            connection, source_id=source["id"], source_date=source["date"],
+                            source_segments=source["segments"], source_priority=source_priority,
+                            confirmations=None, action="conflict_insertion", now=operation_now,
+                        )
+                    except SegmentConflictError as error:
+                        if error.code != "segment_conflict_resolution_required":
+                            raise
+                        first_conflicts.extend(error.conflicts)
+                        keys = {
+                            (UUID(item["blocker"]["occurrenceId"]), UUID(item["blocker"]["segmentId"]))
+                            for item in error.conflicts
+                        }
+                        source_keys[source["id"]] = keys
+                        for occurrence_id, _segment_id in keys:
+                            target_sources.setdefault(occurrence_id, set()).add(source["id"])
+                if first_conflicts and confirmations is None:
+                    raise PlanItemConflictError(
+                        "segment_conflict_resolution_required",
+                        "La creación requiere resolver conflictos de horario.", first_conflicts,
+                    )
+                if confirmations is not None:
+                    current_keys = set().union(*source_keys.values()) if source_keys else set()
+                    if set(confirmations) - current_keys:
+                        raise PlanItemConflictError(
+                            "conflict_resolution_stale",
+                            "Un blocker confirmado cambió o desapareció.", first_conflicts,
+                        )
+                    for conflict in first_conflicts:
+                        blocker = conflict["blocker"]
+                        key = (UUID(blocker["occurrenceId"]), UUID(blocker["segmentId"]))
+                        if key in confirmations and not same_snapshot(
+                            confirmations[key]["blocker"], {
+                                "occurrenceId": key[0], "segmentId": key[1],
+                                "startTime": time.fromisoformat(blocker["startTime"]),
+                                "endTime": time.fromisoformat(blocker["endTime"]),
+                                "status": blocker["status"],
+                            },
+                        ):
+                            raise PlanItemConflictError(
+                                "conflict_resolution_stale",
+                                "Un blocker confirmado cambió.", first_conflicts,
+                            )
+                    if current_keys - set(confirmations):
+                        raise PlanItemConflictError(
+                            "segment_conflict_resolution_required",
+                            "Aparecieron blockers sin confirmar.", first_conflicts,
+                        )
+                if any(len(source_ids) > 1 for source_ids in target_sources.values()):
+                    raise PlanItemConflictError(
+                        "multiple_source_resolution_unavailable",
+                        "Esta operación requiere resolver más de un source contra el mismo target.",
+                        first_conflicts,
+                    )
                 plan_item_repository.insert_plan_item_graph(
                     connection, plan_item, occurrences
                 )
+                if confirmations is not None:
+                    for source, occurrence in zip(sources, occurrences, strict=True):
+                        scoped = {
+                            key: confirmations[key]
+                            for key in source_keys.get(source["id"], ())
+                        }
+                        modified_targets = resolve_source_conflicts(
+                            connection, source_id=source["id"], source_date=source["date"],
+                            source_segments=source["segments"], source_priority=source_priority,
+                            confirmations=scoped, action="conflict_insertion", now=operation_now,
+                            uuid_factory=uuid_factory,
+                        )
+                        if modified_targets:
+                            occurrence["originReason"] = "conflict_insertion"
+                            occurrence["lastConflictAction"] = "conflict_insertion"
+    except SegmentConflictError as error:
+        raise PlanItemConflictError(error.code, str(error), error.conflicts) from None
     except PlanItemConflictError:
         raise
+    except (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected):
+        raise PlanItemConflictError(
+            "concurrent_conflict", "El estado cambió durante la operación; vuelve a intentarlo."
+        ) from None
     except (
         database.DatabaseConnectionError,
         plan_item_repository.PlanItemRepositoryError,
+        OccurrenceSegmentConsistencyError,
         psycopg.Error,
     ):
         raise PlanItemCreationUnavailableError(
