@@ -27,5 +27,13 @@ La migración 005 agrega `generation_slots.last_generation_date DATE NULL`.
 inclusive y nunca después. No elimina slots ni altera su procedencia histórica.
 El corte global continúa en `generation_configs.stopped_from_date` (exclusivo).
 
-Las migraciones 004 y 005 requieren despliegue coordinado con un backend
-compatible. No deben aplicarse a `vcs_dev` antes de la fase de rollout real.
+## Estado local del rollout
+
+El 22 de septiembre de 2026, `vcs_dev` fue migrada y verificada con éxito
+hasta schema 005:
+
+- `004_occurrence_segments.sql` aplicada, con backfill e integridad verificados;
+- `005_generation_slot_cutoff.sql` aplicada, conservando en `NULL` los cortes
+  de todos los horarios preexistentes;
+- backup custom-format previo al rollout verificado y conservado en
+  `/home/ssail/.local/share/vcs/backups/vcs_dev_pre_005_20260922_135638.dump`.
