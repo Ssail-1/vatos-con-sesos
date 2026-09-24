@@ -4,7 +4,9 @@ import {
     isDateInRange,
     isValidDateKey,
     isValidTimeRange,
+    timeRangesOverlap,
 } from "../utils/date-time.js";
+import { isGenerationSlotId } from "../domain/generation-slots.js";
 
 export class MaterializationError extends Error {
     constructor(message) {
@@ -47,6 +49,54 @@ function assertGenerationControls(config) {
     }
 }
 
+function assertSlotExcludedDates(slot) {
+    if (slot.lastGenerationDate !== undefined && !isValidDateKey(slot.lastGenerationDate)) {
+        throw new MaterializationError("GenerationSlot.lastGenerationDate debe ser una fecha válida.");
+    }
+    if (slot.excludedDates === undefined) return;
+    if (
+        !Array.isArray(slot.excludedDates) ||
+        slot.excludedDates.some((date) => !isValidDateKey(date)) ||
+        new Set(slot.excludedDates).size !== slot.excludedDates.length
+    ) {
+        throw new MaterializationError(
+            "GenerationSlot.excludedDates debe contener fechas válidas y únicas.",
+        );
+    }
+}
+
+function assertSlotCollection(slots, groupValue, groupLabel) {
+    if (!Array.isArray(slots) || slots.length === 0) {
+        throw new MaterializationError("La configuración requiere al menos un GenerationSlot.");
+    }
+    const ids = new Set();
+    const groupedSlots = new Map();
+    slots.forEach((slot) => {
+        if (!slot || !isGenerationSlotId(slot.id) || ids.has(slot.id)) {
+            throw new MaterializationError("Cada GenerationSlot requiere un UUID v4 único.");
+        }
+        ids.add(slot.id);
+        assertTimeRange(slot.startTime, slot.endTime);
+        assertSlotExcludedDates(slot);
+        const key = groupValue(slot);
+        const group = groupedSlots.get(key) ?? [];
+        const overlaps = group.some((candidate) =>
+            timeRangesOverlap(slot.startTime, slot.endTime, candidate.startTime, candidate.endTime)
+        );
+        if (overlaps) {
+            throw new MaterializationError(`Los horarios de ${groupLabel} no pueden solaparse.`);
+        }
+        group.push(slot);
+        groupedSlots.set(key, group);
+    });
+}
+
+function assertLegacyFieldsAbsent(config, fieldNames) {
+    if (fieldNames.some((fieldName) => Object.hasOwn(config, fieldName))) {
+        throw new MaterializationError("La configuración debe utilizar GenerationSlots canónicos.");
+    }
+}
+
 export function validateGenerationConfig(config) {
     if (config === null) return;
     if (!config || typeof config !== "object") {
@@ -56,27 +106,12 @@ export function validateGenerationConfig(config) {
 
     if (config.mode === "weekly") {
         assertDateRange(config.startDate, config.endDate, config.indefinite);
-        if (!Array.isArray(config.weekdays) || config.weekdays.length === 0) {
-            throw new MaterializationError("Weekly requiere al menos un día.");
-        }
-        const normalizedWeekdays = [...new Set(config.weekdays)].sort((a, b) => a - b);
-        if (
-            normalizedWeekdays.length !== config.weekdays.length ||
-            normalizedWeekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 1 || weekday > 7)
-        ) {
-            throw new MaterializationError("Los weekdays deben ser valores ISO únicos entre 1 y 7.");
-        }
-        assertTimeRange(config.defaultStartTime, config.defaultEndTime);
-        const overrides = config.weekdayTimeOverrides;
-        if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
-            throw new MaterializationError("weekdayTimeOverrides debe ser un objeto.");
-        }
-        Object.entries(overrides).forEach(([weekdayKey, timeRange]) => {
-            const weekday = Number(weekdayKey);
-            if (!normalizedWeekdays.includes(weekday)) {
-                throw new MaterializationError("Un override solo puede pertenecer a un weekday activo.");
+        assertLegacyFieldsAbsent(config, ["weekdays", "defaultStartTime", "defaultEndTime", "weekdayTimeOverrides"]);
+        assertSlotCollection(config.slots, (slot) => slot.isoWeekday, "un mismo weekday");
+        config.slots.forEach((slot) => {
+            if (!Number.isInteger(slot.isoWeekday) || slot.isoWeekday < 1 || slot.isoWeekday > 7) {
+                throw new MaterializationError("Cada slot weekly requiere un isoWeekday entre 1 y 7.");
             }
-            assertTimeRange(timeRange?.startTime, timeRange?.endTime);
         });
         return;
     }
@@ -86,7 +121,8 @@ export function validateGenerationConfig(config) {
         if (!Number.isInteger(config.intervalDays) || config.intervalDays < 1) {
             throw new MaterializationError("intervalDays debe ser un entero mayor o igual a 1.");
         }
-        assertTimeRange(config.defaultStartTime, config.defaultEndTime);
+        assertLegacyFieldsAbsent(config, ["defaultStartTime", "defaultEndTime"]);
+        assertSlotCollection(config.slots, () => "interval", "interval_days");
         return;
     }
 
@@ -94,24 +130,21 @@ export function validateGenerationConfig(config) {
         if (!Array.isArray(config.entries) || config.entries.length === 0) {
             throw new MaterializationError("manual_dates requiere al menos una entrada.");
         }
+        assertSlotCollection(config.entries, (entry) => entry.date, "una misma fecha");
         config.entries.forEach((entry) => {
             if (!isValidDateKey(entry?.date)) throw new MaterializationError("Una fecha manual no es válida.");
-            assertTimeRange(entry.startTime, entry.endTime);
+            if (entry.excludedDates !== undefined) {
+                throw new MaterializationError("manual_dates no utiliza exclusiones por slot.");
+            }
         });
-        return;
-    }
-
-    if (config.mode === "single_date") {
-        if (!isValidDateKey(config.date)) throw new MaterializationError("La fecha única no es válida.");
-        assertTimeRange(config.startTime, config.endTime);
         return;
     }
 
     throw new MaterializationError("El modo de generación no es válido.");
 }
 
-function makeDraft(planItemId, date, startTime, endTime) {
-    return { planItemId, date, startTime, endTime, status: "pending" };
+function makeDraft(planItemId, sourceGenerationSlotId, date, startTime, endTime) {
+    return { planItemId, sourceGenerationSlotId, date, startTime, endTime, status: "pending" };
 }
 
 function materializeWeekly(planItem, rangeStart, rangeEnd) {
@@ -122,16 +155,11 @@ function materializeWeekly(planItem, rangeStart, rangeEnd) {
     const drafts = [];
     for (let date = effectiveStart; date <= effectiveEnd; date = addDays(date, 1)) {
         const weekday = getIsoWeekday(date);
-        if (!config.weekdays.includes(weekday)) continue;
-        const override = config.weekdayTimeOverrides[String(weekday)];
-        drafts.push(
-            makeDraft(
-                planItem.id,
-                date,
-                override?.startTime ?? config.defaultStartTime,
-                override?.endTime ?? config.defaultEndTime,
-            ),
-        );
+        config.slots
+            .filter((slot) => slot.isoWeekday === weekday)
+            .forEach((slot) => drafts.push(
+                makeDraft(planItem.id, slot.id, date, slot.startTime, slot.endTime),
+            ));
     }
     return drafts;
 }
@@ -142,7 +170,9 @@ function materializeIntervalDays(planItem, rangeStart, rangeEnd) {
     const drafts = [];
     for (let date = config.startDate; date <= effectiveEnd; date = addDays(date, config.intervalDays)) {
         if (date >= rangeStart) {
-            drafts.push(makeDraft(planItem.id, date, config.defaultStartTime, config.defaultEndTime));
+            config.slots.forEach((slot) => drafts.push(
+                makeDraft(planItem.id, slot.id, date, slot.startTime, slot.endTime),
+            ));
         }
     }
     return drafts;
@@ -161,22 +191,26 @@ export function materializeOccurrenceDrafts(planItem, rangeStart, rangeEnd) {
     if (config.mode === "manual_dates") {
         drafts = config.entries
             .filter((entry) => isDateInRange(entry.date, rangeStart, rangeEnd))
-            .map((entry) => makeDraft(planItem.id, entry.date, entry.startTime, entry.endTime));
-    }
-    if (config.mode === "single_date" && isDateInRange(config.date, rangeStart, rangeEnd)) {
-        drafts = [makeDraft(planItem.id, config.date, config.startTime, config.endTime)];
+            .map((entry) => makeDraft(planItem.id, entry.id, entry.date, entry.startTime, entry.endTime));
     }
     const excludedDates = new Set(config.excludedDates ?? []);
-    return drafts.filter(({ date }) =>
+    const slotExcludedDates = new Map(
+        (config.slots ?? []).map((slot) => [slot.id, new Set(slot.excludedDates ?? [])]),
+    );
+    const slotCutoffs = new Map(
+        (config.slots ?? []).map((slot) => [slot.id, slot.lastGenerationDate]),
+    );
+    return drafts.filter(({ date, sourceGenerationSlotId }) =>
         !excludedDates.has(date) &&
-        (!config.stoppedFromDate || date < config.stoppedFromDate)
+        !slotExcludedDates.get(sourceGenerationSlotId)?.has(date) &&
+        (!config.stoppedFromDate || date < config.stoppedFromDate) &&
+        (!slotCutoffs.get(sourceGenerationSlotId) || date <= slotCutoffs.get(sourceGenerationSlotId))
     );
 }
 
 export function getLatestExplicitDate(planItems) {
     const dates = planItems.flatMap((planItem) => {
         const config = planItem.generationConfig;
-        if (config?.mode === "single_date") return [config.date];
         if (config?.mode === "manual_dates") return config.entries.map((entry) => entry.date);
         return [];
     });

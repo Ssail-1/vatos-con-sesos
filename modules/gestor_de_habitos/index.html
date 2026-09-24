@@ -73,14 +73,25 @@
                         </div>
                     </div>
                     <div class="matrix-actions">
-                        <p class="matrix-help">Activa cada botón para avanzar al estado siguiente.</p>
+                        <p class="matrix-help">Selecciona el estado de cada segment desde su control.</p>
                         <button id="addActivityButton" class="add-activity-button" type="button">
                             <span aria-hidden="true">+</span> Agregar registro
                         </button>
                     </div>
                 </div>
 
-                <div class="matrix-container">
+                <div
+                    id="plannerBootstrapState"
+                    class="planner-bootstrap-state"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <p id="bootstrapMessage">Cargando planner…</p>
+                    <button id="retryBootstrapButton" class="secondary-button" type="button" hidden>
+                        Reintentar
+                    </button>
+                </div>
+                <div id="matrixContainer" class="matrix-container" hidden>
                     <table class="activity-matrix">
                         <caption class="visually-hidden">
                             Actividades del mes actual y estado diario de cada una
@@ -101,7 +112,7 @@
                 <button id="nextMonthButton" class="desktop-month-navigation-button" type="button" aria-label="Mes siguiente">›</button>
             </div>
 
-            <p class="memory-notice">Los cambios son temporales y se perderán al recargar la página.</p>
+            <p class="memory-notice">Los registros nuevos, los cambios de aparición y recurrencia, y los estados de los segments se guardan. Algunas acciones aún son temporales.</p>
         </main>
 
         <dialog id="activityDialog" class="activity-dialog" aria-labelledby="activityDialogTitle">
@@ -165,9 +176,15 @@
                     </div>
                     <label class="checkbox-field"><input id="indefiniteSchedule" name="indefinite" type="checkbox" checked /> Indefinidamente</label>
                     <div id="scheduleEndDateField" class="form-field" hidden><label for="scheduleEndDate">Fecha final</label><input id="scheduleEndDate" name="endDate" type="date" /></div>
-                    <details id="weekdayOverrides"><summary>Horarios diferentes por día</summary><div id="weekdayOverrideFields"></div></details>
+                    <details id="weekdayOverrides"><summary>Horarios por día</summary><div id="weekdayOverrideFields"></div></details>
                 </div>
-                <div id="intervalFields" class="schedule-fields" hidden><div class="form-field"><label for="intervalDays">Repetir cada</label><div class="inline-field"><input id="intervalDays" name="intervalDays" type="number" min="1" value="2" /><span>días</span></div></div></div>
+                <div id="intervalFields" class="schedule-fields" hidden>
+                    <div class="form-field"><label for="intervalDays">Repetir cada</label><div class="inline-field"><input id="intervalDays" name="intervalDays" type="number" min="1" value="2" /><span>días</span></div></div>
+                    <div id="intervalAdditionalSlots" class="generation-slot-list"></div>
+                    <button id="addIntervalSlotButton" class="manual-date-add-button" type="button">
+                        <span aria-hidden="true">+</span> Agregar horario
+                    </button>
+                </div>
                 <fieldset id="manualDatesField" class="manual-dates-fieldset" hidden>
                     <legend>Fechas específicas</legend>
                     <div id="manualDateEntries" class="manual-date-entries"></div>
@@ -175,8 +192,9 @@
                         <span aria-hidden="true">+</span> Agregar fecha
                     </button>
                 </fieldset>
-                <div id="singleDateField" class="form-field"><label id="occurrenceDateLabel" for="occurrenceDate">Fecha</label><input id="occurrenceDate" name="date" type="date" required /></div>
+                <div id="explicitDateField" class="form-field"><label id="occurrenceDateLabel" for="occurrenceDate">Fecha</label><input id="occurrenceDate" name="date" type="date" required /></div>
 
+                <div id="occurrenceTimeAnchor" hidden></div>
                 <div id="occurrenceTimeFields" class="time-fields">
                     <div class="form-field">
                         <label for="occurrenceStartTime">Hora de inicio</label>
@@ -195,6 +213,7 @@
                 </fieldset>
 
                 <div class="dialog-actions">
+                    <span id="formSavingStatus" class="form-saving-status" role="status" aria-live="polite" hidden>Guardando…</span>
                     <button id="cancelActivityButton" class="secondary-button" type="button">
                         Cancelar
                     </button>
@@ -203,34 +222,19 @@
             </form>
         </dialog>
 
-        <dialog
-            id="overrideDialog"
-            class="override-dialog"
-            aria-labelledby="overrideDialogTitle"
-            aria-describedby="overrideConsequence"
-        >
+        <dialog id="segmentConflictDialog" class="override-dialog segment-conflict-dialog"
+            aria-labelledby="segmentConflictTitle" aria-describedby="segmentConflictSummary">
             <div class="override-dialog-content">
                 <div class="dialog-heading">
-                    <p class="section-kicker">Cambio de prioridad</p>
-                    <h2 id="overrideDialogTitle">Confirmar desplazamiento</h2>
+                    <p class="section-kicker">Conflicto de horario</p>
+                    <h2 id="segmentConflictTitle"></h2>
+                    <p id="segmentConflictSummary" class="insertion-reference"></p>
                 </div>
-
-                <section class="override-candidate" aria-labelledby="overrideCandidateSummary">
-                    <h3 id="overrideCandidateSummary"></h3>
-                    <ul id="overrideCandidateOccurrences" class="override-schedule-list"></ul>
-                </section>
-
-                <section aria-labelledby="overrideConflictsTitle">
-                    <h3 id="overrideConflictsTitle">Registros que entran en conflicto</h3>
-                    <ul id="overrideConflictList" class="override-conflict-list"></ul>
-                </section>
-
-                <p id="overrideConsequence" class="override-consequence"></p>
-                <p id="overrideError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
-
+                <ul id="segmentConflictList" class="segment-conflict-list"></ul>
+                <p id="segmentConflictError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
                 <div class="dialog-actions">
-                    <button id="overrideBackButton" class="secondary-button" type="button">Volver</button>
-                    <button id="overrideContinueButton" class="primary-button" type="button">Continuar</button>
+                    <button id="segmentConflictBackButton" class="secondary-button" type="button">Volver</button>
+                    <button id="segmentConflictConfirmButton" class="primary-button" type="button">Confirmar cambios y continuar</button>
                 </div>
             </div>
         </dialog>
@@ -244,32 +248,84 @@
             <div class="override-dialog-content">
                 <div class="dialog-heading">
                     <p class="section-kicker">Gestión de planificación</p>
-                    <h2 id="deletionDialogTitle">Eliminar o detener</h2>
+                    <h2 id="deletionDialogTitle" tabindex="-1">Eliminar o detener</h2>
                     <p id="deletionSummary" class="insertion-reference"></p>
                 </div>
 
                 <div class="deletion-options">
                     <section class="deletion-option" aria-labelledby="deleteOccurrenceButton">
                         <button id="deleteOccurrenceButton" class="destructive-button" type="button">
-                            Eliminar solo este día
+                            Eliminar solo esta aparición
                         </button>
                         <p id="deleteOccurrenceDetails"></p>
                     </section>
 
+                    <section class="deletion-option" aria-labelledby="stopSlotButton">
+                        <button id="stopSlotButton" class="destructive-button" type="button">
+                            Detener este horario después de este día
+                        </button>
+                        <p id="stopSlotDetails"></p>
+                    </section>
+
                     <section class="deletion-option" aria-labelledby="stopPlanningButton">
                         <button id="stopPlanningButton" class="destructive-button" type="button">
-                            Detener de aquí en adelante
+                            Detener toda la planificación recurrente después de este día
                         </button>
                         <p id="stopPlanningDetails"></p>
+                    </section>
+
+                    <section class="deletion-option" aria-labelledby="deleteFutureButton">
+                        <button id="deleteFutureButton" class="destructive-button" type="button">
+                            Eliminar todas las apariciones después de este día
+                        </button>
+                        <p id="deleteFutureDetails"></p>
                     </section>
                 </div>
 
                 <p id="deletionError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+                <p id="deletionConfirmation" role="status" aria-live="polite" hidden></p>
 
                 <div class="dialog-actions">
                     <button id="deletionBackButton" class="secondary-button" type="button">Volver</button>
+                    <button id="deletionRetryButton" class="secondary-button" type="button" hidden>Reintentar solo lectura</button>
+                    <button id="deletionConfirmButton" class="destructive-button" type="button" hidden>Confirmar acción</button>
                 </div>
             </div>
+        </dialog>
+
+        <dialog id="structureDialog" class="override-dialog structure-dialog" aria-labelledby="structureDialogTitle">
+            <form id="structureForm" class="override-dialog-content" novalidate>
+                <div class="dialog-heading">
+                    <p class="section-kicker">Plan del día · solo esta aparición</p>
+                    <h2 id="structureDialogTitle">Editar horario</h2>
+                    <p id="structureReference" class="insertion-reference"></p>
+                </div>
+                <div class="structure-envelope">
+                    <label class="form-field" for="structureStartTime">Inicio general
+                        <input id="structureStartTime" type="time" required />
+                    </label>
+                    <label class="form-field" for="structureEndTime">Final general
+                        <input id="structureEndTime" type="time" required />
+                    </label>
+                </div>
+                <div class="structure-heading">
+                    <h3>Segments de esta aparición</h3>
+                    <button id="structureAddSegmentButton" class="secondary-button" type="button">Agregar segmento</button>
+                </div>
+                <div id="structureSegments" class="structure-segments"></div>
+                <p id="structureDuration" class="insertion-reference" aria-live="polite"></p>
+                <p id="structureError" class="form-errors" role="alert" aria-live="assertive" hidden></p>
+                <p id="structureSaving" class="form-saving-status" role="status" hidden>Guardando estructura…</p>
+                <div class="structure-secondary-actions">
+                    <button id="structureTranslateButton" class="secondary-button" type="button">Mover toda la aparición</button>
+                    <button id="structureResetButton" class="destructive-button" type="button">Restablecer segmentación</button>
+                </div>
+                <div class="dialog-actions">
+                    <button id="structureCancelButton" class="secondary-button" type="button">Cancelar</button>
+                    <button id="structureRetryButton" class="secondary-button" type="button" hidden>Reintentar actualización</button>
+                    <button id="structureSaveButton" class="primary-button" type="submit">Guardar estructura</button>
+                </div>
+            </form>
         </dialog>
     </body>
 </html>

@@ -1,4 +1,5 @@
 import { getDateTemporalZone, TEMPORAL_ZONES } from "./temporal-integrity.js";
+import { addDays } from "../utils/date-time.js";
 
 export const DELETION_REASONS = Object.freeze({
     ALLOWED: "allowed",
@@ -38,37 +39,34 @@ export function getIndividualDeletionPolicy({
         : { allowed: false, reason: DELETION_REASONS.PROTECTED_STATUS, occurrence };
 }
 
-export function getStopPlanningPolicy({
-    generationConfig,
-    selectedDate,
-    referenceDate,
-    historyEditWindowDays,
-}) {
-    const zone = getDateTemporalZone(selectedDate, referenceDate, historyEditWindowDays);
-    if (zone === TEMPORAL_ZONES.FROZEN) {
-        return { allowed: false, reason: DELETION_REASONS.FROZEN };
-    }
-    if (generationConfig === null) {
-        return { allowed: false, reason: DELETION_REASONS.MISSING_GENERATION_CONFIG };
-    }
-    if (generationConfig.stoppedFromDate && generationConfig.stoppedFromDate <= selectedDate) {
-        return {
-            allowed: false,
-            reason: DELETION_REASONS.ALREADY_STOPPED,
-            stoppedFromDate: generationConfig.stoppedFromDate,
-        };
-    }
-    return { allowed: true, reason: DELETION_REASONS.ALLOWED };
-}
-
-export function getEarlierStoppedFromDate(existingStoppedFromDate, selectedDate) {
-    return existingStoppedFromDate && existingStoppedFromDate < selectedDate
-        ? existingStoppedFromDate
-        : selectedDate;
-}
-
-export function shouldRemoveOccurrenceWhenStopping(occurrence, selectedDate, referenceDate) {
-    if (occurrence.date < selectedDate) return false;
-    if (occurrence.status === "pending") return true;
-    return occurrence.status === "cancelled" && occurrence.date > referenceDate;
+export function getPersistentPlanningActions({ occurrence, generationConfig, referenceDate }) {
+    const eligible = Boolean(occurrence && generationConfig && occurrence.date >= referenceDate);
+    const recurringMode = eligible && ["weekly", "interval_days"].includes(generationConfig.mode);
+    const firstStoppedDate = occurrence ? addDays(occurrence.date, 1) : null;
+    const withinScheduleEnd = recurringMode && (
+        generationConfig.indefinite !== false
+        || !generationConfig.endDate
+        || generationConfig.endDate >= firstStoppedDate
+    );
+    const globallyActiveAfterSelection = recurringMode && (
+        !generationConfig.stoppedFromDate
+        || generationConfig.stoppedFromDate > firstStoppedDate
+    );
+    const slots = Array.isArray(generationConfig?.slots) ? generationConfig.slots : null;
+    const canGenerateAfter = (slot) => (
+        !slot?.lastGenerationDate || slot.lastGenerationDate > occurrence.date
+    );
+    const recurring = Boolean(
+        withinScheduleEnd
+        && globallyActiveAfterSelection
+        && (!slots || slots.some(canGenerateAfter))
+    );
+    const sourceSlot = slots?.find(({ id }) => id === occurrence?.sourceGenerationSlotId);
+    return {
+        slot: recurring
+            && Boolean(occurrence.sourceGenerationSlotId)
+            && (!sourceSlot || canGenerateAfter(sourceSlot)),
+        recurring,
+        future: eligible,
+    };
 }

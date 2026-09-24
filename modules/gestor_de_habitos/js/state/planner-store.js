@@ -1,10 +1,12 @@
 import { isValidClassification, getPlanItemType } from "../domain/plan-item-classification.js";
 import {
+    cloneGenerationConfig,
+    isGenerationSlotId,
+    preserveSlotExcludedDates,
+} from "../domain/generation-slots.js";
+import {
     DELETION_REASONS,
-    getEarlierStoppedFromDate,
     getIndividualDeletionPolicy,
-    getStopPlanningPolicy,
-    shouldRemoveOccurrenceWhenStopping,
 } from "../domain/deletion-policy.js";
 import { getSchedulingPriority, PRIORITY_OVERRIDE_REASON } from "../domain/scheduling-priority.js";
 import {
@@ -12,10 +14,17 @@ import {
     isValidOccurrenceStatus,
 } from "../domain/occurrence-status.js";
 import {
+    cloneOrderedSegments,
+    CONFLICT_REASONS,
+    getSegmentValidationError,
+    isMultiSegmentOccurrence,
+    LAST_CONFLICT_ACTIONS,
+    ORIGIN_REASONS,
+} from "../domain/occurrence-segments.js";
+import {
     getDateTemporalZone,
     getHistoryCutoff,
     HISTORY_EDIT_WINDOW_DAYS,
-    reconcileFrozenStatus,
     TEMPORAL_ZONES,
 } from "../domain/temporal-integrity.js";
 import { findConflictInDraftSet, findOccurrenceConflict, findOccurrenceConflicts } from "../scheduling/conflict-detector.js";
@@ -43,29 +52,8 @@ export class PlannerStoreError extends Error {
     }
 }
 
-function cloneGenerationConfig(config) {
-    if (config === null) return null;
-    const clonedControls = config.excludedDates
-        ? { excludedDates: [...config.excludedDates] }
-        : {};
-    if (config.mode === "weekly") {
-        return {
-            ...config,
-            ...clonedControls,
-            weekdays: [...config.weekdays].sort((first, second) => first - second),
-            weekdayTimeOverrides: Object.fromEntries(
-                Object.entries(config.weekdayTimeOverrides).map(([key, value]) => [key, { ...value }]),
-            ),
-        };
-    }
-    if (config.mode === "manual_dates") {
-        return { ...config, ...clonedControls, entries: config.entries.map((entry) => ({ ...entry })) };
-    }
-    return { ...config, ...clonedControls };
-}
-
 function preserveGenerationControls(existingConfig, nextConfig) {
-    const candidate = cloneGenerationConfig(nextConfig);
+    const candidate = preserveSlotExcludedDates(existingConfig, nextConfig);
     if (candidate === null || existingConfig === null) return candidate;
     if (existingConfig.excludedDates !== undefined) {
         candidate.excludedDates = [...existingConfig.excludedDates];
@@ -81,10 +69,24 @@ function clonePlanItem(planItem) {
 }
 
 function cloneOccurrence(occurrence) {
+    const { statusContext: _legacyStatusContext, segments, conflictContext, ...fields } = occurrence;
     return {
-        ...occurrence,
-        ...(occurrence.statusContext ? { statusContext: { ...occurrence.statusContext } } : {}),
+        ...fields,
+        ...(segments !== undefined ? {
+            segments: Array.isArray(segments) ? cloneOrderedSegments(segments) : segments,
+        } : {}),
+        ...(conflictContext !== undefined ? {
+            conflictContext: conflictContext && typeof conflictContext === "object"
+                ? { ...conflictContext }
+                : conflictContext,
+        } : {}),
     };
+}
+
+function getGenerationSlotIds(planItem) {
+    const config = planItem.generationConfig;
+    if (config === null) return [];
+    return (config.mode === "manual_dates" ? config.entries : config.slots).map(({ id }) => id);
 }
 
 function normalizePlanItemDraft(draft) {
@@ -121,13 +123,34 @@ function validateOccurrenceDraft(draft) {
         !isValidDateKey(draft.date) ||
         !isValidTimeRange(draft.startTime, draft.endTime) ||
         !isValidOccurrenceStatus(draft.status) ||
-        draft.statusContext !== undefined && (
-            draft.statusContext?.reason !== PRIORITY_OVERRIDE_REASON ||
-            typeof draft.statusContext.sourceOccurrenceId !== "string" ||
-            !draft.statusContext.sourceOccurrenceId
-        )
+        (
+            draft.sourceGenerationSlotId !== undefined &&
+            draft.sourceGenerationSlotId !== null &&
+            !isGenerationSlotId(draft.sourceGenerationSlotId)
+        ) ||
+        draft.conflictContext !== undefined && (
+            !CONFLICT_REASONS.includes(draft.conflictContext?.reason) ||
+            typeof draft.conflictContext.sourceOccurrenceId !== "string" ||
+            !draft.conflictContext.sourceOccurrenceId
+        ) ||
+        draft.originReason !== undefined && !ORIGIN_REASONS.includes(draft.originReason) ||
+        draft.lastConflictAction !== undefined
+            && !LAST_CONFLICT_ACTIONS.includes(draft.lastConflictAction)
     ) {
         throw new PlannerStoreError("invalid_occurrence", "La occurrence no cumple el contrato.");
+    }
+}
+
+function validatePersistedOccurrence(occurrence) {
+    validateOccurrenceDraft(occurrence);
+    if (
+        occurrence.sourceGenerationSlotId === null
+        || getSegmentValidationError(occurrence) !== null
+    ) {
+        throw new PlannerStoreError(
+            "invalid_occurrence_segments",
+            "La occurrence no contiene segments persistidos válidos.",
+        );
     }
 }
 
@@ -142,6 +165,9 @@ function createUniqueId(prefix, collection, sequence) {
 }
 
 function occurrenceKey(occurrence) {
+    if (occurrence.sourceGenerationSlotId) {
+        return [occurrence.sourceGenerationSlotId, occurrence.date].join("|");
+    }
     return [occurrence.planItemId, occurrence.date, occurrence.startTime, occurrence.endTime].join("|");
 }
 
@@ -154,6 +180,99 @@ function compareOccurrences(first, second) {
     );
 }
 
+function buildHydratedPlannerState(serverState) {
+    if (
+        !serverState ||
+        typeof serverState !== "object" ||
+        Array.isArray(serverState) ||
+        !Array.isArray(serverState.planItems) ||
+        !Array.isArray(serverState.occurrences)
+    ) {
+        throw new PlannerStoreError("invalid_planner_state", "El estado del planner no es válido.");
+    }
+    if (
+        !serverState.planItems.every((item) => item && typeof item === "object" && !Array.isArray(item)) ||
+        !serverState.occurrences.every((item) => item && typeof item === "object" && !Array.isArray(item))
+    ) {
+        throw new PlannerStoreError("invalid_planner_state", "El estado del planner no es válido.");
+    }
+
+    const candidatePlanItems = serverState.planItems.map(clonePlanItem);
+    const candidateOccurrences = serverState.occurrences.map(cloneOccurrence);
+    candidatePlanItems.forEach((planItem) => {
+        if (typeof planItem.id !== "string" || !planItem.id) {
+            throw new PlannerStoreError("invalid_plan_item", "El PlanItem no tiene una identidad válida.");
+        }
+        validatePlanItem(planItem);
+    });
+    if (new Set(candidatePlanItems.map(({ id }) => id)).size !== candidatePlanItems.length) {
+        throw new PlannerStoreError("duplicate_plan_item_id", "Los IDs de PlanItem deben ser únicos.");
+    }
+
+    const slotOwners = new Map();
+    candidatePlanItems.forEach((planItem) => {
+        getGenerationSlotIds(planItem).forEach((slotId) => {
+            if (slotOwners.has(slotId)) {
+                throw new PlannerStoreError(
+                    "duplicate_generation_slot_id",
+                    "Cada GenerationSlot debe tener identidad única entre todos los PlanItems.",
+                );
+            }
+            slotOwners.set(slotId, planItem.id);
+        });
+    });
+
+    const planItemIds = new Set(candidatePlanItems.map(({ id }) => id));
+    candidateOccurrences.forEach((occurrence) => {
+        if (typeof occurrence.id !== "string" || !occurrence.id) {
+            throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene una identidad válida.");
+        }
+        validatePersistedOccurrence(occurrence);
+        if (!planItemIds.has(occurrence.planItemId)) {
+            throw new PlannerStoreError(
+                "invalid_planner_state",
+                "Una occurrence referencia un PlanItem inexistente.",
+            );
+        }
+        if (
+            occurrence.sourceGenerationSlotId &&
+            slotOwners.get(occurrence.sourceGenerationSlotId) !== occurrence.planItemId
+        ) {
+            throw new PlannerStoreError(
+                "invalid_planner_state",
+                "Una occurrence referencia un GenerationSlot inválido.",
+            );
+        }
+    });
+    const occurrenceIds = new Set(candidateOccurrences.map(({ id }) => id));
+    if (occurrenceIds.size !== candidateOccurrences.length) {
+        throw new PlannerStoreError("duplicate_occurrence_id", "Los IDs de occurrence deben ser únicos.");
+    }
+    if (candidateOccurrences.some(
+        ({ id, conflictContext }) => conflictContext && (
+            conflictContext.sourceOccurrenceId === id
+            || !occurrenceIds.has(conflictContext.sourceOccurrenceId)
+        ),
+    )) {
+        throw new PlannerStoreError(
+            "invalid_planner_state",
+            "Una occurrence contiene un conflictContext sin origen válido.",
+        );
+    }
+    const segmentIds = candidateOccurrences.flatMap(
+        ({ segments }) => segments.map(({ id }) => id),
+    );
+    if (new Set(segmentIds).size !== segmentIds.length) {
+        throw new PlannerStoreError(
+            "duplicate_segment_id",
+            "Los IDs de OccurrenceSegment deben ser únicos.",
+        );
+    }
+
+    candidateOccurrences.sort(compareOccurrences);
+    return { planItems: candidatePlanItems, occurrences: candidateOccurrences };
+}
+
 function getConfiguredMaterializationRange(planItem, fallbackStart, fallbackEnd) {
     const config = planItem.generationConfig;
     if (config === null || config.indefinite === true) {
@@ -161,9 +280,6 @@ function getConfiguredMaterializationRange(planItem, fallbackStart, fallbackEnd)
     }
     if (config.mode === "weekly" || config.mode === "interval_days") {
         return { rangeStart: config.startDate, rangeEnd: config.endDate };
-    }
-    if (config.mode === "single_date") {
-        return { rangeStart: config.date, rangeEnd: config.date };
     }
     const dates = config.entries.map((entry) => entry.date).sort();
     return { rangeStart: dates[0], rangeEnd: dates.at(-1) };
@@ -182,6 +298,16 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     let planItems = initialPlanItems.map(clonePlanItem);
     let occurrences = [];
     let idSequence = 0;
+    let hydratedFromBackend = false;
+
+    function requireLegacyMemoryMode() {
+        if (hydratedFromBackend) {
+            throw new PlannerStoreError(
+                "legacy_conflict_writer_retired",
+                "Los cambios de horario persistentes requieren el backend segmentario.",
+            );
+        }
+    }
     const materializationStart = getMonthStart(referenceDateKey);
     const minimumHorizon = getMonthEnd(referenceDateKey, 1);
     const explicitDate = getLatestExplicitDate(planItems);
@@ -191,6 +317,27 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     planItems.forEach(validatePlanItem);
     if (new Set(planItems.map((item) => item.id)).size !== planItems.length) {
         throw new PlannerStoreError("duplicate_plan_item_id", "Los IDs de PlanItem deben ser únicos.");
+    }
+    const initialSlotIds = planItems.flatMap(getGenerationSlotIds);
+    if (new Set(initialSlotIds).size !== initialSlotIds.length) {
+        throw new PlannerStoreError(
+            "duplicate_generation_slot_id",
+            "Cada GenerationSlot debe tener identidad única entre todos los PlanItems.",
+        );
+    }
+
+    function validateGenerationSlotOwnership(candidatePlanItem, replacedPlanItemId = null) {
+        const occupiedIds = new Set(
+            planItems
+                .filter(({ id }) => id !== replacedPlanItemId)
+                .flatMap(getGenerationSlotIds),
+        );
+        if (getGenerationSlotIds(candidatePlanItem).some((id) => occupiedIds.has(id))) {
+            throw new PlannerStoreError(
+                "duplicate_generation_slot_id",
+                "El UUID de un GenerationSlot ya pertenece a otro PlanItem.",
+            );
+        }
     }
 
     function assignOccurrenceIds(drafts) {
@@ -262,6 +409,23 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return occurrences.find((candidate) => candidate.id === occurrenceId) ?? null;
     }
 
+    function requireConflictContextSourceUnlocked(occurrence) {
+        if (occurrences.some(
+            (candidate) => candidate.conflictContext?.sourceOccurrenceId === occurrence.id,
+        )) {
+            throw new PlannerStoreError(
+                "status_context_locked",
+                "La occurrence conserva contexto de prioridad dependiente.",
+            );
+        }
+    }
+
+    function occurrenceScheduleChanged(occurrence, candidate) {
+        return occurrence.date !== candidate.date ||
+            occurrence.startTime !== candidate.startTime ||
+            occurrence.endTime !== candidate.endTime;
+    }
+
     function getCurrentReferenceDate() {
         const currentReferenceDate = getCurrentDateKey();
         if (!isValidDateKey(currentReferenceDate)) {
@@ -271,27 +435,37 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function reconcileTemporalState(referenceDate = getCurrentReferenceDate()) {
-        const reconciled = [];
-        occurrences.forEach((occurrence) => {
-            if (getDateTemporalZone(occurrence.date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN) return;
-            const reconciledStatus = reconcileFrozenStatus(occurrence.status);
-            if (reconciledStatus === occurrence.status) return;
-            occurrence.status = reconciledStatus;
-            reconciled.push(cloneOccurrence(occurrence));
-        });
+        // La reconciliación de status pertenece exclusivamente al backend.
+        // Este helper legacy solo conserva el saneamiento local de exclusiones
+        // usado por los editores en memoria; nunca cambia statuses.
         planItems.forEach((planItem) => {
             const config = planItem.generationConfig;
-            if (!config?.excludedDates?.length) return;
-            const editableExclusions = config.excludedDates.filter((date) =>
-                getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
-            );
-            if (editableExclusions.length === config.excludedDates.length) return;
-            planItem.generationConfig = {
-                ...config,
-                excludedDates: editableExclusions,
-            };
+            if (config === null) return;
+            let changed = false;
+            const candidate = cloneGenerationConfig(config);
+            if (config.excludedDates?.length) {
+                const editableExclusions = config.excludedDates.filter((date) =>
+                    getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
+                );
+                if (editableExclusions.length !== config.excludedDates.length) {
+                    candidate.excludedDates = editableExclusions;
+                    changed = true;
+                }
+            }
+            if (["weekly", "interval_days"].includes(config.mode)) {
+                candidate.slots = candidate.slots.map((slot) => {
+                    if (!slot.excludedDates?.length) return slot;
+                    const editableExclusions = slot.excludedDates.filter((date) =>
+                        getDateTemporalZone(date, referenceDate, historyEditWindowDays) !== TEMPORAL_ZONES.FROZEN
+                    );
+                    if (editableExclusions.length === slot.excludedDates.length) return slot;
+                    changed = true;
+                    return { ...slot, excludedDates: editableExclusions };
+                });
+            }
+            if (changed) planItem.generationConfig = candidate;
         });
-        return reconciled;
+        return [];
     }
 
     function requireScheduleMutableDate(date) {
@@ -321,6 +495,14 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return temporal;
     }
 
+    function requireLegacyParentWrite(occurrence) {
+        if (!isMultiSegmentOccurrence(occurrence)) return;
+        throw new PlannerStoreError(
+            "segment_write_required",
+            "Esta occurrence tiene varios segments y permanece en modo de solo lectura.",
+        );
+    }
+
     function requireDraftsOutsideFrozenHistory(drafts, referenceDate = getCurrentReferenceDate()) {
         reconcileTemporalState(referenceDate);
         const containsFrozenDate = drafts.some(({ date }) =>
@@ -343,7 +525,8 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         }
     }
 
-    // El bootstrap aplica primero sus fixtures y después cierra cualquier historia ya congelada.
+    // Los fixtures legacy siguen usando saneamiento local de exclusiones;
+    // los status persistidos solo cambian por el comando backend explícito.
     reconcileTemporalState();
 
     function describeConflict(conflict) {
@@ -354,27 +537,31 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         };
     }
 
-    function getDeletionOptionsInternal(planItemId, selectedDate, referenceDate = getCurrentReferenceDate()) {
+    function getDeletionOptionsInternal(
+        planItemId,
+        selectedDate,
+        referenceDate = getCurrentReferenceDate(),
+        occurrenceId = null,
+    ) {
         if (!isValidDateKey(selectedDate)) {
             throw new PlannerStoreError("invalid_occurrence", "La fecha seleccionada no es válida.");
         }
         reconcileTemporalState(referenceDate);
         const planItem = getPlanItemReference(planItemId);
         if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
-        const selectedOccurrences = occurrences.filter((occurrence) =>
+        let selectedOccurrences = occurrences.filter((occurrence) =>
             occurrence.planItemId === planItemId && occurrence.date === selectedDate
         );
+        if (occurrenceId !== null) {
+            selectedOccurrences = selectedOccurrences.filter(
+                (occurrence) => occurrence.id === occurrenceId,
+            );
+        }
         const individual = getIndividualDeletionPolicy({
             occurrences: selectedOccurrences,
             referenceDate,
             historyEditWindowDays,
             hasGenerationConfig: planItem.generationConfig !== null,
-        });
-        const stop = getStopPlanningPolicy({
-            generationConfig: planItem.generationConfig,
-            selectedDate,
-            referenceDate,
-            historyEditWindowDays,
         });
         return {
             planItem: clonePlanItem(planItem),
@@ -383,7 +570,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 ...individual,
                 occurrence: individual.occurrence ? cloneOccurrence(individual.occurrence) : null,
             },
-            stop: { ...stop },
         };
     }
 
@@ -425,25 +611,6 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         return created.map(cloneOccurrence);
     }
 
-    function buildWeeklyCandidate(planItem, generationConfig, rangeStart, rangeEnd, removableOccurrences) {
-        const candidatePlanItem = {
-            ...planItem,
-            generationConfig: preserveGenerationControls(planItem.generationConfig, generationConfig),
-        };
-        validatePlanItem(candidatePlanItem);
-        const removableIds = new Set(removableOccurrences.map(({ id }) => id));
-        const preservedOccurrences = occurrences.filter(({ id }) => !removableIds.has(id));
-        const preservedDates = new Set(
-            preservedOccurrences
-                .filter((occurrence) => occurrence.planItemId === planItem.id && occurrence.date >= rangeStart)
-                .map(({ date }) => date),
-        );
-        const drafts = materializeOccurrenceDrafts(candidatePlanItem, rangeStart, rangeEnd)
-            .filter(({ date }) => !preservedDates.has(date));
-        validateDraftSet(drafts, preservedOccurrences);
-        return { candidatePlanItem, preservedOccurrences, drafts };
-    }
-
     function evaluatePriorityConflicts(candidatePlanItem, candidateDrafts, ignoredOccurrenceId = null) {
         const internalConflict = findConflictInDraftSet(candidateDrafts, []);
         if (internalConflict) {
@@ -478,8 +645,10 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function preparePlanItemCreation(planItemDraft) {
+        requireLegacyMemoryMode();
         const normalized = normalizePlanItemDraft(planItemDraft);
         validatePlanItem(normalized);
+        validateGenerationSlotOwnership(normalized);
         const preview = { id: "__candidate_plan_item__", ...normalized };
         const explicitDate = getLatestExplicitDate([preview]);
         const previewHorizon = explicitDate && explicitDate > materializedThrough ? getMonthEnd(explicitDate) : materializedThrough;
@@ -500,6 +669,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function prepareOccurrenceAddition(planItemId, occurrenceDraft) {
+        requireLegacyMemoryMode();
         const planItem = getPlanItemReference(planItemId);
         if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
         requireScheduleMutableDate(occurrenceDraft?.date);
@@ -520,11 +690,13 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
     }
 
     function prepareOccurrenceUpdate(planItemId, planItemChanges, occurrenceId, occurrenceChanges) {
+        requireLegacyMemoryMode();
         const planItem = getPlanItemReference(planItemId);
         const occurrence = getOccurrenceReference(occurrenceId);
         if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
             throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
         }
+        requireLegacyParentWrite(occurrence);
         requireScheduleMutableDate(occurrence.date);
         if (occurrenceChanges.date !== occurrence.date) {
             throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
@@ -557,11 +729,304 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         throw new PlannerStoreError("invalid_operation", "La operación preparada no es válida.");
     }
 
+    function generationConfigAfterOccurrenceEdit(planItem, occurrence, changes) {
+        const config = cloneGenerationConfig(planItem.generationConfig);
+        const sourceSlotId = occurrence.sourceGenerationSlotId;
+        if (config === null || !sourceSlotId) return config;
+        if (["weekly", "interval_days"].includes(config.mode)) {
+            const sourceExists = config.slots.some(({ id }) => id === sourceSlotId);
+            if (!sourceExists) {
+                throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene un GenerationSlot válido.");
+            }
+            if (changes.date === occurrence.date) return config;
+            return {
+                ...config,
+                slots: config.slots.map((slot) => (
+                    slot.id === sourceSlotId
+                        ? {
+                            ...slot,
+                            excludedDates: [...new Set([
+                                ...(slot.excludedDates ?? []),
+                                occurrence.date,
+                            ])].sort(),
+                        }
+                        : slot
+                )),
+            };
+        }
+        const sourceExists = config.entries.some(({ id }) => id === sourceSlotId);
+        if (!sourceExists) {
+            throw new PlannerStoreError("invalid_occurrence", "La occurrence no tiene una entry manual válida.");
+        }
+        return {
+            ...config,
+            entries: config.entries.map((entry) => (
+                entry.id === sourceSlotId
+                    ? {
+                        ...entry,
+                        date: changes.date,
+                        startTime: changes.startTime,
+                        endTime: changes.endTime,
+                    }
+                    : entry
+            )),
+        };
+    }
+
+    function requireSourceSlotDateAvailable(occurrence, targetDate) {
+        if (
+            occurrence.sourceGenerationSlotId &&
+            occurrences.some((candidate) => (
+                candidate.id !== occurrence.id &&
+                candidate.sourceGenerationSlotId === occurrence.sourceGenerationSlotId &&
+                candidate.date === targetDate
+            ))
+        ) {
+            throw new PlannerStoreError(
+                "slot_date_conflict",
+                "El GenerationSlot ya tiene una occurrence en la fecha destino.",
+            );
+        }
+    }
+
+    function getIsoWeekRange(anchorDate) {
+        const weekStart = addDays(anchorDate, 1 - getIsoWeekday(anchorDate));
+        return { weekStart, weekEnd: addDays(weekStart, 6) };
+    }
+
+    function addSlotExclusion(config, sourceGenerationSlotId, date) {
+        if (!sourceGenerationSlotId) return config;
+        let matched = false;
+        const slots = config.slots.map((slot) => {
+            if (slot.id !== sourceGenerationSlotId) return slot;
+            matched = true;
+            return {
+                ...slot,
+                excludedDates: [...new Set([...(slot.excludedDates ?? []), date])].sort(),
+            };
+        });
+        if (!matched) {
+            throw new PlannerStoreError(
+                "invalid_occurrence",
+                "La occurrence no tiene un GenerationSlot válido.",
+            );
+        }
+        return { ...config, slots };
+    }
+
+    function requireExactOperationFields(operation, expectedFields) {
+        if (
+            !operation ||
+            typeof operation !== "object" ||
+            Object.keys(operation).length !== expectedFields.length ||
+            expectedFields.some((field) => !Object.hasOwn(operation, field))
+        ) {
+            throw new PlannerStoreError("invalid_payload", "Una operación de Apply Week no cumple el contrato.");
+        }
+    }
+
+    function validateLocalWeekOperations(operations) {
+        if (!Array.isArray(operations) || operations.length === 0) {
+            throw new PlannerStoreError("invalid_payload", "Apply Week requiere al menos una operación.");
+        }
+        const occurrenceIds = new Set();
+        return operations.map((operation) => {
+            const type = operation?.type;
+            if (type === "update") {
+                requireExactOperationFields(operation, ["type", "occurrenceId", "date", "startTime", "endTime"]);
+            } else if (type === "delete") {
+                requireExactOperationFields(operation, ["type", "occurrenceId"]);
+            } else if (type === "create") {
+                requireExactOperationFields(operation, ["type", "date", "startTime", "endTime"]);
+            } else {
+                throw new PlannerStoreError("invalid_payload", "El tipo de operación de Apply Week no es válido.");
+            }
+            if (["update", "delete"].includes(type)) {
+                if (typeof operation.occurrenceId !== "string" || !operation.occurrenceId || occurrenceIds.has(operation.occurrenceId)) {
+                    throw new PlannerStoreError("invalid_payload", "Un occurrenceId solo puede aparecer una vez.");
+                }
+                occurrenceIds.add(operation.occurrenceId);
+            }
+            if (["update", "create"].includes(type) && (
+                !isValidDateKey(operation.date) ||
+                !isValidTimeRange(operation.startTime, operation.endTime)
+            )) {
+                throw new PlannerStoreError("invalid_payload", "La fecha o el horario de Apply Week no es válido.");
+            }
+            return { ...operation };
+        });
+    }
+
+    function validateLocalWeekFinalState(planItem, finalWeekOccurrences) {
+        const sourceDates = new Set();
+        finalWeekOccurrences.forEach((occurrence) => {
+            validateOccurrenceDraft(occurrence);
+            if (occurrence.sourceGenerationSlotId) {
+                const key = `${occurrence.sourceGenerationSlotId}|${occurrence.date}`;
+                if (sourceDates.has(key)) {
+                    throw new PlannerStoreError(
+                        "slot_date_conflict",
+                        "Un GenerationSlot tendría dos occurrences en la misma fecha.",
+                    );
+                }
+                sourceDates.add(key);
+            }
+        });
+
+        const internalConflict = findConflictInDraftSet(finalWeekOccurrences, []);
+        if (internalConflict) {
+            throw new PlannerStoreError(
+                "time_conflict",
+                "El estado final de la semana contiene horarios que se superponen.",
+                { conflictingOccurrence: describeConflict(internalConflict.conflict) },
+            );
+        }
+
+        const externalOccurrences = occurrences.filter((occurrence) => occurrence.planItemId !== planItem.id);
+        const conflictsById = new Map();
+        finalWeekOccurrences.forEach((candidate) => {
+            findOccurrenceConflicts(candidate, externalOccurrences).forEach((conflict) => {
+                conflictsById.set(conflict.id, conflict);
+            });
+        });
+        const conflicts = [...conflictsById.values()];
+        if (!conflicts.length) return;
+        const described = conflicts.map(describeConflict);
+        if (conflicts.some(({ status }) => status === "completed")) {
+            throw new PlannerStoreError(
+                "completed_conflict",
+                "El intervalo contiene un registro ya completado y protegido.",
+                { conflictingOccurrences: described },
+            );
+        }
+        const candidatePriority = getSchedulingPriority(planItem);
+        if (conflicts.some((conflict) => {
+            const existingPlanItem = getPlanItemReference(conflict.planItemId);
+            return !existingPlanItem || candidatePriority <= getSchedulingPriority(existingPlanItem);
+        })) {
+            throw new PlannerStoreError(
+                "priority_conflict",
+                "La prioridad del registro no permite desplazar todo el conjunto en conflicto.",
+                { conflictingOccurrences: described },
+            );
+        }
+        throw new PlannerStoreError(
+            "priority_override_required",
+            "Apply Week requiere confirmar un desplazamiento por prioridad.",
+            { conflictingOccurrences: described },
+        );
+    }
+
+    function deriveRecurringWeekOperations(planItem, anchorDate, generationConfig) {
+        const currentMode = planItem.generationConfig?.mode;
+        if (currentMode === "manual_dates") {
+            throw new PlannerStoreError("unsupported_mode", "Apply Week no está disponible para manual_dates.");
+        }
+        if (
+            !["weekly", "interval_days"].includes(currentMode) ||
+            generationConfig?.mode !== currentMode
+        ) {
+            throw new PlannerStoreError(
+                "invalid_generation_config",
+                "Apply Week requiere conservar el modo recurrente actual.",
+            );
+        }
+        const candidateConfig = preserveGenerationControls(planItem.generationConfig, generationConfig);
+        validateGenerationConfig(candidateConfig);
+        const { weekStart, weekEnd } = getIsoWeekRange(anchorDate);
+        const desired = materializeOccurrenceDrafts(
+            { ...planItem, generationConfig: candidateConfig },
+            weekStart,
+            weekEnd,
+        );
+        const remainingDesired = new Set(desired);
+        const existingRecurring = occurrences.filter((occurrence) => (
+            occurrence.planItemId === planItem.id &&
+            occurrence.date >= weekStart &&
+            occurrence.date <= weekEnd &&
+            occurrence.sourceGenerationSlotId
+        ));
+        const operations = [];
+        existingRecurring.forEach((occurrence) => {
+            let desiredOccurrence = desired.find((draft) => (
+                remainingDesired.has(draft) &&
+                draft.sourceGenerationSlotId === occurrence.sourceGenerationSlotId
+            ));
+            if (!desiredOccurrence) {
+                const desiredOnDate = desired.filter((draft) => remainingDesired.has(draft) && draft.date === occurrence.date);
+                const existingOnDate = existingRecurring.filter((candidate) => candidate.date === occurrence.date);
+                if (desiredOnDate.length === 1 && existingOnDate.length === 1) {
+                    [desiredOccurrence] = desiredOnDate;
+                }
+            }
+            if (!desiredOccurrence) {
+                operations.push({ type: "delete", occurrenceId: occurrence.id });
+                return;
+            }
+            remainingDesired.delete(desiredOccurrence);
+            if (
+                occurrence.date !== desiredOccurrence.date ||
+                occurrence.startTime !== desiredOccurrence.startTime ||
+                occurrence.endTime !== desiredOccurrence.endTime
+            ) {
+                operations.push({
+                    type: "update",
+                    occurrenceId: occurrence.id,
+                    date: desiredOccurrence.date,
+                    startTime: desiredOccurrence.startTime,
+                    endTime: desiredOccurrence.endTime,
+                });
+            }
+        });
+        const existingAdHoc = occurrences.filter((occurrence) => (
+            occurrence.planItemId === planItem.id &&
+            occurrence.date >= weekStart &&
+            occurrence.date <= weekEnd &&
+            !occurrence.sourceGenerationSlotId
+        ));
+        remainingDesired.forEach((draft) => {
+            const alreadyRepresented = existingAdHoc.some((occurrence) => (
+                occurrence.date === draft.date &&
+                occurrence.startTime === draft.startTime &&
+                occurrence.endTime === draft.endTime
+            ));
+            if (alreadyRepresented) return;
+            operations.push({
+                type: "create",
+                date: draft.date,
+                startTime: draft.startTime,
+                endTime: draft.endTime,
+            });
+        });
+        return operations;
+    }
+
     function conflictSignature(conflicts) {
         return conflicts.map(({ id, date, startTime, endTime, status }) => [id, date, startTime, endTime, status].join("|")).sort().join(";");
     }
 
     return {
+        hydratePlannerState(serverState) {
+            const candidate = buildHydratedPlannerState(serverState);
+            const latestOccurrenceDate = candidate.occurrences.at(-1)?.date;
+            const hydratedThrough = latestOccurrenceDate
+                ? getMonthEnd(latestOccurrenceDate)
+                : minimumHorizon;
+
+            // La asignación ocurre solo después de validar el grafo completo.
+            planItems = candidate.planItems;
+            occurrences = candidate.occurrences;
+            hydratedFromBackend = true;
+            idSequence = 0;
+            materializedThrough = hydratedThrough > minimumHorizon
+                ? hydratedThrough
+                : minimumHorizon;
+            return {
+                planItems: planItems.map(clonePlanItem),
+                occurrences: occurrences.map(cloneOccurrence),
+            };
+        },
+
         getPlanItems() {
             return planItems.map(clonePlanItem);
         },
@@ -612,8 +1077,13 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
 
         reconcileTemporalState,
 
-        getDeletionOptions(planItemId, selectedDate) {
-            return getDeletionOptionsInternal(planItemId, selectedDate);
+        getDeletionOptions(planItemId, selectedDate, occurrenceId = null) {
+            return getDeletionOptionsInternal(
+                planItemId,
+                selectedDate,
+                getCurrentReferenceDate(),
+                occurrenceId,
+            );
         },
 
         findTimeConflict(date, startTime, endTime, ignoredOccurrenceId = null, status = "pending") {
@@ -644,15 +1114,18 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         prepareOccurrenceUpdate,
 
         commitPreparedScheduleChange(prepared) {
+            // Conservado solo para fixtures de memoria anteriores a hydrate;
+            // la aplicación real nunca puede usar este escritor parent-level.
+            requireLegacyMemoryMode();
             const current = prepareOperation(prepared?.operation);
             if (prepared.type !== current.type || conflictSignature(prepared.conflicts ?? []) !== conflictSignature(current.conflicts ?? [])) {
                 throw new PlannerStoreError("stale_override", "La agenda cambió desde la confirmación. Revisa nuevamente los conflictos.");
             }
             const conflictReferences = (current.conflicts ?? []).map(({ id }) => getOccurrenceReference(id));
-            const originalStatuses = conflictReferences.map(({ id, status, statusContext }) => ({
+            const originalStatuses = conflictReferences.map(({ id, status, conflictContext }) => ({
                 id,
                 status,
-                ...(statusContext ? { statusContext: { ...statusContext } } : {}),
+                ...(conflictContext ? { conflictContext: { ...conflictContext } } : {}),
             }));
             if (current.type === "override_required") {
                 conflictReferences.forEach((occurrence) => {
@@ -685,7 +1158,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                             candidate.date === occurrence.date &&
                             timeRangesOverlap(candidate.startTime, candidate.endTime, occurrence.startTime, occurrence.endTime)
                         ) ?? sourceOccurrences[0];
-                        occurrence.statusContext = {
+                        occurrence.conflictContext = {
                             reason: PRIORITY_OVERRIDE_REASON,
                             sourceOccurrenceId: source.id,
                         };
@@ -693,18 +1166,19 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 }
                 return result;
             } catch (error) {
-                originalStatuses.forEach(({ id, status, statusContext }) => {
+                originalStatuses.forEach(({ id, status, conflictContext }) => {
                     const occurrence = getOccurrenceReference(id);
                     if (!occurrence) return;
                     occurrence.status = status;
-                    if (statusContext) occurrence.statusContext = { ...statusContext };
-                    else delete occurrence.statusContext;
+                    if (conflictContext) occurrence.conflictContext = { ...conflictContext };
+                    else delete occurrence.conflictContext;
                 });
                 throw error;
             }
         },
 
         addOccurrenceForPlanItem(planItemId, occurrenceDraft) {
+            requireLegacyMemoryMode();
             const planItem = getPlanItemReference(planItemId);
             if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
             requireScheduleMutableDate(occurrenceDraft?.date);
@@ -716,10 +1190,8 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 endTime: occurrenceDraft?.endTime,
                 status: "pending",
             };
-            validateOccurrenceDraft(candidate);
-            validateDraftSet([candidate]);
             const excludedDates = planItem.generationConfig?.excludedDates ?? [];
-            const restoredConfig = planItem.generationConfig === null
+            let restoredConfig = planItem.generationConfig === null
                 ? null
                 : {
                     ...cloneGenerationConfig(planItem.generationConfig),
@@ -727,7 +1199,40 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                         ? { excludedDates: excludedDates.filter((date) => date !== candidate.date) }
                         : {}),
                 };
+            if (restoredConfig !== null) {
+                const configWithoutCandidateSlotExclusion = cloneGenerationConfig(restoredConfig);
+                if (["weekly", "interval_days"].includes(configWithoutCandidateSlotExclusion.mode)) {
+                    configWithoutCandidateSlotExclusion.slots = configWithoutCandidateSlotExclusion.slots.map((slot) => ({
+                        ...slot,
+                        ...(slot.excludedDates?.includes(candidate.date)
+                            ? { excludedDates: slot.excludedDates.filter((date) => date !== candidate.date) }
+                            : {}),
+                    }));
+                }
+                const matchingSlotDrafts = materializeOccurrenceDrafts(
+                    { ...planItem, generationConfig: configWithoutCandidateSlotExclusion },
+                    candidate.date,
+                    candidate.date,
+                ).filter((draft) => (
+                    draft.startTime === candidate.startTime && draft.endTime === candidate.endTime
+                ));
+                if (matchingSlotDrafts.length === 1) {
+                    candidate.sourceGenerationSlotId = matchingSlotDrafts[0].sourceGenerationSlotId;
+                    if (["weekly", "interval_days"].includes(restoredConfig.mode)) {
+                        restoredConfig = {
+                            ...restoredConfig,
+                            slots: restoredConfig.slots.map((slot) => (
+                                slot.id === candidate.sourceGenerationSlotId && slot.excludedDates?.includes(candidate.date)
+                                    ? { ...slot, excludedDates: slot.excludedDates.filter((date) => date !== candidate.date) }
+                                    : slot
+                            )),
+                        };
+                    }
+                }
+            }
             const candidatePlanItem = { ...planItem, generationConfig: restoredConfig };
+            validateOccurrenceDraft(candidate);
+            validateDraftSet([candidate]);
             validatePlanItem(candidatePlanItem);
             const created = assignOccurrenceIds([candidate])[0];
             const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
@@ -740,26 +1245,51 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         deleteOccurrenceForDate(occurrenceId) {
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
-            const options = getDeletionOptionsInternal(occurrence.planItemId, occurrence.date);
-            if (!options.individual.allowed) {
-                throwForDeletionDecision(options.individual, "registrar la fecha excluida");
-            }
-            if (options.individual.occurrence.id !== occurrenceId) {
-                throw new PlannerStoreError("ambiguous_occurrence", "La occurrence seleccionada dejó de ser inequívoca.");
-            }
-
             const planItem = getPlanItemReference(occurrence.planItemId);
-            const excludedDates = [...new Set([
-                ...(planItem.generationConfig.excludedDates ?? []),
-                occurrence.date,
-            ])].sort();
-            const candidatePlanItem = {
-                ...planItem,
-                generationConfig: {
-                    ...cloneGenerationConfig(planItem.generationConfig),
-                    excludedDates,
-                },
-            };
+            if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
+            const referenceDate = getCurrentReferenceDate();
+            reconcileTemporalState(referenceDate);
+            const decision = getIndividualDeletionPolicy({
+                occurrences: [occurrence],
+                referenceDate,
+                historyEditWindowDays,
+                hasGenerationConfig: planItem.generationConfig !== null,
+            });
+            if (!decision.allowed) {
+                throwForDeletionDecision(decision, "eliminar la occurrence");
+            }
+            requireConflictContextSourceUnlocked(occurrence);
+            let candidateConfig = cloneGenerationConfig(planItem.generationConfig);
+            if (
+                occurrence.sourceGenerationSlotId &&
+                ["weekly", "interval_days"].includes(candidateConfig.mode)
+            ) {
+                candidateConfig.slots = candidateConfig.slots.map((slot) => (
+                    slot.id === occurrence.sourceGenerationSlotId
+                        ? {
+                            ...slot,
+                            excludedDates: [...new Set([
+                                ...(slot.excludedDates ?? []),
+                                occurrence.date,
+                            ])].sort(),
+                        }
+                        : slot
+                ));
+            } else if (
+                occurrence.sourceGenerationSlotId &&
+                candidateConfig.mode === "manual_dates"
+            ) {
+                if (candidateConfig.entries.length === 1) {
+                    throw new PlannerStoreError(
+                        "last_manual_entry",
+                        "No se puede eliminar la última entry manual.",
+                    );
+                }
+                candidateConfig.entries = candidateConfig.entries.filter(
+                    ({ id }) => id !== occurrence.sourceGenerationSlotId,
+                );
+            }
+            const candidatePlanItem = { ...planItem, generationConfig: candidateConfig };
             validatePlanItem(candidatePlanItem);
             const preservedOccurrences = occurrences.filter(({ id }) => id !== occurrenceId);
 
@@ -772,143 +1302,385 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             };
         },
 
-        stopPlanItemFromDate(planItemId, selectedDate) {
-            const referenceDate = getCurrentReferenceDate();
-            const options = getDeletionOptionsInternal(planItemId, selectedDate, referenceDate);
-            if (!options.stop.allowed) {
-                throwForDeletionDecision(options.stop, "detener la planificación");
-            }
-
-            const planItem = getPlanItemReference(planItemId);
-            const stoppedFromDate = getEarlierStoppedFromDate(
-                planItem.generationConfig.stoppedFromDate,
-                selectedDate,
-            );
-            const candidatePlanItem = {
-                ...planItem,
-                generationConfig: {
-                    ...cloneGenerationConfig(planItem.generationConfig),
-                    stoppedFromDate,
-                    ...(planItem.generationConfig.excludedDates !== undefined
-                        ? {
-                            excludedDates: planItem.generationConfig.excludedDates.filter(
-                                (date) => date < stoppedFromDate,
-                            ),
-                        }
-                        : {}),
-                },
-            };
-            validatePlanItem(candidatePlanItem);
-            const removedOccurrences = occurrences.filter((occurrence) =>
-                occurrence.planItemId === planItemId &&
-                shouldRemoveOccurrenceWhenStopping(occurrence, stoppedFromDate, referenceDate)
-            );
-            const removedIds = new Set(removedOccurrences.map(({ id }) => id));
-            const preservedOccurrences = occurrences.filter(({ id }) => !removedIds.has(id));
-
-            const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
-            planItems[planItemIndex] = candidatePlanItem;
-            occurrences = preservedOccurrences;
-            return {
-                planItem: clonePlanItem(candidatePlanItem),
-                removedOccurrences: removedOccurrences.map(cloneOccurrence),
-            };
-        },
-
         applyWeeklyToWeek(planItemId, anchorDate, generationConfig) {
             const planItem = getPlanItemReference(planItemId);
             if (!planItem || !isValidDateKey(anchorDate)) {
                 throw new PlannerStoreError("not_found", "El registro o la fecha seleccionada no existe.");
             }
-            const { referenceDate } = requireScheduleMutableDate(anchorDate);
-            if (generationConfig?.mode !== "weekly") {
-                throw new PlannerStoreError("invalid_generation_config", "La excepción semanal requiere configuración weekly.");
+            const operations = deriveRecurringWeekOperations(planItem, anchorDate, generationConfig);
+            if (!operations.length) {
+                requireScheduleMutableDate(anchorDate);
+                const { weekStart, weekEnd } = getIsoWeekRange(anchorDate);
+                return occurrences
+                    .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= weekStart && occurrence.date <= weekEnd)
+                    .sort(compareOccurrences)
+                    .map(cloneOccurrence);
             }
-            validateGenerationConfig(generationConfig);
-            const weekStart = addDays(anchorDate, 1 - getIsoWeekday(anchorDate));
-            const weekEnd = addDays(weekStart, 6);
-            const historyCutoff = getHistoryCutoff(referenceDate, historyEditWindowDays);
-            const mutableWeekStart = weekStart < historyCutoff ? historyCutoff : weekStart;
-            const pendingByDate = new Map();
-            occurrences
-                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= mutableWeekStart && occurrence.date <= weekEnd)
-                .forEach((occurrence) => {
-                    const sameDate = pendingByDate.get(occurrence.date) ?? [];
-                    sameDate.push(occurrence);
-                    pendingByDate.set(occurrence.date, sameDate);
-                });
-            if ([...pendingByDate.values()].some((sameDate) => sameDate.length > 1)) {
-                throw new PlannerStoreError("ambiguous_week", "Hay varias occurrences pending del mismo registro en una fecha; edítalas individualmente.");
-            }
-            const removable = [...pendingByDate.values()].flat();
-            const { preservedOccurrences, drafts } = buildWeeklyCandidate(planItem, generationConfig, mutableWeekStart, weekEnd, removable);
-            const reusableByDate = new Map(removable.map((occurrence) => [occurrence.date, occurrence]));
-            const replacements = drafts.map((draft) => {
-                const reusable = reusableByDate.get(draft.date);
-                if (reusable) return { ...draft, id: reusable.id };
-                return assignOccurrenceIds([draft])[0];
-            });
-            occurrences = [...preservedOccurrences, ...replacements].sort(compareOccurrences);
-            return replacements.map(cloneOccurrence);
+            return this.applyWeekOperations(planItemId, anchorDate, operations).occurrences;
         },
 
-        applyGenerationConfigFromDate(planItemId, effectiveDate, generationConfig) {
+        prepareApplyWeekPayload(planItemId, anchorDate, generationConfig) {
             const planItem = getPlanItemReference(planItemId);
-            if (!planItem || !isValidDateKey(effectiveDate)) {
-                throw new PlannerStoreError("not_found", "El registro o la fecha efectiva no existe.");
-            }
-            requireScheduleMutableDate(effectiveDate);
-            const normalizedConfig = cloneGenerationConfig(generationConfig);
-            if (["weekly", "interval_days"].includes(normalizedConfig?.mode)) {
-                normalizedConfig.startDate = effectiveDate;
-                if (!normalizedConfig.indefinite && normalizedConfig.endDate < effectiveDate) {
-                    throw new PlannerStoreError("invalid_generation_config", "La fecha final es anterior a la fecha efectiva.");
-                }
-            }
-            validateGenerationConfig(normalizedConfig);
-            const removable = occurrences.filter(
-                (occurrence) => occurrence.planItemId === planItemId && occurrence.status === "pending" && occurrence.date >= effectiveDate,
-            );
-            const pendingCountByDate = new Map();
-            removable.forEach(({ date }) => {
-                pendingCountByDate.set(date, (pendingCountByDate.get(date) ?? 0) + 1);
-            });
-            if ([...pendingCountByDate.values()].some((count) => count > 1)) {
+            if (!planItem || !isValidDateKey(anchorDate)) {
                 throw new PlannerStoreError(
-                    "ambiguous_future",
-                    "Hay varias occurrences pending del mismo registro en una fecha; edítalas individualmente.",
+                    "not_found",
+                    "El registro o la fecha seleccionada no existe.",
                 );
             }
-            const preservedEffectiveDateOccurrences = occurrences
-                .filter(
-                    (occurrence) =>
-                        occurrence.planItemId === planItemId &&
-                        occurrence.date === effectiveDate &&
-                        occurrence.status !== "pending",
-                )
+            return {
+                anchorDate,
+                operations: deriveRecurringWeekOperations(
+                    planItem,
+                    anchorDate,
+                    generationConfig,
+                ),
+            };
+        },
+
+        applyWeekOperations(planItemId, anchorDate, operations) {
+            const planItem = getPlanItemReference(planItemId);
+            if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
+            if (!isValidDateKey(anchorDate)) {
+                throw new PlannerStoreError("invalid_payload", "anchorDate no es una fecha válida.");
+            }
+            if (planItem.generationConfig?.mode === "manual_dates") {
+                throw new PlannerStoreError("unsupported_mode", "Apply Week no está disponible para manual_dates.");
+            }
+            if (!["weekly", "interval_days"].includes(planItem.generationConfig?.mode)) {
+                throw new PlannerStoreError("invalid_generation_config", "Apply Week requiere una configuración recurrente.");
+            }
+            const normalizedOperations = validateLocalWeekOperations(operations);
+            const referenceDate = getCurrentReferenceDate();
+            reconcileTemporalState(referenceDate);
+            const { weekStart, weekEnd } = getIsoWeekRange(anchorDate);
+            const initialWeek = occurrences
+                .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= weekStart && occurrence.date <= weekEnd)
                 .map(cloneOccurrence);
-            const { candidatePlanItem, preservedOccurrences, drafts } = buildWeeklyCandidate(
-                planItem,
-                normalizedConfig,
-                effectiveDate,
-                materializedThrough,
-                removable,
+            const candidateById = new Map(initialWeek.map((occurrence) => [occurrence.id, occurrence]));
+            let candidateConfig = cloneGenerationConfig(planItem.generationConfig);
+            const createDrafts = [];
+            const deletedIds = new Set();
+
+            normalizedOperations.forEach((operation, index) => {
+                if (operation.type === "create") {
+                    if (operation.date < weekStart || operation.date > weekEnd) {
+                        throw new PlannerStoreError("invalid_payload", "La creación debe quedar dentro de la semana objetivo.");
+                    }
+                    requireScheduleMutableDate(operation.date);
+                    requirePlanningActiveOnDate(planItem, operation.date);
+                    createDrafts.push({
+                        id: `__apply_week_create_${index}__`,
+                        planItemId,
+                        date: operation.date,
+                        startTime: operation.startTime,
+                        endTime: operation.endTime,
+                        status: "pending",
+                    });
+                    return;
+                }
+
+                const occurrence = candidateById.get(operation.occurrenceId);
+                if (!occurrence || deletedIds.has(occurrence.id)) {
+                    throw new PlannerStoreError("not_found", "La occurrence no existe en la semana seleccionada.");
+                }
+                requireScheduleMutableDate(occurrence.date);
+                if (operation.type === "delete") {
+                    const decision = getIndividualDeletionPolicy({
+                        occurrences: [occurrence],
+                        referenceDate,
+                        historyEditWindowDays,
+                        hasGenerationConfig: true,
+                    });
+                    if (!decision.allowed) throwForDeletionDecision(decision, "eliminar la occurrence");
+                    requireConflictContextSourceUnlocked(occurrence);
+                    deletedIds.add(occurrence.id);
+                    candidateConfig = addSlotExclusion(
+                        candidateConfig,
+                        occurrence.sourceGenerationSlotId,
+                        occurrence.date,
+                    );
+                    return;
+                }
+
+                if (operation.date < weekStart || operation.date > weekEnd) {
+                    throw new PlannerStoreError("invalid_payload", "El movimiento debe quedar dentro de la semana objetivo.");
+                }
+                requireScheduleMutableDate(operation.date);
+                if (occurrenceScheduleChanged(occurrence, operation)) {
+                    requireConflictContextSourceUnlocked(occurrence);
+                }
+                if (operation.date !== occurrence.date) {
+                    candidateConfig = addSlotExclusion(
+                        candidateConfig,
+                        occurrence.sourceGenerationSlotId,
+                        occurrence.date,
+                    );
+                }
+                candidateById.set(occurrence.id, {
+                    ...occurrence,
+                    date: operation.date,
+                    startTime: operation.startTime,
+                    endTime: operation.endTime,
+                });
+            });
+
+            const finalWeek = [
+                ...[...candidateById.values()].filter(({ id }) => !deletedIds.has(id)),
+                ...createDrafts,
+            ];
+            validateLocalWeekFinalState(planItem, finalWeek);
+            const candidatePlanItem = { ...planItem, generationConfig: candidateConfig };
+            validatePlanItem(candidatePlanItem);
+
+            const created = assignOccurrenceIds(
+                createDrafts.map(({ id: _temporaryId, ...draft }) => draft),
             );
-            const created = assignOccurrenceIds(drafts);
+            const createdByTemporaryId = new Map(
+                createDrafts.map((draft, index) => [draft.id, created[index]]),
+            );
+            const persistedWeek = finalWeek.map((occurrence) => (
+                createdByTemporaryId.get(occurrence.id) ?? occurrence
+            ));
+            const weekIds = new Set(initialWeek.map(({ id }) => id));
             const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
             planItems[planItemIndex] = candidatePlanItem;
-            occurrences = [...preservedOccurrences, ...created].sort(compareOccurrences);
+            occurrences = [
+                ...occurrences.filter(({ id }) => !weekIds.has(id)),
+                ...persistedWeek,
+            ].sort(compareOccurrences);
+            return {
+                weekStart,
+                weekEnd,
+                occurrences: persistedWeek.sort(compareOccurrences).map(cloneOccurrence),
+            };
+        },
+
+        applyGenerationConfigFromDate(planItemId, generationConfig) {
+            const planItem = getPlanItemReference(planItemId);
+            if (!planItem) throw new PlannerStoreError("not_found", "El registro no existe.");
+            const currentMode = planItem.generationConfig?.mode;
+            if (currentMode === "manual_dates") {
+                throw new PlannerStoreError("unsupported_mode", "Apply Future no está disponible para manual_dates.");
+            }
+            if (!["weekly", "interval_days"].includes(currentMode)) {
+                throw new PlannerStoreError("invalid_generation_config", "Apply Future requiere una configuración recurrente.");
+            }
+            const effectiveDate = generationConfig?.startDate;
+            if (!isValidDateKey(effectiveDate)) {
+                throw new PlannerStoreError("invalid_generation_config", "futureConfig.startDate no es una fecha válida.");
+            }
+            const { referenceDate } = requireScheduleMutableDate(effectiveDate);
+            const normalizedConfig = cloneGenerationConfig(generationConfig);
+            if (normalizedConfig?.mode !== currentMode) {
+                throw new PlannerStoreError(
+                    "mode_change_not_supported",
+                    "Apply Future debe conservar el modo recurrente actual.",
+                );
+            }
+            if (!normalizedConfig.indefinite && normalizedConfig.endDate < effectiveDate) {
+                throw new PlannerStoreError(
+                    "invalid_generation_config",
+                    "La fecha final es anterior a la fecha efectiva.",
+                );
+            }
+            const candidateConfig = preserveGenerationControls(
+                planItem.generationConfig,
+                normalizedConfig,
+            );
+            validateGenerationConfig(candidateConfig);
+            if (candidateConfig.stoppedFromDate && effectiveDate >= candidateConfig.stoppedFromDate) {
+                throw new PlannerStoreError(
+                    "planning_stopped",
+                    "La fecha efectiva no puede reactivar una planificación detenida.",
+                );
+            }
+            const candidatePlanItem = { ...planItem, generationConfig: candidateConfig };
+            validatePlanItem(candidatePlanItem);
+            validateGenerationSlotOwnership(candidatePlanItem, planItem.id);
+
+            const oldBaselineByKey = new Map(
+                (effectiveDate <= materializedThrough
+                    ? materializeOccurrenceDrafts(planItem, effectiveDate, materializedThrough)
+                    : []
+                ).map((draft) => [occurrenceKey(draft), draft]),
+            );
+            const futureOccurrences = occurrences.filter((occurrence) => (
+                occurrence.planItemId === planItemId && occurrence.date >= effectiveDate
+            ));
+            const baselineByKey = new Map();
+            const preserved = [];
+            futureOccurrences.forEach((occurrence) => {
+                const expected = occurrence.sourceGenerationSlotId
+                    ? oldBaselineByKey.get(occurrenceKey(occurrence))
+                    : null;
+                if (
+                    expected &&
+                    occurrence.startTime === expected.startTime &&
+                    occurrence.endTime === expected.endTime
+                ) {
+                    baselineByKey.set(occurrenceKey(occurrence), occurrence);
+                } else {
+                    preserved.push(cloneOccurrence(occurrence));
+                }
+            });
+
+            const desired = effectiveDate <= materializedThrough
+                ? materializeOccurrenceDrafts(
+                    candidatePlanItem,
+                    effectiveDate,
+                    materializedThrough,
+                )
+                : [];
+            const preservedKeys = new Set(
+                preserved
+                    .filter(({ sourceGenerationSlotId }) => sourceGenerationSlotId)
+                    .map(occurrenceKey),
+            );
+            const desiredKeys = new Set();
+            const reconciled = [];
+            const newDrafts = [];
+            const changedForConflicts = [];
+            const preservedEffectiveDateOccurrences = preserved
+                .filter((occurrence) => occurrence.date === effectiveDate && occurrence.status !== "pending")
+                .map(cloneOccurrence);
+            const canReconcile = (occurrence) => occurrence.status === "pending" && getIndividualDeletionPolicy({
+                occurrences: [occurrence],
+                referenceDate,
+                historyEditWindowDays,
+                hasGenerationConfig: true,
+            }).allowed;
+            desired.forEach((draft) => {
+                const key = occurrenceKey(draft);
+                if (desiredKeys.has(key)) {
+                    throw new PlannerStoreError(
+                        "slot_date_conflict",
+                        "El nuevo motor produciría dos occurrences para slot + fecha.",
+                    );
+                }
+                desiredKeys.add(key);
+                if (preservedKeys.has(key)) return;
+                const existing = baselineByKey.get(key);
+                if (!existing) {
+                    newDrafts.push(draft);
+                    reconciled.push(draft);
+                    changedForConflicts.push(draft);
+                    return;
+                }
+                const changed = existing.startTime !== draft.startTime || existing.endTime !== draft.endTime;
+                if (changed && !canReconcile(existing)) {
+                    const protectedOccurrence = cloneOccurrence(existing);
+                    preserved.push(protectedOccurrence);
+                    if (existing.date === effectiveDate) {
+                        preservedEffectiveDateOccurrences.push(cloneOccurrence(existing));
+                    }
+                    return;
+                }
+                if (changed) requireConflictContextSourceUnlocked(existing);
+                const updated = { ...existing, startTime: draft.startTime, endTime: draft.endTime };
+                reconciled.push(updated);
+                if (changed) changedForConflicts.push(updated);
+            });
+
+            baselineByKey.forEach((occurrence, key) => {
+                if (desiredKeys.has(key)) return;
+                if (canReconcile(occurrence)) {
+                    requireConflictContextSourceUnlocked(occurrence);
+                    return;
+                }
+                const protectedOccurrence = cloneOccurrence(occurrence);
+                preserved.push(protectedOccurrence);
+                if (occurrence.date === effectiveDate) {
+                    preservedEffectiveDateOccurrences.push(cloneOccurrence(occurrence));
+                }
+            });
+
+            const finalFuture = [...preserved, ...reconciled];
+            const sourceDates = new Set();
+            finalFuture.forEach((occurrence) => {
+                validateOccurrenceDraft(occurrence);
+                if (!occurrence.sourceGenerationSlotId) return;
+                const key = occurrenceKey(occurrence);
+                if (sourceDates.has(key)) {
+                    throw new PlannerStoreError(
+                        "slot_date_conflict",
+                        "Un GenerationSlot tendría dos occurrences en una fecha.",
+                    );
+                }
+                sourceDates.add(key);
+            });
+            const internalConflict = findConflictInDraftSet(finalFuture, []);
+            if (internalConflict) {
+                throw new PlannerStoreError(
+                    "time_conflict",
+                    "El estado final de Apply Future contiene horarios que se superponen.",
+                    { conflictingOccurrence: describeConflict(internalConflict.conflict) },
+                );
+            }
+
+            const externalOccurrences = occurrences.filter(({ planItemId: ownerId }) => ownerId !== planItemId);
+            const conflictsById = new Map();
+            changedForConflicts.forEach((candidate) => {
+                findOccurrenceConflicts(candidate, externalOccurrences).forEach((conflict) => {
+                    conflictsById.set(conflict.id, conflict);
+                });
+            });
+            const conflicts = [...conflictsById.values()];
+            if (conflicts.some(({ status }) => status === "completed")) {
+                throw new PlannerStoreError("completed_conflict", "El intervalo contiene un registro completado y protegido.");
+            }
+            const candidatePriority = getSchedulingPriority(candidatePlanItem);
+            if (conflicts.some((conflict) => {
+                const existingPlanItem = getPlanItemReference(conflict.planItemId);
+                return !existingPlanItem || candidatePriority <= getSchedulingPriority(existingPlanItem);
+            })) {
+                throw new PlannerStoreError("priority_conflict", "La prioridad del PlanItem no permite desplazar los conflictos.");
+            }
+            if (conflicts.length) {
+                throw new PlannerStoreError(
+                    "priority_override_required",
+                    "Apply Future requiere confirmar un desplazamiento por prioridad.",
+                );
+            }
+
+            const created = assignOccurrenceIds(newDrafts);
+            const createdByKey = new Map(created.map((occurrence) => [occurrenceKey(occurrence), occurrence]));
+            const persistedFuture = finalFuture.map((occurrence) => (
+                occurrence.id ? occurrence : createdByKey.get(occurrenceKey(occurrence))
+            ));
+            const removedSlotIds = new Set(
+                planItem.generationConfig.slots
+                    .filter(({ id }) => !candidateConfig.slots.some((slot) => slot.id === id))
+                    .map(({ id }) => id),
+            );
+            const withoutRemovedSource = (occurrence) => {
+                if (!removedSlotIds.has(occurrence.sourceGenerationSlotId)) return occurrence;
+                const { sourceGenerationSlotId: _removedSource, ...preservedOccurrence } = occurrence;
+                return preservedOccurrence;
+            };
+            const untouched = occurrences
+                .filter((occurrence) => occurrence.planItemId !== planItemId || occurrence.date < effectiveDate)
+                .map((occurrence) => withoutRemovedSource(cloneOccurrence(occurrence)));
+            const planItemIndex = planItems.findIndex(({ id }) => id === planItemId);
+            planItems[planItemIndex] = candidatePlanItem;
+            occurrences = [
+                ...untouched,
+                ...persistedFuture.map((occurrence) => withoutRemovedSource(cloneOccurrence(occurrence))),
+            ].sort(compareOccurrences);
             return {
                 planItem: clonePlanItem(candidatePlanItem),
-                occurrences: created.map(cloneOccurrence),
+                occurrences: occurrences
+                    .filter((occurrence) => occurrence.planItemId === planItemId && occurrence.date >= effectiveDate)
+                    .map(cloneOccurrence),
                 preservedEffectiveDateOccurrences,
             };
         },
 
         addPlanItem(planItemDraft) {
+            requireLegacyMemoryMode();
             reconcileTemporalState();
             const normalized = normalizePlanItemDraft(planItemDraft);
             validatePlanItem(normalized);
+            validateGenerationSlotOwnership(normalized);
             idSequence += 1;
             const candidate = {
                 id: createUniqueId("plan-item", planItems, idSequence),
@@ -954,11 +1726,13 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         updatePlanItemAndOccurrence(planItemId, planItemChanges, occurrenceId, occurrenceChanges) {
+            requireLegacyMemoryMode();
             const planItem = getPlanItemReference(planItemId);
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!planItem || !occurrence || occurrence.planItemId !== planItemId) {
                 throw new PlannerStoreError("not_found", "El registro seleccionado ya no existe.");
             }
+            requireLegacyParentWrite(occurrence);
             requireScheduleMutableDate(occurrence.date);
             if (occurrenceChanges.date !== occurrence.date) {
                 throw new PlannerStoreError("date_locked", "La fecha pertenece al día seleccionado y no puede cambiarse desde este editor.");
@@ -966,7 +1740,11 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             const candidatePlanItem = normalizePlanItemDraft({
                 ...planItem,
                 ...planItemChanges,
-                generationConfig: planItem.generationConfig,
+                generationConfig: generationConfigAfterOccurrenceEdit(
+                    planItem,
+                    occurrence,
+                    occurrenceChanges,
+                ),
             });
             validatePlanItem(candidatePlanItem);
             const candidateOccurrence = {
@@ -975,7 +1753,11 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 startTime: occurrenceChanges.startTime,
                 endTime: occurrenceChanges.endTime,
             };
+            if (occurrenceScheduleChanged(occurrence, candidateOccurrence)) {
+                requireConflictContextSourceUnlocked(occurrence);
+            }
             validateOccurrenceDraft(candidateOccurrence);
+            requireSourceSlotDateAvailable(occurrence, candidateOccurrence.date);
             const conflict = findOccurrenceConflict(candidateOccurrence, occurrences, occurrence.id);
             if (conflict) {
                 throw new PlannerStoreError("time_conflict", "El horario se superpone.", {
@@ -995,8 +1777,12 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         updateOccurrence(occurrenceId, occurrenceChanges) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
+            const planItem = getPlanItemReference(occurrence.planItemId);
+            if (!planItem) throw new PlannerStoreError("not_found", "El PlanItem no existe.");
             requireScheduleMutableDate(occurrence.date);
             const candidate = {
                 ...occurrence,
@@ -1004,8 +1790,21 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 startTime: occurrenceChanges.startTime,
                 endTime: occurrenceChanges.endTime,
             };
+            if (occurrenceScheduleChanged(occurrence, candidate)) {
+                requireConflictContextSourceUnlocked(occurrence);
+            }
             validateOccurrenceDraft(candidate);
             requireScheduleMutableDate(candidate.date);
+            requireSourceSlotDateAvailable(occurrence, candidate.date);
+            const candidatePlanItem = {
+                ...planItem,
+                generationConfig: generationConfigAfterOccurrenceEdit(
+                    planItem,
+                    occurrence,
+                    candidate,
+                ),
+            };
+            validatePlanItem(candidatePlanItem);
             const conflict = findOccurrenceConflict(candidate, occurrences, occurrence.id);
             if (conflict) {
                 throw new PlannerStoreError("time_conflict", "El horario se superpone.", {
@@ -1015,13 +1814,17 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
             occurrence.date = candidate.date;
             occurrence.startTime = candidate.startTime;
             occurrence.endTime = candidate.endTime;
+            const planItemIndex = planItems.findIndex(({ id }) => id === planItem.id);
+            planItems[planItemIndex] = candidatePlanItem;
             occurrences.sort(compareOccurrences);
             return cloneOccurrence(occurrence);
         },
 
         setOccurrenceStatus(occurrenceId, status) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
             if (!isValidOccurrenceStatus(status)) {
                 throw new PlannerStoreError("invalid_status", "El estado no es válido.");
             }
@@ -1038,8 +1841,10 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
         },
 
         advanceOccurrenceStatus(occurrenceId) {
+            requireLegacyMemoryMode();
             const occurrence = getOccurrenceReference(occurrenceId);
             if (!occurrence) throw new PlannerStoreError("not_found", "La occurrence no existe.");
+            requireLegacyParentWrite(occurrence);
             const temporal = requireStatusTransition(
                 occurrence,
                 occurrence.status === "pending" ? "cancelled" : occurrence.status === "cancelled" ? "pending" : getNextStatus(occurrence.status),

@@ -7,9 +7,10 @@ import {
     validateFormValues,
 } from "../js/views/plan-item-form.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
+import { generationSlot, manualConfig } from "./helpers/generation-configs.mjs";
 
-const entryA = { date: "2026-09-01", startTime: "10:00", endTime: "11:00" };
-const entryB = { date: "2026-11-20", startTime: "16:00", endTime: "17:30" };
+const entryA = generationSlot({ date: "2026-09-01", startTime: "10:00", endTime: "11:00" });
+const entryB = generationSlot({ date: "2026-11-20", startTime: "16:00", endTime: "17:30" });
 const formValues = (itemType, manualDateEntries) => ({
     name: `Manual ${itemType}`,
     kind: "activity",
@@ -44,8 +45,8 @@ const formValues = (itemType, manualDateEntries) => ({
 
 {
     const sameDateEntries = [
-        { date: "2026-09-01", startTime: "08:00", endTime: "09:00" },
-        { date: "2026-09-01", startTime: "20:00", endTime: "21:00" },
+        generationSlot({ date: "2026-09-01", startTime: "08:00", endTime: "09:00" }),
+        generationSlot({ date: "2026-09-01", startTime: "20:00", endTime: "21:00" }),
     ];
     const result = validateFormValues(formValues("periodic", sameDateEntries));
     assert.deepEqual(result.errors, [], "el formulario permite la misma fecha con horarios distintos válidos");
@@ -73,7 +74,7 @@ for (const itemType of ["event", "periodic"]) {
     const created = store.commitPreparedScheduleChange(prepared);
     assert.deepEqual(
         created.occurrences.map(({ date, startTime, endTime }) => ({ date, startTime, endTime })),
-        [entryA, entryB],
+        [entryA, entryB].map(({ date, startTime, endTime }) => ({ date, startTime, endTime })),
         `crea ${itemType} con horarios manuales independientes`,
     );
 }
@@ -84,7 +85,7 @@ for (const itemType of ["event", "periodic"]) {
         name: "Evento existente",
         kind: "activity",
         activityType: "event",
-        generationConfig: { mode: "single_date", date: entryB.date, startTime: "16:30", endTime: "17:00" },
+        generationConfig: manualConfig([{ date: entryB.date, startTime: "16:30", endTime: "17:00" }]),
     };
     const store = createPlannerStore([existingEvent], [], "2026-08-28");
     const beforeItems = store.getPlanItems();
@@ -110,16 +111,16 @@ for (const itemType of ["event", "periodic"]) {
     const historical = store.getOccurrencesForDate(entryA.date)[0];
     store.setOccurrenceStatus(historical.id, "completed");
     const revisedEntryB = { ...entryB, startTime: "18:00", endTime: "19:00" };
-    store.applyGenerationConfigFromDate(original.id, entryA.date, {
-        mode: "manual_dates",
-        entries: [{ ...entryA, startTime: "12:00", endTime: "13:00" }, revisedEntryB],
-    });
-    assert.equal(store.getOccurrenceById(historical.id).startTime, entryA.startTime, "Apply future conserva historial manual");
-    assert.deepEqual(
-        store.getOccurrencesForDate(entryB.date).map(({ date, startTime, endTime }) => ({ date, startTime, endTime })),
-        [revisedEntryB],
-        "Apply future genera cada entry con su propio horario",
+    const before = store.getOccurrences();
+    assert.throws(
+        () => store.applyGenerationConfigFromDate(original.id, {
+            mode: "manual_dates",
+            entries: [{ ...entryA, startTime: "12:00", endTime: "13:00" }, revisedEntryB],
+        }),
+        (error) => error instanceof PlannerStoreError && error.code === "unsupported_mode",
     );
+    assert.equal(store.getOccurrenceById(historical.id).startTime, entryA.startTime, "Apply future conserva historial manual");
+    assert.deepEqual(store.getOccurrences(), before, "Apply future no modifica manual_dates");
 }
 
 console.log("manual-dates-form.test.mjs: todas las pruebas pasaron");
