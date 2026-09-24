@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PlannerApiError, updateSegmentStatus, validatePlannerStateResponse } from "../js/api/planner-api.js";
-import { getSelectableSegmentStatuses } from "../js/domain/occurrence-status.js";
+import {
+    getNextSelectableSegmentStatus,
+    getSelectableSegmentStatuses,
+    occurrenceStatuses,
+} from "../js/domain/occurrence-status.js";
 import { TEMPORAL_ZONES } from "../js/domain/temporal-integrity.js";
 import {
     createOccurrenceMutationCoordinator,
@@ -12,6 +16,7 @@ import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store
 import { deriveAggregateOccurrenceDisplay } from "../js/views/aggregate-occurrence-display.js";
 import {
     buildPlannerRows,
+    createSegmentStatusButton,
     getPlannerCellModel,
     getPlannerRowSelection,
 } from "../js/views/planner-matrix.js";
@@ -126,6 +131,37 @@ function invalidResponse(mutator) {
         () => validatePlannerStateResponse(state),
         (error) => error instanceof PlannerApiError && error.code === "invalid_response",
     );
+}
+
+function withFakeDocument(callback) {
+    const originalDocument = globalThis.document;
+    const createdTags = [];
+    globalThis.document = {
+        createElement(tagName) {
+            createdTags.push(tagName);
+            const listeners = new Map();
+            const attributes = new Map();
+            return {
+                tagName: tagName.toUpperCase(),
+                type: "",
+                className: "",
+                dataset: {},
+                disabled: false,
+                textContent: "",
+                title: "",
+                setAttribute(name, value) { attributes.set(name, String(value)); },
+                getAttribute(name) { return attributes.get(name) ?? null; },
+                addEventListener(type, listener) { listeners.set(type, listener); },
+                click() { listeners.get("click")?.({ stopPropagation() {} }); },
+            };
+        },
+    };
+    try {
+        return callback(createdTags);
+    } finally {
+        if (originalDocument === undefined) delete globalThis.document;
+        else globalThis.document = originalDocument;
+    }
 }
 
 test("planner-state valida segments y metadata opcional del contrato schema 004", () => {
@@ -380,6 +416,115 @@ test("opciones de status UI respetan futuro, hoy y ayer sin autoridad backend du
     assert.deepEqual(getSelectableSegmentStatuses("2026-09-18", "2026-09-20", TEMPORAL_ZONES.FROZEN), []);
 });
 
+test("ciclo segmentario conserva el orden histórico y filtra por fase temporal", () => {
+    occurrenceStatuses.forEach((status, index) => {
+        assert.equal(
+            getNextSelectableSegmentStatus(status, "2026-09-20", "2026-09-20", TEMPORAL_ZONES.EDITABLE),
+            occurrenceStatuses[(index + 1) % occurrenceStatuses.length],
+        );
+    });
+    assert.equal(
+        getNextSelectableSegmentStatus("pending", "2026-09-21", "2026-09-20", TEMPORAL_ZONES.FUTURE),
+        "cancelled",
+    );
+    assert.equal(
+        getNextSelectableSegmentStatus("cancelled", "2026-09-21", "2026-09-20", TEMPORAL_ZONES.FUTURE),
+        "pending",
+    );
+    assert.equal(
+        getNextSelectableSegmentStatus("completed", "2026-09-19", "2026-09-20", TEMPORAL_ZONES.EDITABLE),
+        "not_completed",
+    );
+    assert.equal(
+        getNextSelectableSegmentStatus("cancelled", "2026-09-19", "2026-09-20", TEMPORAL_ZONES.EDITABLE),
+        "completed",
+    );
+    assert.equal(
+        getNextSelectableSegmentStatus("pending", "2026-09-18", "2026-09-20", TEMPORAL_ZONES.FROZEN),
+        null,
+    );
+});
+
+test("control compacto es button, no dropdown, y cada render avanza un paso histórico", () => {
+    withFakeDocument((createdTags) => {
+        const requests = [];
+        const occurrence = {
+            id: SOURCE_ID,
+            date: "2026-09-20",
+            segments: [{ ...persistedState().occurrences[0].segments[0], status: "pending" }],
+        };
+        const currentDate = new Date(2026, 8, 20);
+        const first = createSegmentStatusButton(
+            planItem(), occurrence, occurrence.segments[0], currentDate, currentDate,
+            (request) => requests.push(request), false,
+        );
+        assert.equal(first.tagName, "BUTTON");
+        assert.equal(first.type, "button");
+        assert.equal(first.dataset.segmentId, SEGMENT_IDS.source);
+        assert.match(first.getAttribute("aria-label"), /Pendiente.*siguiente estado: En progreso/);
+        first.click();
+        assert.deepEqual(requests[0], {
+            occurrenceId: SOURCE_ID,
+            segmentId: SEGMENT_IDS.source,
+            status: "in_progress",
+        });
+
+        const refreshedSegment = { ...occurrence.segments[0], status: "in_progress" };
+        const second = createSegmentStatusButton(
+            planItem(), occurrence, refreshedSegment, currentDate, currentDate,
+            (request) => requests.push(request), false,
+        );
+        second.click();
+        assert.equal(requests[1].status, "completed");
+        assert.deepEqual(createdTags, ["button", "button"], "el control no crea select ni option");
+    });
+});
+
+test("siblings multi-segment ciclan por ID independiente y pending bloquea double-submit visual", () => {
+    withFakeDocument(() => {
+        const requests = [];
+        const occurrence = persistedState().occurrences.find(({ id }) => id === MULTI_ID);
+        const currentDate = new Date(2026, 8, 20);
+        const early = createSegmentStatusButton(
+            planItem(), occurrence, occurrence.segments[1], currentDate, currentDate,
+            (request) => requests.push(request), false, { segmentOrdinal: 1 },
+        );
+        const late = createSegmentStatusButton(
+            planItem(), occurrence, occurrence.segments[0], currentDate, currentDate,
+            (request) => requests.push(request), false, { segmentOrdinal: 2 },
+        );
+        early.click();
+        late.click();
+        assert.deepEqual(requests.map(({ segmentId, status }) => [segmentId, status]), [
+            [SEGMENT_IDS.early, "not_completed"],
+            [SEGMENT_IDS.late, "in_progress"],
+        ]);
+
+        const locked = createSegmentStatusButton(
+            planItem(), occurrence, occurrence.segments[0], currentDate, currentDate,
+            (request) => requests.push(request), true,
+        );
+        assert.equal(locked.disabled, true);
+        locked.click();
+        assert.equal(requests.length, 2);
+    });
+});
+
+test("historial frozen conserva un control compacto deshabilitado y accesible", () => {
+    withFakeDocument(() => {
+        const occurrence = persistedState().occurrences[0];
+        const selectedDate = new Date(2026, 8, 18);
+        const currentDate = new Date(2026, 8, 20);
+        const button = createSegmentStatusButton(
+            planItem(), { ...occurrence, date: "2026-09-18" }, occurrence.segments[0],
+            selectedDate, currentDate, () => assert.fail("frozen no debe mutar"), false,
+        );
+        assert.equal(button.disabled, true);
+        assert.match(button.getAttribute("aria-label"), /historial congelado, solo lectura/i);
+        button.click();
+    });
+});
+
 test("PATCH child confirmado → GET → hydrate actualiza parent solo desde respuesta autoritativa", async () => {
     const store = createPlannerStore([], [], "2026-09-20");
     store.hydratePlannerState(persistedState());
@@ -457,7 +602,7 @@ test("single-segment PATCH usa su ID y solo GET actualiza su parent aggregate", 
     assert.equal(store.getOccurrenceById(SOURCE_ID).status, "cancelled");
 });
 
-test("409 de status no muta el planner local ni dispara GET o resolución de conflicto", async () => {
+test("409 de status no muta localmente, refresca autoridad y no abre resolución destructiva", async () => {
     for (const code of ["segment_status_conflict", "concurrent_conflict", "temporal_reconciliation_required"]) {
         const store = createPlannerStore([], [], "2026-09-20");
         store.hydratePlannerState(persistedState());
@@ -470,12 +615,13 @@ test("409 de status no muta el planner local ni dispara GET o resolución de con
                 });
             },
             loadPlannerState: async () => { calls.push("get"); return persistedState(); },
-            hydratePlannerState: () => { calls.push("hydrate"); },
+            hydratePlannerState: (state) => { calls.push("hydrate"); return store.hydratePlannerState(state); },
+            refreshAfterMutationError: true,
         });
         const outcome = await coordinator.submit(SEGMENT_IDS.late, "completed");
         assert.equal(outcome.status, "mutation_error");
         assert.equal(outcome.error.code, code);
-        assert.deepEqual(calls, ["patch"]);
+        assert.deepEqual(calls, ["patch", "get", "hydrate"]);
         assert.equal(store.getOccurrenceById(MULTI_ID).status, "in_progress");
         assert.equal(store.getOccurrenceById(MULTI_ID).segments.find(({ id }) => id === SEGMENT_IDS.late).status, "pending");
     }

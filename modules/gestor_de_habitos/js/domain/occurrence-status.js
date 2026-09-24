@@ -1,3 +1,5 @@
+import { TEMPORAL_ZONES } from "./temporal-integrity.js";
+
 export const occurrenceStatuses = Object.freeze([
     "pending",
     "in_progress",
@@ -40,6 +42,14 @@ export function getSelectableSegmentStatuses(date, today, zone) {
     return occurrenceStatuses;
 }
 
+export function getNextSelectableSegmentStatus(currentStatus, date, today, zone) {
+    const selectableStatuses = getSelectableSegmentStatuses(date, today, zone);
+    if (selectableStatuses.length === 0) return null;
+    const currentIndex = selectableStatuses.indexOf(currentStatus);
+    if (currentIndex === -1) return selectableStatuses[0];
+    return selectableStatuses[(currentIndex + 1) % selectableStatuses.length];
+}
+
 export function getStatusPresentation(status, planItemName, dateLabel, actionDescription = "Activar para cambiar estado.") {
     const safeStatus = statusDefinitions[status] ? status : "pending";
     const definition = statusDefinitions[safeStatus];
@@ -49,4 +59,3 @@ export function getStatusPresentation(status, planItemName, dateLabel, actionDes
         accessibleLabel: `${planItemName}, ${dateLabel}: ${definition.label}. ${actionDescription}`,
     };
 }
-import { TEMPORAL_ZONES } from "./temporal-integrity.js";

@@ -2,6 +2,7 @@ export function createOccurrenceMutationCoordinator({
     mutateOccurrence,
     loadPlannerState,
     hydratePlannerState,
+    refreshAfterMutationError = false,
 }) {
     if (
         typeof mutateOccurrence !== "function" ||
@@ -34,7 +35,18 @@ export function createOccurrenceMutationCoordinator({
             if (error?.details?.mutationConfirmed) {
                 return refreshAfterConfirmedMutation();
             }
-            return { status: "mutation_error", error };
+            if (!refreshAfterMutationError) return { status: "mutation_error", error };
+            try {
+                const serverState = await loadPlannerState();
+                const state = hydratePlannerState(serverState);
+                return { status: "mutation_error", error, state };
+            } catch (refreshError) {
+                return {
+                    status: "mutation_error_refresh_error",
+                    error,
+                    refreshError,
+                };
+            }
         }
         return refreshAfterConfirmedMutation(mutation);
     }

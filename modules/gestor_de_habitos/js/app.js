@@ -334,6 +334,7 @@ const segmentStatusMutation = createOccurrenceMutationCoordinator({
     mutateOccurrence: updateSegmentStatus,
     loadPlannerState: fetchPlannerState,
     hydratePlannerState: (serverState) => plannerStore.hydratePlannerState(serverState),
+    refreshAfterMutationError: true,
 });
 
 function reviewSegmentConflict(outcome, intent) {
@@ -439,6 +440,10 @@ async function persistSegmentStatus({ segmentId, status }) {
     } else if (outcome.status === "saved_refresh_error") {
         showFeedback(
             "El estado se guardó, pero no se pudo actualizar la vista. Activa de nuevo el control para reintentar solo la lectura; no se repetirá el cambio.",
+        );
+    } else if (outcome.status === "mutation_error_refresh_error") {
+        showFeedback(
+            `${getSegmentStatusMutationErrorMessage(outcome.error)} Tampoco se pudo recargar el estado autoritativo; vuelve a intentar la lectura antes de otro cambio.`,
         );
     } else {
         showFeedback(getSegmentStatusMutationErrorMessage(outcome.error));

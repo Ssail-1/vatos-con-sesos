@@ -1,5 +1,5 @@
 import {
-    getSelectableSegmentStatuses,
+    getNextSelectableSegmentStatus,
     occurrenceStatuses,
     statusDefinitions,
 } from "../domain/occurrence-status.js";
@@ -25,52 +25,55 @@ function createTextCell(tagName, className, text) {
     return cell;
 }
 
-function createSegmentStatusSelect(planItem, occurrence, segment, date, currentDate, onStatusChange, pending, ordinal = null) {
+export function createSegmentStatusButton(
+    planItem,
+    occurrence,
+    segment,
+    date,
+    currentDate,
+    onStatusChange,
+    pending,
+    { occurrenceOrdinal = null, segmentOrdinal = null } = {},
+) {
     const referenceDate = formatDateKey(currentDate);
     const zone = getDateTemporalZone(occurrence.date, referenceDate);
-    const choices = getSelectableSegmentStatuses(occurrence.date, referenceDate, zone);
-    const wrapper = document.createElement("span");
-    wrapper.className = "status-button segment-status-picker";
-    wrapper.dataset.status = segment.status;
-    const glyph = document.createElement("span");
-    glyph.textContent = statusDefinitions[segment.status].symbol;
-    glyph.setAttribute("aria-hidden", "true");
-    const select = document.createElement("select");
-    select.className = "segment-status-select";
-    select.dataset.occurrenceId = occurrence.id;
-    select.dataset.segmentId = segment.id;
-    select.dataset.date = occurrence.date;
-    select.dataset.status = segment.status;
-    for (const status of choices.includes(segment.status) ? choices : [segment.status, ...choices]) {
-        const option = document.createElement("option");
-        const definition = statusDefinitions[status];
-        option.value = status;
-        option.textContent = `${definition.symbol}${definition.modifier ?? ""} ${definition.label}`;
-        option.disabled = !choices.includes(status);
-        select.append(option);
-    }
-    select.value = segment.status;
-    select.disabled = pending || zone === TEMPORAL_ZONES.FROZEN;
-    if (select.disabled) wrapper.classList.add("is-disabled");
-    const occurrencePosition = ordinal
-        ? ` Horario ${ordinal.position} de ${ordinal.total}.`
+    const nextStatus = getNextSelectableSegmentStatus(
+        segment.status,
+        occurrence.date,
+        referenceDate,
+        zone,
+    );
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "status-button segment-status-control";
+    button.dataset.occurrenceId = occurrence.id;
+    button.dataset.segmentId = segment.id;
+    button.dataset.date = occurrence.date;
+    button.dataset.status = segment.status;
+    button.textContent = statusDefinitions[segment.status].symbol;
+    button.disabled = pending || nextStatus === null;
+    const occurrencePosition = occurrenceOrdinal
+        ? ` Horario ${occurrenceOrdinal.position} de ${occurrenceOrdinal.total}.`
         : "";
-    const accessibleLabel = `${planItem.name}, ${formatSelectedDate(date)}: estado de Segment${occurrencePosition} ${statusDefinitions[segment.status].label}.`
-        + (select.disabled ? " Solo lectura." : " Seleccionar nuevo estado.");
-    select.setAttribute("aria-label", accessibleLabel);
-    select.title = accessibleLabel;
-    select.addEventListener("click", (event) => event.stopPropagation());
-    select.addEventListener("change", (event) => {
+    const segmentSubject = segmentOrdinal ? `Seg ${segmentOrdinal}` : "Segment";
+    const actionDescription = nextStatus === null
+        ? " Historial congelado, solo lectura."
+        : pending
+            ? " Cambio de estado en curso."
+            : ` Activar para cambiar al siguiente estado: ${statusDefinitions[nextStatus].label}.`;
+    const accessibleLabel = `${planItem.name}, ${formatSelectedDate(date)}: estado de ${segmentSubject}.${occurrencePosition} ${statusDefinitions[segment.status].label}.${actionDescription}`;
+    button.setAttribute("aria-label", accessibleLabel);
+    button.title = accessibleLabel;
+    button.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (select.disabled || !choices.includes(select.value) || select.value === segment.status) return;
+        if (button.disabled || nextStatus === null) return;
         onStatusChange({
             occurrenceId: occurrence.id,
             segmentId: segment.id,
-            status: select.value,
+            status: nextStatus,
         });
     });
-    wrapper.append(glyph, select);
-    return wrapper;
+    return button;
 }
 
 function createReadOnlyStatus(status, accessibleLabel, className = "status-button") {
@@ -99,7 +102,7 @@ function createOccurrenceStatusControl(
     ordinal = null,
 ) {
     if (!isMultiSegmentOccurrence(occurrence)) {
-        return createSegmentStatusSelect(
+        return createSegmentStatusButton(
             planItem,
             occurrence,
             occurrence.segments[0],
@@ -107,7 +110,7 @@ function createOccurrenceStatusControl(
             currentDate,
             onStatusChange,
             statusMutationPending,
-            ordinal,
+            { occurrenceOrdinal: ordinal },
         );
     }
     const definition = statusDefinitions[occurrence.status];
@@ -687,7 +690,7 @@ function createSegmentRow(rowData, context) {
                     "segment-status-marker",
                 ));
             } else {
-                const control = createSegmentStatusSelect(
+                const control = createSegmentStatusButton(
                     planItem,
                     occurrence,
                     segment,
@@ -695,14 +698,8 @@ function createSegmentRow(rowData, context) {
                     context.currentDate,
                     context.onStatusChange,
                     context.statusMutationPending,
+                    { segmentOrdinal },
                 );
-                control.classList.add("segment-status-control");
-                const select = control.querySelector("select");
-                select.setAttribute(
-                    "aria-label",
-                    `${planItem.name}, Seg ${segmentOrdinal}: ${statusDefinitions[segment.status].label}. Seleccionar nuevo estado.`,
-                );
-                select.title = select.getAttribute("aria-label");
                 cell.append(control);
             }
         } else {
@@ -806,7 +803,7 @@ export function createPlannerMatrixView(context) {
 
         focusSegmentStatusControl(segmentId) {
             const button = context.matrixBody.querySelector(
-                `select.segment-status-select[data-segment-id="${CSS.escape(segmentId)}"]`,
+                `button.segment-status-control[data-segment-id="${CSS.escape(segmentId)}"]`,
             );
             if (!button || button.disabled) return false;
             button.focus();
