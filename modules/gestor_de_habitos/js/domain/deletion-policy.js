@@ -31,12 +31,29 @@ export function getIndividualDeletionPolicy({
     if (!hasGenerationConfig) {
         return { allowed: false, reason: DELETION_REASONS.MISSING_GENERATION_CONFIG, occurrence };
     }
+    return { allowed: true, reason: DELETION_REASONS.ALLOWED, occurrence };
+}
+
+// Los editores compuestos conservan la política histórica de status hasta que
+// su contrato se revise expresamente. El DELETE individual no usa esta regla.
+export function getScheduledDeletionPolicy(options) {
+    const decision = getIndividualDeletionPolicy(options);
+    if (!decision.allowed) return decision;
+    const zone = getDateTemporalZone(
+        decision.occurrence.date,
+        options.referenceDate,
+        options.historyEditWindowDays,
+    );
     const allowedStatuses = zone === TEMPORAL_ZONES.FUTURE
         ? ["pending", "cancelled"]
         : ["pending"];
-    return allowedStatuses.includes(occurrence.status)
-        ? { allowed: true, reason: DELETION_REASONS.ALLOWED, occurrence }
-        : { allowed: false, reason: DELETION_REASONS.PROTECTED_STATUS, occurrence };
+    return allowedStatuses.includes(decision.occurrence.status)
+        ? decision
+        : {
+            allowed: false,
+            reason: DELETION_REASONS.PROTECTED_STATUS,
+            occurrence: decision.occurrence,
+        };
 }
 
 export function getPersistentPlanningActions({ occurrence, generationConfig, referenceDate }) {

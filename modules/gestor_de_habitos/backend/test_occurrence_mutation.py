@@ -341,8 +341,27 @@ class DeleteOrchestrationTests(unittest.TestCase):
         mocks["delete_occurrence"].assert_called_once()
         mocks["delete_slot"].assert_not_called()
 
+    def test_previous_editable_generated_delete_adds_exclusion_for_that_date(self):
+        previous_day = REFERENCE_DATE.replace(day=19)
+        result, mocks = self._run(context(
+            occurrence_date=previous_day, status="not_completed",
+        ))
+        self.assertEqual(result, {"deletedOccurrenceId": str(OCCURRENCE_ID)})
+        mocks["exclusion"].assert_called_once_with(ANY, SLOT_ID, previous_day)
+        mocks["delete_occurrence"].assert_called_once()
+        mocks["delete_slot"].assert_not_called()
+
     def test_manual_delete_removes_occurrence_and_slot(self):
         _, mocks = self._run(context("manual_dates"))
+        mocks["exclusion"].assert_not_called()
+        mocks["delete_occurrence"].assert_called_once()
+        mocks["delete_slot"].assert_called_once()
+
+    def test_previous_editable_manual_delete_removes_occurrence_and_slot(self):
+        previous_day = REFERENCE_DATE.replace(day=19)
+        _, mocks = self._run(context(
+            "manual_dates", occurrence_date=previous_day, status="completed",
+        ))
         mocks["exclusion"].assert_not_called()
         mocks["delete_occurrence"].assert_called_once()
         mocks["delete_slot"].assert_called_once()
@@ -369,22 +388,36 @@ class DeleteOrchestrationTests(unittest.TestCase):
         mocks["delete_occurrence"].assert_called_once()
         mocks["delete_slot"].assert_not_called()
 
-    def test_status_policy_matches_current_frontend_rules(self):
-        for day, status, code in (
-            (date(2026, 9, 18), "pending", "history_frozen"),
-            (REFERENCE_DATE, "completed", "deletion_status_locked"),
-            (date(2026, 9, 21), "in_progress", "deletion_status_locked"),
+    def test_frozen_delete_is_rejected_without_writes(self):
+        locked = context(occurrence_date=date(2026, 9, 18), status="completed")
+        connection, patches = database_mocks(locked)
+        started = [item.start() for item in patches]
+        try:
+            with self.assertRaises(service.OccurrenceConflictError) as error:
+                service.delete_occurrence(
+                    str(OCCURRENCE_ID), reference_date=REFERENCE_DATE
+                )
+            self.assertEqual(error.exception.code, "history_frozen")
+            started[10].assert_not_called()
+            self.assertIsNotNone(connection)
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
+    def test_current_and_future_delete_do_not_depend_on_status(self):
+        for day, status in (
+            (REFERENCE_DATE, "completed"),
+            (date(2026, 9, 21), "cancelled"),
         ):
             locked = context(occurrence_date=day, status=status)
             connection, patches = database_mocks(locked)
             started = [item.start() for item in patches]
             try:
-                with self.assertRaises(service.OccurrenceConflictError) as error:
-                    service.delete_occurrence(
-                        str(OCCURRENCE_ID), reference_date=REFERENCE_DATE
-                    )
-                self.assertEqual(error.exception.code, code)
-                started[10].assert_not_called()
+                result = service.delete_occurrence(
+                    str(OCCURRENCE_ID), reference_date=REFERENCE_DATE
+                )
+                self.assertEqual(result, {"deletedOccurrenceId": str(OCCURRENCE_ID)})
+                started[10].assert_called_once()
             finally:
                 for item in reversed(patches):
                     item.stop()

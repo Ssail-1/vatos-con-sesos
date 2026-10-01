@@ -7,3 +7,6 @@
 □ errores visuales
 □ comportamientos incorrectos
 □ inconsistencias
+
+□ Archivar / retirar PlanItem
+

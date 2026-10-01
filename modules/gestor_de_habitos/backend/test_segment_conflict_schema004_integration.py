@@ -13,6 +13,8 @@ import psycopg
 from app import app
 import database
 import plan_item_creation_service
+import occurrence_mutation_service
+from plan_item_materializer import materialize_occurrence_drafts
 from segment_conflict_service import (
     SegmentConflictError,
     resolve_source_conflicts,
@@ -53,7 +55,8 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
     def request(self, method, path, **kwargs):
         with patch.object(database, "get_database_url", return_value=self.url), \
                 patch.object(plan_item_creation_service, "_today", return_value=self.today):
-            return getattr(self.client, method)(path, **kwargs)
+            with patch.object(occurrence_mutation_service, "_today", return_value=self.today):
+                return getattr(self.client, method)(path, **kwargs)
 
     def payload(self, name, start, end, *, subtype="periodic", day=None):
         return {
@@ -81,6 +84,47 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
         response = self.request("post", "/api/plan-items", json=payload)
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()["occurrences"][0]
+
+    def create_weekly_deletable(self):
+        previous_day = self.today - timedelta(days=1)
+        source_day = self.day
+        slot_id = str(uuid4())
+        payload = {
+            "name": "Generated yesterday",
+            "kind": "activity",
+            "activityType": "periodic",
+            "generationConfig": {
+                "mode": "weekly",
+                "startDate": source_day.isoformat(),
+                "endDate": (source_day + timedelta(days=7)).isoformat(),
+                "indefinite": False,
+                "slots": [{
+                    "id": slot_id,
+                    "isoWeekday": source_day.isoweekday(),
+                    "startTime": "06:00",
+                    "endTime": "07:00",
+                }],
+            },
+        }
+        response = self.request("post", "/api/plan-items", json=payload)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        body = response.get_json()
+        occurrence = next(row for row in body["occurrences"] if row["date"] == source_day.isoformat())
+        with psycopg.connect(self.url) as connection:
+            connection.execute(
+                "UPDATE public.occurrences SET occurrence_date = %s WHERE id = %s",
+                (previous_day, occurrence["id"]),
+            )
+            connection.execute(
+                "UPDATE public.generation_configs SET start_date = %s, end_date = %s WHERE plan_item_id = %s",
+                (previous_day, previous_day + timedelta(days=7), body["planItem"]["id"]),
+            )
+            connection.execute(
+                "UPDATE public.generation_slot_weekdays SET iso_weekday = %s WHERE slot_id = %s",
+                (previous_day.isoweekday(), slot_id),
+            )
+        occurrence["date"] = previous_day.isoformat()
+        return body["planItem"], occurrence, slot_id
 
     def state(self):
         response = self.request("get", "/api/planner-state")
@@ -135,7 +179,7 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
         self.assertEqual(new_source["originReason"], "conflict_insertion")
         self.assertEqual(new_source["lastConflictAction"], "conflict_insertion")
 
-    def test_delete_single_and_multi_segment_parents_cascades_children(self):
+    def test_previous_editable_manual_and_multi_segment_delete_cascades_children(self):
         single = self.create_deletable("Single", "08:00", "09:00")
         multi = self.create_deletable("Multi", "10:00", "12:00")
         changed = self.request("put", f"/api/occurrences/{multi['id']}/structure", json={
@@ -146,6 +190,19 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
             ],
         })
         self.assertEqual(changed.status_code, 200, changed.get_data(as_text=True))
+        previous_day = self.today - timedelta(days=1)
+        with psycopg.connect(self.url) as connection:
+            for occurrence in (single, multi):
+                connection.execute(
+                    "UPDATE public.occurrences SET occurrence_date = %s WHERE id = %s",
+                    (previous_day, occurrence["id"]),
+                )
+                connection.execute(
+                    "UPDATE public.generation_slot_dates SET entry_date = %s WHERE slot_id = %s",
+                    (previous_day, occurrence["sourceGenerationSlotId"]),
+                )
+        reconciled = self.request("post", "/api/planner/reconcile")
+        self.assertEqual(reconciled.status_code, 200, reconciled.get_data(as_text=True))
         for occurrence in (single, multi):
             deleted = self.request("delete", f"/api/occurrences/{occurrence['id']}")
             self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
@@ -156,6 +213,24 @@ class SegmentConflictSchema004IntegrationTests(unittest.TestCase):
                     "SELECT count(*) FROM public.occurrence_segments WHERE occurrence_id = %s",
                     (occurrence["id"],),
                 ).fetchone()[0], 0)
+
+    def test_previous_editable_generated_delete_excludes_slot_and_cannot_regenerate(self):
+        plan_item, occurrence, slot_id = self.create_weekly_deletable()
+        reconciled = self.request("post", "/api/planner/reconcile")
+        self.assertEqual(reconciled.status_code, 200, reconciled.get_data(as_text=True))
+        deleted = self.request("delete", f"/api/occurrences/{occurrence['id']}")
+        self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
+        previous_day = self.today - timedelta(days=1)
+        with psycopg.connect(self.url) as connection:
+            exclusion = connection.execute(
+                "SELECT excluded_date FROM public.generation_slot_excluded_dates WHERE slot_id = %s",
+                (slot_id,),
+            ).fetchone()
+            self.assertEqual(exclusion[0], previous_day)
+        state = self.state()
+        persisted_plan = next(row for row in state["planItems"] if row["id"] == plan_item["id"])
+        drafts = materialize_occurrence_drafts(persisted_plan, previous_day, previous_day)
+        self.assertEqual(drafts, [])
 
     def test_delete_referenced_source_rejected_without_clearing_provenance(self):
         target = self.create("Target", "08:00", "10:00")

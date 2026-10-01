@@ -7,6 +7,7 @@ import {
 import {
     DELETION_REASONS,
     getIndividualDeletionPolicy,
+    getScheduledDeletionPolicy,
 } from "../domain/deletion-policy.js";
 import { getSchedulingPriority, PRIORITY_OVERRIDE_REASON } from "../domain/scheduling-priority.js";
 import {
@@ -1385,7 +1386,7 @@ export function createPlannerStore(initialPlanItems, statusOverrides = [], refer
                 }
                 requireScheduleMutableDate(occurrence.date);
                 if (operation.type === "delete") {
-                    const decision = getIndividualDeletionPolicy({
+                    const decision = getScheduledDeletionPolicy({
                         occurrences: [occurrence],
                         referenceDate,
                         historyEditWindowDays,

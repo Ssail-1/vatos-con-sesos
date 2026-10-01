@@ -18,7 +18,6 @@ from repositories import occurrence_repository
 from repositories import occurrence_segment_repository
 from scheduling_policy import (
     BLOCKING_STATUSES,
-    can_delete_occurrence,
     is_frozen_date,
     scheduling_priority,
     time_ranges_overlap,
@@ -595,13 +594,9 @@ def delete_occurrence(occurrence_id, reference_date=None):
                         "history_frozen",
                         "El historial congelado es de solo lectura.",
                     )
-                if not can_delete_occurrence(
-                    occurrence_date, occurrence["status"], current_date
-                ):
-                    raise OccurrenceConflictError(
-                        "deletion_status_locked",
-                        "El status conserva historia y no permite esta eliminación.",
-                    )
+                # El DELETE individual corrige cualquier occurrence dentro de la
+                # ventana editable. Apply Week/Future conservan su política propia;
+                # provenance y la última entry manual se validan por separado.
                 source_slot = occurrence["source_generation_slot_id"]
                 mode = context["planItem"]["mode"]
                 if (

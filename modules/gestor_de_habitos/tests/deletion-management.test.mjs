@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+    getIndividualDeletionPolicy,
+    getScheduledDeletionPolicy,
+} from "../js/domain/deletion-policy.js";
 import { materializeOccurrenceDrafts } from "../js/scheduling/materializer.js";
 import { createPlannerStore, PlannerStoreError } from "../js/state/planner-store.js";
 import { explicitDate, intervalConfig, manualConfig, weeklyConfig } from "./helpers/generation-configs.mjs";
@@ -30,6 +34,10 @@ function sourceSlotFor(store, planItemId, occurrence) {
 for (const date of [REFERENCE_DATE, "2026-09-28"]) {
     const store = createPlannerStore([planItem(`deletable-${date}`)], [], REFERENCE_DATE);
     const occurrence = occurrenceFor(store, `deletable-${date}`, date);
+    if (date < REFERENCE_DATE) store.setOccurrenceStatus(occurrence.id, "not_completed");
+    assert.equal(store.getDeletionOptions(
+        `deletable-${date}`, date, occurrence.id,
+    ).individual.allowed, true);
     const result = store.deleteOccurrenceForDate(occurrence.id);
     assert.equal(result.deletedOccurrence.id, occurrence.id);
     assert.equal(store.getOccurrenceById(occurrence.id), null);
@@ -40,30 +48,47 @@ for (const date of [REFERENCE_DATE, "2026-09-28"]) {
     const store = createPlannerStore([planItem("frozen-delete")], [], REFERENCE_DATE);
     const frozen = occurrenceFor(store, "frozen-delete", "2026-09-27");
     const before = store.getPlanItemById("frozen-delete");
+    assert.equal(store.getDeletionOptions(
+        "frozen-delete", frozen.date, frozen.id,
+    ).individual.allowed, false);
     expectCode(() => store.deleteOccurrenceForDate(frozen.id), "history_frozen");
     assert.deepEqual(store.getPlanItemById("frozen-delete"), before);
     assert.ok(store.getOccurrenceById(frozen.id));
 }
 
 for (const status of ["cancelled", "in_progress", "completed", "not_completed", "not_finished"]) {
-    const store = createPlannerStore([planItem(`protected-${status}`)], [], REFERENCE_DATE);
-    const occurrence = occurrenceFor(store, `protected-${status}`, REFERENCE_DATE);
+    const store = createPlannerStore([planItem(`deletable-${status}`)], [], REFERENCE_DATE);
+    const occurrence = occurrenceFor(store, `deletable-${status}`, REFERENCE_DATE);
     store.setOccurrenceStatus(occurrence.id, status);
-    const before = store.getOccurrencesForPlanItem(`protected-${status}`);
-    expectCode(() => store.deleteOccurrenceForDate(occurrence.id), "deletion_status_locked");
-    assert.deepEqual(store.getOccurrencesForPlanItem(`protected-${status}`), before);
-    assert.equal(store.getPlanItemById(`protected-${status}`).generationConfig.excludedDates, undefined);
+    assert.equal(store.getDeletionOptions(
+        `deletable-${status}`, REFERENCE_DATE, occurrence.id,
+    ).individual.allowed, true);
+    store.deleteOccurrenceForDate(occurrence.id);
+    assert.equal(store.getOccurrenceById(occurrence.id), null);
+}
+
+{
+    const occurrence = { id: "policy", date: "2026-09-28", status: "not_completed" };
+    const options = {
+        occurrences: [occurrence], referenceDate: REFERENCE_DATE,
+        historyEditWindowDays: 1, hasGenerationConfig: true,
+    };
+    assert.equal(getIndividualDeletionPolicy(options).allowed, true);
+    assert.equal(getScheduledDeletionPolicy(options).allowed, false,
+        "Apply Week conserva su restricción fuera del DELETE individual");
 }
 
 {
     const store = createPlannerStore([planItem("future-cancelled")], [], REFERENCE_DATE);
     const occurrence = occurrenceFor(store, "future-cancelled", "2026-09-30");
     store.setOccurrenceStatus(occurrence.id, "cancelled");
+    assert.equal(store.getDeletionOptions(
+        "future-cancelled", occurrence.date, occurrence.id,
+    ).individual.allowed, true);
     store.deleteOccurrenceForDate(occurrence.id);
     assert.equal(store.getOccurrenceById(occurrence.id), null);
     assert.deepEqual(sourceSlotFor(store, "future-cancelled", occurrence).excludedDates, ["2026-09-30"]);
 }
-
 // La exclusión evita regenerar, conserva otras fechas y puede restaurarse atómicamente.
 {
     const store = createPlannerStore([planItem("restorable")], [], REFERENCE_DATE);
