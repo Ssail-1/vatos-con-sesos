@@ -18,6 +18,33 @@ venv/
 *.sqlite
 *.sqlite3
 
+# Respaldos de bases de datos (las migraciones .sql se conservan)
+backups/
+*.dump
+*.dump.*
+*.backup
+*.backup.*
+*.sql.gz
+*.sql.bz2
+*.sql.xz
+*.sql.zst
+
+# Claves privadas y contenedores de credenciales
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.pgpass
+
+# Registros locales que pueden contener datos sensibles
+logs/
+*.log
+*.log.*
+
 # Node, por si se utiliza después
 node_modules/
 
